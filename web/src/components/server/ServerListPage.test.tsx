@@ -42,9 +42,8 @@ describe('server list paging', () => {
     expect(container.querySelector('article')?.textContent).toBe('server-25')
     expect(container.querySelector('article')?.getAttribute('data-index')).toBe('24')
     expect(container.querySelectorAll('article')).toHaveLength(24)
-    act(() => container.querySelector<HTMLButtonElement>('nav[aria-label="服务器分页底部"] .server-list-pagination-controls > button:last-child')!.click())
+    act(() => next().click())
     expect(container.querySelector('article')?.textContent).toBe('server-49')
-    expect(document.activeElement?.getAttribute('aria-label')).toBe('服务器页码顶部')
   })
 
   it('keeps the page for telemetry updates, but searches across the whole fleet', () => {
@@ -60,7 +59,7 @@ describe('server list paging', () => {
 
   it('jumps to the last page and clamps the page when servers are deleted', () => {
     render()
-    act(() => container.querySelector<HTMLButtonElement>('[aria-label="服务器页码顶部"]')!.click())
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="服务器页码"]')!.click())
     const options = document.body.querySelectorAll<HTMLButtonElement>('[role="option"]')
     act(() => options[options.length - 1].click())
     expect(container.querySelectorAll('article')).toHaveLength(16)
