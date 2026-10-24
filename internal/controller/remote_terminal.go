@@ -15,6 +15,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/OboardProject/oboard/internal/agentlink"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
 )
@@ -179,7 +180,7 @@ type terminalSession struct {
 	PrepareExp        string
 	Origin            string
 	browser           *websocket.Conn
-	agent             *websocket.Conn
+	agent             terminalConn
 	outputBuffer      *TerminalOutputBuffer
 	Ready             bool
 	Closed            bool
@@ -947,7 +948,7 @@ func (s *Server) relayTerminal(session *terminalSession) {
 	}
 	session.relaying = true
 	session.mu.Unlock()
-	copy := func(src, dst *websocket.Conn, toAgent bool) {
+	copy := func(src, dst terminalConn, toAgent bool) {
 		for {
 			mt, data, err := src.ReadMessage()
 			if err != nil {
@@ -1056,4 +1057,52 @@ func (s *Server) mcpTerminalResize(session *terminalSession, cols, rows int) err
 		return codedError("agent_disconnected", "agent disconnected")
 	}
 	return nil
+}
+
+type terminalConn interface {
+	ReadMessage() (int, []byte, error)
+	WriteMessage(int, []byte) error
+	WriteJSON(any) error
+	Close() error
+}
+
+func (s *Server) agentLinkTerminal(server *model.Server, auth *agentlink.AuthRequest) *terminalSession {
+	s.terminalHub.mu.Lock()
+	session := s.terminalHub.sessions[auth.SessionID]
+	s.terminalHub.mu.Unlock()
+	if session == nil {
+		return nil
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	prepareExpires, err := time.Parse(time.RFC3339Nano, session.PrepareExp)
+	if err != nil || !time.Now().Before(prepareExpires) {
+		return nil
+	}
+	if session.ServerID != server.ID || session.agent != nil || session.Closed || session.closed || time.Now().After(session.ExpiresAt) {
+		return nil
+	}
+	if !security.VerifyInteractiveProof(server.AgentTokenHash, session.ID, session.ServerID, session.Nonce, session.PrepareExp, auth.Proof) {
+		return nil
+	}
+	return session
+}
+
+func (s *Server) attachAgentLinkTerminal(link *agentlink.Session, server *model.Server, auth *agentlink.AuthRequest) {
+	session := s.agentLinkTerminal(server, auth)
+	if session == nil {
+		_ = link.Close()
+		return
+	}
+	session.mu.Lock()
+	if session.agent != nil || session.Closed || session.closed {
+		session.mu.Unlock()
+		_ = link.Close()
+		return
+	}
+	session.agent = &agentlink.MessageConn{Session: link}
+	session.mu.Unlock()
+	session.markAgentConnected()
+	s.relayTerminal(session)
+	<-link.Closed()
 }

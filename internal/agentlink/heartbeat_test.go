@@ -17,9 +17,10 @@ type heartbeatConn struct {
 	deadlines []time.Time
 }
 
-func (c *heartbeatConn) Read(p []byte) (int, error)  { return c.input.Read(p) }
-func (c *heartbeatConn) Write(p []byte) (int, error) { return c.output.Write(p) }
-func (c *heartbeatConn) Close() error                { return nil }
+func (c *heartbeatConn) Read(p []byte) (int, error)       { return c.input.Read(p) }
+func (c *heartbeatConn) Write(p []byte) (int, error)      { return c.output.Write(p) }
+func (c *heartbeatConn) SetWriteDeadline(time.Time) error { return nil }
+func (c *heartbeatConn) Close() error                     { return nil }
 func (c *heartbeatConn) SetReadDeadline(d time.Time) error {
 	c.deadlines = append(c.deadlines, d)
 	return nil

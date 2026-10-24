@@ -103,12 +103,20 @@ func writeFrame(w io.Writer, f frame) error {
 // readFrame reads one frame. It refuses to allocate more than
 // maxFramePayload.
 func readFrame(r io.Reader) (frame, error) {
+	return readFrameLimited(r, MaxMessageBytes)
+}
+
+func readFrameLimited(r io.Reader, messageLimit uint32) (frame, error) {
 	header := make([]byte, frameHeaderLen)
 	if _, err := io.ReadFull(r, header); err != nil {
 		return frame{}, err
 	}
 	length := binary.BigEndian.Uint32(header[2:])
-	if length > maxFramePayload {
+	limit := uint32(maxFramePayload)
+	if header[0] == frameTypeMessage || header[0] == frameTypeRequest || header[0] == frameTypeResponse {
+		limit = messageLimit
+	}
+	if length > limit {
 		return frame{}, ErrFrameTooLarge
 	}
 	f := frame{frameType: header[0], flags: header[1]}
@@ -155,8 +163,11 @@ func buildPadding(payload []byte, padLen int) ([]byte, error) {
 
 // AuthRequest is the frameTypeAuth payload.
 type AuthRequest struct {
-	AgentID string `json:"agent_id"`
-	Token   string `json:"token"`
+	Purpose   string `json:"purpose,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	Proof     string `json:"proof,omitempty"`
+	AgentID   string `json:"agent_id"`
+	Token     string `json:"token"`
 	// EnrollmentToken is set only by a bootstrapping agent that has no
 	// identity yet; the server answers with an AuthEnrollResponse.
 	EnrollmentToken string `json:"enrollment_token,omitempty"`
@@ -180,17 +191,19 @@ type AuthEnrollResponse struct {
 // Path matches the standard HTTP callback route (without the /api/v1/agent
 // prefix) so the server can bridge to the existing handlers unchanged.
 type RequestFrame struct {
-	ID   int64          `json:"id"`
-	Path string        `json:"path"`
-	Body json.RawMessage `json:"body,omitempty"`
+	ID      int64               `json:"id"`
+	Path    string              `json:"path"`
+	Headers map[string][]string `json:"headers,omitempty"`
+	Body    json.RawMessage     `json:"body,omitempty"`
 }
 
 // ResponseFrame is the frameTypeResponse payload.
 type ResponseFrame struct {
-	ID     int64           `json:"id"`
-	Status int             `json:"status"`
-	Body   json.RawMessage `json:"body,omitempty"`
-	Error  string          `json:"error,omitempty"`
+	Headers map[string][]string `json:"headers,omitempty"`
+	ID      int64               `json:"id"`
+	Status  int                 `json:"status"`
+	Body    json.RawMessage     `json:"body,omitempty"`
+	Error   string              `json:"error,omitempty"`
 }
 
 // DataHeader prefixes a frameTypeData payload: stream identity and offset.

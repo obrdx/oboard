@@ -41,6 +41,7 @@ func TestAgentFleetCoordinatorRespectsConcurrency(t *testing.T) {
 		}
 	}
 	s := newTestServer(db, "test-secret", "")
+	s.stealthTransport.Store(&stealthTransport{addr: "agent.example.com:24443", pin: strings.Repeat("a", 64)})
 	s.agentUpdates.Fill(ctx, false)
 	active, err := db.CountActiveAgentUpdates(ctx)
 	if err != nil {
@@ -94,6 +95,7 @@ func TestOperatorFleetRollContinuesWithoutAutoUpdate(t *testing.T) {
 		}
 	}
 	s := newTestServer(db, "test-secret", "")
+	s.stealthTransport.Store(&stealthTransport{addr: "agent.example.com:24443", pin: strings.Repeat("a", 64)})
 	if got := s.agentUpdates.Fill(ctx, false); got.Created != 0 {
 		t.Fatalf("auto-update off Fill(false) created = %d, want 0", got.Created)
 	}
@@ -148,6 +150,7 @@ func TestAgentFleetCircuitBreakerPauses(t *testing.T) {
 	}
 	defer db.Close()
 	s := newTestServer(db, "test-secret", "")
+	s.stealthTransport.Store(&stealthTransport{addr: "agent.example.com:24443", pin: strings.Repeat("a", 64)})
 	ctx := context.Background()
 	if err := db.SaveAgentFleetState(ctx, store.AgentFleetState{TargetBuild: "t", Attempted: 10, Failed: 4}); err != nil {
 		t.Fatal(err)
@@ -175,6 +178,7 @@ func TestAgentUpdateRetryBudgetShrinksAcrossBuilds(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := newTestServer(db, "test-secret", "")
+	s.stealthTransport.Store(&stealthTransport{addr: "agent.example.com:24443", pin: strings.Repeat("a", 64)})
 	builds := []string{"build-1", "build-2", "build-3", "build-4", "build-5", "build-6"}
 	limits := []int{5, 3, 2, 1, 1, 1}
 	previousBuild := version.AgentBuild
@@ -250,6 +254,7 @@ func TestManualFleetUpdateAttemptsEachNodeOnceWithoutUsingAutoBudget(t *testing.
 		t.Fatal(err)
 	}
 	s := newTestServer(db, "test-secret", "")
+	s.stealthTransport.Store(&stealthTransport{addr: "agent.example.com:24443", pin: strings.Repeat("a", 64)})
 	if got := s.agentUpdates.Fill(ctx, true); got.Created != 1 {
 		t.Fatalf("manual roll created %d tasks", got.Created)
 	}
@@ -314,6 +319,7 @@ func TestManualFleetUpdateWaitsForOfflineNodeWhileAutoIsPaused(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := newTestServer(db, "test-secret", "")
+	s.stealthTransport.Store(&stealthTransport{addr: "agent.example.com:24443", pin: strings.Repeat("a", 64)})
 	if got := s.agentUpdates.Fill(ctx, true); got.Created != 0 || !got.Rolling {
 		t.Fatalf("offline manual roll = %#v", got)
 	}
@@ -352,6 +358,7 @@ func TestControllerUpdateRunRecoversOnNewBuild(t *testing.T) {
 	}
 	defer db.Close()
 	s := newTestServer(db, "test-secret", "")
+	s.stealthTransport.Store(&stealthTransport{addr: "agent.example.com:24443", pin: strings.Repeat("a", 64)})
 	ctx := context.Background()
 	run := &store.ControllerUpdateRun{Source: "manual", CurrentBuild: "old", TargetBuild: version.Build, Phase: store.ControllerUpdatePhaseRestarting}
 	if err := db.CreateControllerUpdateRun(ctx, run); err != nil {
@@ -387,6 +394,7 @@ func TestEnqueueAgentUpdateDoesNotCreateOfflineTask(t *testing.T) {
 	}
 	defer db.Close()
 	s := newTestServer(db, "test-secret", "")
+	s.stealthTransport.Store(&stealthTransport{addr: "agent.example.com:24443", pin: strings.Repeat("a", 64)})
 	ctx := context.Background()
 	if err := db.SetSetting(ctx, "controller_url", "https://controller.example"); err != nil {
 		t.Fatal(err)
@@ -436,6 +444,7 @@ func TestAgentUpdateStaysOpenUntilAgentReconnectsOnNewBuild(t *testing.T) {
 	}
 	defer db.Close()
 	srv := newTestServer(db, "test-secret", "")
+	srv.stealthTransport.Store(&stealthTransport{addr: "agent.example.com:24443", pin: strings.Repeat("a", 64)})
 	ctx := context.Background()
 	server := &model.Server{Name: "edge", AgentID: "agent-edge", AgentTokenHash: security.HashSecret("agent-token"), ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
 	if err := db.CreateServer(ctx, server); err != nil {
@@ -490,6 +499,7 @@ func TestAgentUpdateFailureIsNotHeld(t *testing.T) {
 	}
 	defer db.Close()
 	srv := newTestServer(db, "test-secret", "")
+	srv.stealthTransport.Store(&stealthTransport{addr: "agent.example.com:24443", pin: strings.Repeat("a", 64)})
 	task := model.AgentTask{ID: 1, Type: model.AgentTaskTypeUpdateAgent, PayloadJSON: `{"expected_build":"20260904120000"}`}
 	held, err := srv.holdAgentUpdateForRestart(context.Background(), task, "failed", `{"message":"agent update failed"}`)
 	if err != nil {
@@ -509,6 +519,7 @@ func TestStuckAgentUpdateRestartTimesOut(t *testing.T) {
 	}
 	defer db.Close()
 	srv := newTestServer(db, "test-secret", "")
+	srv.stealthTransport.Store(&stealthTransport{addr: "agent.example.com:24443", pin: strings.Repeat("a", 64)})
 	ctx := context.Background()
 	server := &model.Server{Name: "edge", AgentID: "agent-edge", AgentTokenHash: security.HashSecret("agent-token"), ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
 	if err := db.CreateServer(ctx, server); err != nil {
@@ -543,6 +554,7 @@ func TestRequeueDoesNotDropAgentUpdateAwaitingRestart(t *testing.T) {
 	}
 	defer db.Close()
 	srv := newTestServer(db, "test-secret", "")
+	srv.stealthTransport.Store(&stealthTransport{addr: "agent.example.com:24443", pin: strings.Repeat("a", 64)})
 	ctx := context.Background()
 	server := &model.Server{Name: "edge", AgentID: "agent-edge", AgentTokenHash: security.HashSecret("agent-token"), ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
 	if err := db.CreateServer(ctx, server); err != nil {
@@ -612,6 +624,7 @@ func TestControllerUpdateRunRecordsRollbackEvenOnTargetBuild(t *testing.T) {
 	}
 	defer db.Close()
 	s := newTestServer(db, "test-secret", "")
+	s.stealthTransport.Store(&stealthTransport{addr: "agent.example.com:24443", pin: strings.Repeat("a", 64)})
 	run := &store.ControllerUpdateRun{Source: "manual", CurrentBuild: "old", TargetBuild: version.Build, Phase: store.ControllerUpdatePhaseRestarting}
 	if err := db.CreateControllerUpdateRun(t.Context(), run); err != nil {
 		t.Fatal(err)

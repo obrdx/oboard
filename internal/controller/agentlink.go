@@ -106,7 +106,21 @@ func (s *Server) handleStealthConnection(session *agentlink.Session) {
 	if !ok {
 		return
 	}
-	s.runStealthSession(session, server, remoteIP)
+	switch auth.Purpose {
+	case "", "control":
+		s.runStealthSession(session, server, remoteIP)
+	case "rpc":
+		_ = session.Run(func(map[string]json.RawMessage) error { return errors.New("RPC sessions cannot send control messages") }, func(req *agentlink.RequestFrame) *agentlink.ResponseFrame {
+			if req.Path == "/download" {
+				return s.handleStealthDownloadRequest(req)
+			}
+			return s.handleStealthRequest(server, req, remoteIP)
+		})
+	case "interactive":
+		s.attachAgentLinkTerminal(session, server, auth)
+	default:
+		_ = session.Close()
+	}
 }
 
 // authStealthAgent mirrors authAgent's semantics over the binary protocol.
@@ -135,6 +149,14 @@ func (s *Server) authStealthAgent(session *agentlink.Session, auth *agentlink.Au
 	}
 	s.forgetUnknownAgent(agentID)
 	s.noteAgentAuthSuccess(ip)
+	if auth.Purpose != "" && auth.Purpose != "control" && auth.Purpose != "rpc" && auth.Purpose != "interactive" {
+		session.RejectAuth("invalid session purpose")
+		return nil, false
+	}
+	if auth.Purpose == "interactive" && s.agentLinkTerminal(server, auth) == nil {
+		session.RejectAuth("invalid interactive proof")
+		return nil, false
+	}
 	if err := session.AcceptAuth(nil); err != nil {
 		return nil, false
 	}
@@ -270,7 +292,7 @@ func (s *Server) runStealthSession(session *agentlink.Session, server *model.Ser
 		if strings.TrimSpace(req.Path) == "/download" {
 			return s.handleStealthDownloadRequest(req)
 		}
-		return s.handleStealthRequest(server, req)
+		return s.handleStealthRequest(server, req, remoteIP)
 	}
 	go func() {
 		sessionDone <- session.Run(func(envelope map[string]json.RawMessage) error {
@@ -348,7 +370,7 @@ func (s *Server) handleStealthDownloadRequest(req *agentlink.RequestFrame) *agen
 	}
 	name := filepath.Base(strings.TrimSpace(request.Stream))
 	switch name {
-	case "oboard-agent-linux-amd64", "oboard-agent-linux-arm64", "oboard-sb-linux-amd64", "oboard-sb-linux-arm64", "oboard-realm-linux-amd64", "oboard-realm-linux-arm64", "release-manifest.json", "release-manifest.json.sig":
+	case "oboard-agent-linux-amd64", "oboard-agent-linux-arm64", "oboard-sb-linux-amd64", "oboard-sb-linux-arm64", "oboard-realm-linux-amd64", "oboard-realm-linux-arm64", "oboard-agent-windows-amd64", "oboard-sb-windows-amd64", "oboard-realm-windows-amd64", "release-manifest.json", "release-manifest.json.sig":
 	default:
 		return &agentlink.ResponseFrame{ID: req.ID, Status: 404, Error: "unknown artifact"}
 	}
@@ -378,7 +400,12 @@ func (s *Server) handleStealthDownloadRequest(req *agentlink.RequestFrame) *agen
 // handleStealthRequest dispatches one RPC over the transport by replaying it
 // through the standard HTTP handler with the session's agent identity
 // pre-authenticated.
-func (s *Server) handleStealthRequest(server *model.Server, req *agentlink.RequestFrame) *agentlink.ResponseFrame {
+func (s *Server) handleStealthRequest(server *model.Server, req *agentlink.RequestFrame, remoteIP string) *agentlink.ResponseFrame {
+	current, err := s.store.GetServerByAgent(context.Background(), server.AgentID)
+	if err != nil || current.ID != server.ID || !current.CreatedAt.Equal(server.CreatedAt) || current.AgentTokenHash != server.AgentTokenHash {
+		return &agentlink.ResponseFrame{ID: req.ID, Status: http.StatusUnauthorized, Error: "agent identity is no longer enrolled"}
+	}
+	server = current
 	handler, ok := s.stealthAgentRoutes()[strings.TrimSpace(req.Path)]
 	if !ok {
 		return &agentlink.ResponseFrame{ID: req.ID, Status: 404, Error: "not found"}
@@ -395,15 +422,24 @@ func (s *Server) handleStealthRequest(server *model.Server, req *agentlink.Reque
 	if err != nil {
 		return &agentlink.ResponseFrame{ID: req.ID, Status: 500, Error: err.Error()}
 	}
+	httpReq.RemoteAddr = net.JoinHostPort(remoteIP, "0")
 	if body != nil {
 		httpReq.Header.Set("Content-Type", "application/json")
+	}
+	for _, key := range []string{
+		"X-Oboard-Authorization-Revision", "X-Oboard-Authorization-Sequence", "X-Oboard-Authorization-Digest", "X-Oboard-Authorization-Boot-Id",
+		"X-Oboard-Users-Revision", "X-Oboard-Users-Digest", "X-Oboard-Users-Boot-Id", "X-Oboard-Users-Content-Digest",
+	} {
+		if values := http.Header(req.Headers).Values(key); len(values) == 1 && len(values[0]) <= 1024 {
+			httpReq.Header.Set(key, values[0])
+		}
 	}
 	// The session authenticated once at connection setup; the handlers'
 	// authAgent call resolves the identity from the request context.
 	httpReq = withAuthenticatedAgent(httpReq, server)
 	recorder := newStealthRecorder()
 	handler(recorder, httpReq)
-	return &agentlink.ResponseFrame{ID: req.ID, Status: recorder.status, Body: recorder.body.Bytes()}
+	return &agentlink.ResponseFrame{ID: req.ID, Status: recorder.status, Body: recorder.body.Bytes(), Headers: recorder.header}
 }
 
 // stealthRecorder is a minimal ResponseWriter capturing status and body.

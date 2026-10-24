@@ -42,3 +42,23 @@ func TestStealthDownloadReturnsOnlyRequestedChunks(t *testing.T) {
 		t.Fatalf("negative offset status=%d", response.Status)
 	}
 }
+
+func TestAgentLinkDownloadsWindowsSignedArtifacts(t *testing.T) {
+	root := t.TempDir()
+	downloads := filepath.Join(root, "downloads")
+	if err := os.MkdirAll(downloads, 0700); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{staticDir: filepath.Join(root, "web", "dist")}
+	for _, name := range []string{"oboard-agent-windows-amd64", "oboard-sb-windows-amd64", "oboard-realm-windows-amd64"} {
+		if err := os.WriteFile(filepath.Join(downloads, name), []byte("signed-windows-artifact"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		body, _ := json.Marshal(map[string]any{"stream": name, "offset": 0, "length": 1024})
+		response := server.handleStealthDownloadRequest(&agentlink.RequestFrame{Body: body})
+		var chunk []byte
+		if response.Status != 200 || json.Unmarshal(response.Body, &chunk) != nil || string(chunk) != "signed-windows-artifact" {
+			t.Fatalf("Windows artifact %s failed: %+v", name, response)
+		}
+	}
+}

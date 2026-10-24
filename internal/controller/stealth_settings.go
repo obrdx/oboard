@@ -95,12 +95,15 @@ func normalizeStealthConfig(cfg stealthTransportConfig) (stealthTransportConfig,
 	var err error
 	cfg.ListenAddress, err = normalizeStealthEndpoint(cfg.ListenAddress, true)
 	if err != nil {
-		return cfg, fmt.Errorf("安全进程监听地址：%w", err)
+		return cfg, fmt.Errorf("AgentLink 监听地址：%w", err)
+	}
+	if cfg.PublicAddress == "" {
+		return cfg, errors.New("AgentLink 专用地址必须填写")
 	}
 	if cfg.Enabled || cfg.PublicAddress != "" {
 		cfg.PublicAddress, err = normalizeStealthEndpoint(cfg.PublicAddress, false)
 		if err != nil {
-			return cfg, fmt.Errorf("安全进程 Agent 连接地址：%w", err)
+			return cfg, fmt.Errorf("AgentLink 专用地址：%w", err)
 		}
 	}
 	return cfg, nil
@@ -112,9 +115,18 @@ func stealthConfigFromSettings(items map[string]string) (stealthTransportConfig,
 		if err := strictAutomationInput(json.RawMessage(raw), &cfg); err != nil {
 			return cfg, err
 		}
+		if !cfg.Enabled && strings.TrimSpace(cfg.PublicAddress) == "" {
+			if cfg.ListenAddress == "" {
+				cfg.ListenAddress = "0.0.0.0:24443"
+			}
+			return cfg, nil
+		}
 		return normalizeStealthConfig(cfg)
 	}
 	addr := strings.TrimSpace(os.Getenv("OBOARD_STEALTH_ADDR"))
+	if addr == "" {
+		return stealthTransportConfig{ListenAddress: "0.0.0.0:24443"}, nil
+	}
 	return normalizeStealthConfig(stealthTransportConfig{Enabled: addr != "", ListenAddress: addr, PublicAddress: addr})
 }
 
@@ -184,8 +196,8 @@ func (s *Server) validateStealthChange(ctx context.Context, cfg stealthTransport
 		return err
 	}
 	for _, server := range servers {
-		if server.AgentID != "" && (server.StealthEnabled || serverSupportsCapability(server, "stealth_active_v1")) {
-			return fmt.Errorf("服务器 %s 仍使用安全进程；请先关闭该服务器的安全进程并确认 Agent 已恢复普通连接，再修改或关闭主控安全传输", server.Name)
+		if server.AgentID != "" && (serverSupportsCapability(server, "agentlink_v1") || server.StealthEnabled || serverSupportsCapability(server, "stealth_active_v1")) {
+			return fmt.Errorf("服务器 %s 已使用 AgentLink；请先移除使用该地址的 Agent，再修改或关闭传输地址", server.Name)
 		}
 	}
 	return nil
@@ -215,16 +227,16 @@ func (s *Server) applyStealthConfigLocked(ctx context.Context, cfg stealthTransp
 		candidate = nil
 	} else if current == nil || current.listenAddr != cfg.ListenAddress {
 		if s.stealthCertPath == "" || s.stealthContext == nil || s.stealthContext.Err() != nil {
-			return errors.New("安全传输运行环境尚未初始化")
+			return errors.New("AgentLink 运行环境尚未初始化")
 		}
 		pair, pin, err := loadOrCreateStealthCert(s.stealthCertPath, s.stealthCertPath+".key")
 		if err != nil {
-			return fmt.Errorf("安全传输证书：%w", err)
+			return fmt.Errorf("AgentLink 证书：%w", err)
 		}
 		transport := agentlink.NewServer(agentlink.ServerConfig{Addr: cfg.ListenAddress, Certificate: pair})
 		listener, err := transport.Listen()
 		if err != nil {
-			return fmt.Errorf("无法监听安全传输端口：%w", err)
+			return fmt.Errorf("无法监听AgentLink 端口：%w", err)
 		}
 		candidate = &stealthTransport{server: transport, listener: listener, pin: pin, addr: cfg.PublicAddress, listenAddr: cfg.ListenAddress, done: make(chan struct{})}
 	}
@@ -262,7 +274,7 @@ func (s *Server) applyStealthConfigLocked(ctx context.Context, cfg stealthTransp
 						stopStealthTransport(s.stealthTransport.Swap(nil))
 					}
 					s.stealthMu.Unlock()
-					log.Printf("stealth agent transport stopped: %v", err)
+					log.Printf("AgentLink transport stopped: %v", err)
 				}
 			}(candidate)
 		}

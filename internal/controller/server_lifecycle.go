@@ -252,21 +252,23 @@ func (s *Server) agentEnrollmentCommand(ctx context.Context, stealth bool, serve
 	tcpTuningValue, stealthValue := agentInstallTCPTuningValue(tcpTuning), agentInstallStealthValue(stealth)
 	command := agentInstallCommand(base, bbrValue, cakeBandwidthValue, tcpTuningValue, stealthValue)
 	env := map[string]any{"OBOARD_INSTALL_BBR": bbrValue, "OBOARD_INSTALL_BBR_CAKE_BANDWIDTH": cakeBandwidthValue, "OBOARD_INSTALL_TCP_TUNING": tcpTuningValue, "OBOARD_INSTALL_STEALTH": stealthValue}
+	addrEnv, pinEnv, err := s.agentStealthInstallEnv()
+	if err != nil {
+		return "", nil, err
+	}
+	addr := strings.TrimPrefix(addrEnv, "OBOARD_STEALTH_ADDR=")
+	pin := strings.TrimPrefix(pinEnv, "OBOARD_STEALTH_PIN=")
+	command = strings.TrimSuffix(command, " sh") + " OBOARD_STEALTH_ADDR=" + shellSingleQuote(addr) + " OBOARD_STEALTH_PIN=" + shellSingleQuote(pin) + " sh"
+	env["OBOARD_STEALTH_ADDR"], env["OBOARD_STEALTH_PIN"] = addr, pin
 	if stealth {
 		if len(serverID) != 1 {
 			return "", nil, fmt.Errorf("server ID is required for security-process layout")
-		}
-		addr, pin, err := s.agentStealthInstallEnv()
-		if err != nil {
-			return "", nil, err
 		}
 		layout, err := s.serverStealthLayout(ctx, serverID[0])
 		if err != nil {
 			return "", nil, err
 		}
-		addr = strings.TrimPrefix(addr, "OBOARD_STEALTH_ADDR=")
-		pin = strings.TrimPrefix(pin, "OBOARD_STEALTH_PIN=")
-		command = strings.TrimSuffix(command, " sh") + " OBOARD_STEALTH_ADDR=" + shellSingleQuote(addr) + " OBOARD_STEALTH_PIN=" + shellSingleQuote(pin) + " OBOARD_STEALTH_LAYOUT=" + shellSingleQuote(layout) + " sh"
+		command = strings.TrimSuffix(command, " sh") + " OBOARD_STEALTH_LAYOUT=" + shellSingleQuote(layout) + " sh"
 		env["OBOARD_STEALTH_ADDR"], env["OBOARD_STEALTH_PIN"], env["OBOARD_STEALTH_LAYOUT"] = addr, pin, layout
 	}
 	return command, env, nil
@@ -297,7 +299,7 @@ func (s *Server) agentStealthScriptCommand(ctx context.Context, serverID int64, 
 func (s *Server) agentStealthInstallEnv() (addrEnv, pinEnv string, err error) {
 	addr, pin, enabled := s.StealthTransportInfo()
 	if !enabled {
-		return "", "", errors.New("安全进程传输端口未启用：请先在系统设置 → 面板访问中启用安全进程传输")
+		return "", "", errors.New("AgentLink 传输未启用：请先在系统设置 → 面板访问中配置 AgentLink 地址和端口")
 	}
 	return "OBOARD_STEALTH_ADDR=" + addr, "OBOARD_STEALTH_PIN=" + pin, nil
 }

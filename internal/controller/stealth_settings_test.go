@@ -130,7 +130,7 @@ func TestStealthTransportSettingsProtectEnrolledAgents(t *testing.T) {
 	if err := srv.updateStealthConfig(ctx, cfg, true); err != nil {
 		t.Fatal(err)
 	}
-	node := &model.Server{Name: "protected", AgentID: "agent-1", StealthEnabled: true, Status: model.ServerOffline}
+	node := &model.Server{Name: "protected", AgentID: "agent-1", StealthEnabled: false, KernelCapabilities: []string{"agentlink_v1"}, Status: model.ServerOffline}
 	if err := db.CreateServer(ctx, node); err != nil {
 		t.Fatal(err)
 	}

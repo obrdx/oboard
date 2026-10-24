@@ -39,6 +39,13 @@ func (s *Server) agentInstallPowerShell(w http.ResponseWriter, r *http.Request) 
 	}
 	script := strings.ReplaceAll(agentInstallPowerShellTemplate, "__BASE_URL__", powershellSingleQuote(strings.TrimRight(baseURL, "/")))
 	script = strings.ReplaceAll(script, "__RELEASE_PUBLIC_KEY__", powershellSingleQuote(version.ReleasePublicKey))
+	addr, pin, active := s.StealthTransportInfo()
+	if !active {
+		fail(w, codedError("agentlink_unavailable", "请先配置并启用 AgentLink 传输"), http.StatusPreconditionFailed)
+		return
+	}
+	script = strings.ReplaceAll(script, "__AGENTLINK_ADDR__", powershellSingleQuote(addr))
+	script = strings.ReplaceAll(script, "__AGENTLINK_PIN__", powershellSingleQuote(pin))
 	_, _ = w.Write([]byte(script))
 }
 

@@ -539,7 +539,7 @@ namespace OBoard {
             $allowFlag = if ($policy.Allow) { 'true' } else { 'false' }
             $env:OBOARD_ENROLL_TOKEN = $EnrollToken
             try {
-                $code = Invoke-Native $AgentExe @('-config', $ConfigPath, '-controller', $BaseUrl, '-state-dir', $StateDir, '-core-binary', $CoreExe, '-core-service', $CoreService, '-update-source', $policy.Source, "-allow-panel-update=$allowFlag", '-update-repo', $UpdateRepo, '-enroll-only')
+                $code = Invoke-Native $AgentExe @('-config', $ConfigPath, '-controller', $BaseUrl, '-controller-addr', __AGENTLINK_ADDR__, '-controller-pin', __AGENTLINK_PIN__, '-state-dir', $StateDir, '-core-binary', $CoreExe, '-core-service', $CoreService, '-update-source', $policy.Source, "-allow-panel-update=$allowFlag", '-update-repo', $UpdateRepo, '-enroll-only')
             } finally {
                 Remove-Item Env:\OBOARD_ENROLL_TOKEN -ErrorAction SilentlyContinue
             }

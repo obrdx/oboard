@@ -23,7 +23,9 @@ func TestWindowsAgentInstallerResolvesPlaceholders(t *testing.T) {
 		t.Fatal(err)
 	}
 	response := httptest.NewRecorder()
-	New(db, "test-secret", "", "", nil).Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/install/agent.ps1", nil))
+	configured := New(db, "test-secret", "", "", nil)
+	configured.stealthTransport.Store(&stealthTransport{addr: "agent.example.com:24443", pin: strings.Repeat("a", 64)})
+	configured.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/install/agent.ps1", nil))
 	if response.Code != http.StatusOK {
 		t.Fatalf("Windows installer status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -31,7 +33,7 @@ func TestWindowsAgentInstallerResolvesPlaceholders(t *testing.T) {
 		t.Fatalf("Cache-Control = %q", got)
 	}
 	script := response.Body.String()
-	if strings.Contains(script, "__BASE_URL__") || strings.Contains(script, "__RELEASE_PUBLIC_KEY__") {
+	if strings.Contains(script, "__BASE_URL__") || strings.Contains(script, "__RELEASE_PUBLIC_KEY__") || strings.Contains(script, "__AGENTLINK_") {
 		t.Fatal("installer placeholders were not replaced")
 	}
 	for _, want := range []string{
@@ -67,6 +69,7 @@ func TestEnrollmentReturnsWindowsCommandOnlyForStandardLayout(t *testing.T) {
 	ctx := context.Background()
 	db := openControllerAutomationTestStore(t)
 	srv := newTestServer(db, "test-secret", "")
+	srv.stealthTransport.Store(&stealthTransport{addr: "agent.example.com:24443", pin: strings.Repeat("a", 64)})
 	if err := db.SetSetting(ctx, "controller_url", "https://panel.example.com"); err != nil {
 		t.Fatal(err)
 	}

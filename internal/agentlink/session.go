@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"time"
 )
 
 // Session is an established transport connection. It multiplexes the message
@@ -48,6 +49,10 @@ func (s *Session) WriteMessage(envelope any) error {
 
 // Request performs one RPC round-trip over the session.
 func (s *Session) Request(ctx context.Context, path string, body any, out any) (*ResponseFrame, error) {
+	return s.RequestWithHeaders(ctx, path, body, out, nil)
+}
+
+func (s *Session) RequestWithHeaders(ctx context.Context, path string, body any, out any, headers map[string][]string) (*ResponseFrame, error) {
 	s.pendingMu.Lock()
 	s.nextReqID++
 	id := s.nextReqID
@@ -65,7 +70,7 @@ func (s *Session) Request(ctx context.Context, path string, body any, out any) (
 		}
 		raw = encoded
 	}
-	req := RequestFrame{ID: id, Path: path, Body: raw}
+	req := RequestFrame{ID: id, Path: path, Body: raw, Headers: headers}
 	payload, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
@@ -82,7 +87,10 @@ func (s *Session) Request(ctx context.Context, path string, body any, out any) (
 		delete(s.pending, id)
 		s.pendingMu.Unlock()
 		return nil, ctx.Err()
-	case resp := <-ch:
+	case resp, ok := <-ch:
+		if !ok || resp == nil {
+			return nil, ErrClosed
+		}
 		if out != nil && len(resp.Body) > 0 {
 			if err := json.Unmarshal(resp.Body, out); err != nil {
 				return resp, err
@@ -99,6 +107,9 @@ func (s *Session) WriteFrame(f frame) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if err := s.writeErrValue(); err != nil {
+		return err
+	}
+	if err := s.conn.SetWriteDeadline(time.Now().Add(20 * time.Second)); err != nil {
 		return err
 	}
 	if err := writeFrame(s.conn, f); err != nil {
@@ -204,4 +215,3 @@ func (s *Session) Closed() <-chan struct{} { return s.closed }
 func (s *Session) Ping() error {
 	return s.WriteFrame(frame{frameType: frameTypePing})
 }
-

@@ -16,7 +16,11 @@ import (
 // ClientConfig configures one agent-side transport connection.
 type ClientConfig struct {
 	// Address is host:port of the Controller's dedicated listener.
-	Address string
+	Purpose   string
+	SessionID string
+	Proof     string
+	Health    json.RawMessage
+	Address   string
 	// CertSHA256 pins the server certificate. An empty value disables
 	// pinning (first-use bootstrap reads it from the enrollment response).
 	CertSHA256 string
@@ -93,7 +97,7 @@ func Dial(ctx context.Context, cfg ClientConfig) (*Session, error) {
 		pending: map[int64]chan *ResponseFrame{},
 		closed:  make(chan struct{}),
 	}
-	auth := AuthRequest{AgentID: cfg.AgentID, Token: cfg.Token, EnrollmentToken: cfg.EnrollmentToken}
+	auth := AuthRequest{Purpose: cfg.Purpose, SessionID: cfg.SessionID, Proof: cfg.Proof, Health: cfg.Health, AgentID: cfg.AgentID, Token: cfg.Token, EnrollmentToken: cfg.EnrollmentToken}
 	payload, err := json.Marshal(auth)
 	if err != nil {
 		_ = conn.Close()
@@ -110,7 +114,7 @@ func Dial(ctx context.Context, cfg ClientConfig) (*Session, error) {
 	}
 	if accept.frameType == frameTypeError {
 		_ = conn.Close()
-		return nil, fmt.Errorf("agentlink auth rejected: %s", string(accept.payload))
+		return nil, &AuthError{Reason: string(accept.payload)}
 	}
 	if accept.frameType != frameTypeAuthOK {
 		_ = conn.Close()
@@ -218,3 +222,8 @@ func certPoolFromPEM(pem string) (*x509.CertPool, error) {
 	}
 	return pool, nil
 }
+
+// AuthError is a rejected AgentLink authentication handshake.
+type AuthError struct{ Reason string }
+
+func (e *AuthError) Error() string { return "agentlink auth rejected: " + e.Reason }

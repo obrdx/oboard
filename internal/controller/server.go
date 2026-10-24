@@ -649,6 +649,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/agent/mtu-detections", s.agentMTUDetections)
 	mux.HandleFunc("/api/v1/agent/port-forward-probes", s.agentPortForwardProbes)
 	mux.HandleFunc("/api/v1/agent/inbound-probes", s.agentInboundProbes)
+	mux.HandleFunc("/api/v1/agent/transport", s.agentLinkBootstrap)
 	mux.HandleFunc("/api/v1/subscription-relay/enroll", s.subscriptionRelayEnroll)
 	mux.HandleFunc("/api/v1/subscription-relay/heartbeat", s.subscriptionRelayHeartbeat)
 	mux.HandleFunc("/api/v1/subscription-relay/uninstall", s.subscriptionRelayUninstall)
@@ -5165,6 +5166,9 @@ func (s *Server) enqueueAgentUpdateWithVersion(ctx context.Context, server *mode
 	}
 	if configVersion == 0 {
 		configVersion = time.Now().Unix()
+	}
+	if _, _, active := s.StealthTransportInfo(); !active {
+		return model.AgentTask{}, false, errors.New("请先填写并启用 AgentLink 专用地址，再更新 Agent")
 	}
 	controllerURL, err := s.publicBaseURL(ctx)
 	if err != nil {
@@ -16495,6 +16499,10 @@ func (s *Server) authAgent(w http.ResponseWriter, r *http.Request) (*model.Serve
 		fail(w, errors.New("invalid agent credentials"), 401)
 		return nil, false
 	}
+	if serverSupportsCapability(*server, "agentlink_v1") && r.URL.Path != "/api/v1/agent/transport" {
+		failCode(w, "agentlink_required", "此 Agent 已切换到 AgentLink", http.StatusGone)
+		return nil, false
+	}
 	s.forgetUnknownAgent(agentID)
 	s.noteAgentAuthSuccess(ip)
 	return server, true
@@ -18561,6 +18569,10 @@ case "$ACTION" in
   install)
     need_base_url
     : "${OBOARD_ENROLL_TOKEN:?缺少 OBOARD_ENROLL_TOKEN}"
+    if [ -z "${OBOARD_STEALTH_ADDR:-}" ] || [ -z "${OBOARD_STEALTH_PIN:-}" ]; then
+      echo "缺少 AgentLink 地址或证书指纹，请从面板重新复制安装命令。" >&2
+      exit 1
+    fi
     acquire_core_lifecycle_lock
     if [ "$STEALTH_MODE" = 1 ]; then
       resolve_update_policy
@@ -18727,6 +18739,8 @@ case "$ACTION" in
       if ! OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$INSTALL_DIR/oboard-agent" \
         -config "$CONFIG_PATH" \
         -controller "$BASE_URL" \
+        -controller-addr "$OBOARD_STEALTH_ADDR" \
+        -controller-pin "$OBOARD_STEALTH_PIN" \
         -state-dir "$STATE_DIR" \
         -core-binary "$INSTALL_DIR/oboard-sb" \
         -core-service oboard-sb \
