@@ -919,7 +919,7 @@ func (s *Service) policiesAllowAutomatic(ctx context.Context, item *model.Automa
 	for _, operation := range item.Operations {
 		policy, err := s.store.GetApprovalPolicy(ctx, item.PrincipalID, operation.Capability, s.now().UTC())
 		if errors.Is(err, sql.ErrNoRows) {
-			automatic = false
+			automatic = automatic && oauthPrincipal
 			continue
 		}
 		if err != nil {
@@ -929,7 +929,10 @@ func (s *Service) policiesAllowAutomatic(ctx context.Context, item *model.Automa
 
 			return false, fmt.Errorf("approval policy denies capability %q", operation.Capability)
 		}
-		if policy.Mode != model.ApprovalAutomatic || operation.RiskClass >= 4 && (oauthPrincipal || !policy.AllowRisk4) {
+		if oauthPrincipal {
+			continue
+		}
+		if policy.Mode != model.ApprovalAutomatic || operation.RiskClass >= 4 && !policy.AllowRisk4 {
 			automatic = false
 			continue
 		}

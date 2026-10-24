@@ -94,6 +94,36 @@ func TestMachineDeniedApprovalPolicyIsEnforced(t *testing.T) {
 	}
 }
 
+func TestOAuthAuthorizedChangesetExecutesWithoutPanelApproval(t *testing.T) {
+	for _, mode := range []model.ApprovalMode{"", model.ApprovalRequired, model.ApprovalAutomatic} {
+		t.Run("policy_"+string(mode), func(t *testing.T) {
+			ctx := context.Background()
+			db := openAutomationTestStore(t)
+			stored := &model.APIPrincipal{ID: "oauth_direct", Name: "OAuth", Type: model.APIPrincipalOAuth, Enabled: true, Scopes: []string{"servers:onboard"}, ResourceFilter: json.RawMessage(`{}`), RateLimitPerMinute: 60, MaxConcurrency: 2}
+			if err := db.CreateAPIPrincipal(ctx, stored); err != nil {
+				t.Fatal(err)
+			}
+			principal := application.Principal{ID: stored.ID, Type: stored.Type, Role: model.RoleAdmin, AccessLevel: mcpauth.AccessOperate, Scopes: stored.Scopes, ResourceFilter: stored.ResourceFilter}
+			service := NewService(db, capability.NewCatalog())
+			registerAutomationTestCapability(service)
+			if mode != "" {
+				if err := db.UpsertApprovalPolicy(ctx, &model.ApprovalPolicy{ID: "policy", PrincipalID: stored.ID, Capability: "servers.onboard", Mode: mode, ResourceFilter: json.RawMessage(`{}`)}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			item := createAutomationTestChangeset(t, service, principal, "direct", json.RawMessage(`{}`))
+			result, err := service.Validate(ctx, principal, item.ID)
+			if err != nil || result.Status != model.ChangesetSucceeded {
+				t.Fatalf("result=%+v err=%v", result, err)
+			}
+			item.Operations[0].RiskClass = 4
+			if allowed, err := service.automaticAllowed(ctx, principal, item); err != nil || !allowed {
+				t.Fatalf("risk four allowed=%v err=%v", allowed, err)
+			}
+		})
+	}
+}
+
 func TestOAuthDeniedPolicyRejectsValidation(t *testing.T) {
 	db := openAutomationTestStore(t)
 	principalModel := &model.APIPrincipal{ID: "oauth_legacy_denied", Name: "legacy OAuth", Type: model.APIPrincipalOAuth, Enabled: true, Scopes: []string{"servers:onboard"}, ResourceFilter: json.RawMessage([]byte("{}")), RateLimitPerMinute: 60, MaxConcurrency: 2}

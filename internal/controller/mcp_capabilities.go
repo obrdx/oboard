@@ -74,23 +74,21 @@ func (s *Server) addMCPCapabilityReadTool(server *mcp.Server, descriptor capabil
 }
 
 type mcpCapabilityWriteInput struct {
-	CapabilityInput    map[string]any    `json:"capability_input"`
-	Reason             string            `json:"reason"`
-	IdempotencyKey     string            `json:"idempotency_key"`
-	ApprovalPreference string            `json:"approval_preference,omitempty"`
-	ExpectedRevisions  map[string]string `json:"expected_revisions,omitempty"`
-	Assumptions        []string          `json:"assumptions,omitempty"`
+	CapabilityInput   map[string]any    `json:"capability_input"`
+	Reason            string            `json:"reason"`
+	IdempotencyKey    string            `json:"idempotency_key"`
+	ExpectedRevisions map[string]string `json:"expected_revisions,omitempty"`
+	Assumptions       []string          `json:"assumptions,omitempty"`
 }
 
 func (s *Server) addMCPCapabilityWriteTool(server *mcp.Server, descriptor capability.Descriptor) {
 	name := mcpCapabilityToolName(descriptor.Name)
 	inputSchema := mustRawSchema(closedMCPSchema(map[string]any{
-		"capability_input":    descriptor.InputSchema,
-		"reason":              map[string]any{"type": "string", "minLength": 1, "maxLength": 4000},
-		"idempotency_key":     map[string]any{"type": "string", "minLength": 8, "maxLength": 200},
-		"approval_preference": map[string]any{"type": "string", "enum": []string{"request_approval", "use_preapproval_if_available"}},
-		"expected_revisions":  map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
-		"assumptions":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		"capability_input":   descriptor.InputSchema,
+		"reason":             map[string]any{"type": "string", "minLength": 1, "maxLength": 4000},
+		"idempotency_key":    map[string]any{"type": "string", "minLength": 8, "maxLength": 200},
+		"expected_revisions": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+		"assumptions":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 	}, "capability_input", "reason", "idempotency_key"))
 	tool := &mcp.Tool{
 		Name:        name,
@@ -134,7 +132,7 @@ func (s *Server) addMCPCapabilityWriteTool(server *mcp.Server, descriptor capabi
 			s.recordToolCall(ctx, principal, descriptor.Name, input, "failed", descriptor.DataClassification)
 			return mcpPlainFailureResult("", err.Error()), nil
 		}
-		result, err := s.submitPreparedOperations(ctx, principal, plan.Operations, plan.ExpectedRevisions, strings.TrimSpace(input.Reason), strings.TrimSpace(input.IdempotencyKey), input.ApprovalPreference)
+		result, err := s.submitPreparedOperations(ctx, principal, plan.Operations, plan.ExpectedRevisions, strings.TrimSpace(input.Reason), strings.TrimSpace(input.IdempotencyKey))
 		if err != nil {
 			s.recordToolCall(ctx, principal, descriptor.Name, input, "failed", descriptor.DataClassification)
 			return mcpPlainFailureResult("", err.Error()), nil

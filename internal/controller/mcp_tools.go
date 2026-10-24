@@ -172,7 +172,7 @@ func (s *Server) authorizeCapabilitySchema(ctx context.Context, descriptor capab
 	if !s.capabilities.RBAC().Allows(grant.Role, descriptor.RBACPermission) {
 		return mcpauth.DenyRole(descriptor.RBACPermission)
 	}
-	return mcpauth.AllowDecision(authorization.ApprovalRequired, descriptor.RiskClass)
+	return mcpauth.AllowDecision(authorization.ApprovalAutomatic, descriptor.RiskClass)
 }
 
 func (s *Server) authorizeCapability(ctx context.Context, descriptor capability.Descriptor, input any) mcpauth.AuthorizationDecision {
@@ -526,22 +526,20 @@ func (s *Server) validatePlanRevisions(ctx context.Context, principal applicatio
 }
 
 type mcpSubmitChangesetInput struct {
-	ValidatedPlan      map[string]any `json:"validated_plan"`
-	ValidationDigest   string         `json:"validation_digest"`
-	IdempotencyKey     string         `json:"idempotency_key"`
-	Reason             string         `json:"reason"`
-	ApprovalPreference string         `json:"approval_preference,omitempty"`
+	ValidatedPlan    map[string]any `json:"validated_plan"`
+	ValidationDigest string         `json:"validation_digest"`
+	IdempotencyKey   string         `json:"idempotency_key"`
+	Reason           string         `json:"reason"`
 }
 
 func (s *Server) addMCPSubmitChangesetTool(server *mcp.Server, principal application.Principal) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "oboard_submit_changeset", Title: "Submit Changeset", Description: "ADVANCED / FALLBACK TOOL. Routine OBoard operations should use oboard_task then oboard_commit_task. Submit a client-carried validated plan through the same Changeset and Workflow service used by Fast Path.",
 		InputSchema: mustRawSchema(closedMCPSchema(map[string]any{
-			"validated_plan":      map[string]any{"type": "object"},
-			"validation_digest":   map[string]any{"type": "string", "minLength": 1},
-			"idempotency_key":     map[string]any{"type": "string", "minLength": 8, "maxLength": 200},
-			"reason":              map[string]any{"type": "string", "minLength": 1, "maxLength": 4000},
-			"approval_preference": map[string]any{"type": "string", "enum": []string{"request_approval", "use_preapproval_if_available"}},
+			"validated_plan":    map[string]any{"type": "object"},
+			"validation_digest": map[string]any{"type": "string", "minLength": 1},
+			"idempotency_key":   map[string]any{"type": "string", "minLength": 8, "maxLength": 200},
+			"reason":            map[string]any{"type": "string", "minLength": 1, "maxLength": 4000},
 		}, "validated_plan", "validation_digest", "idempotency_key", "reason")),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotationsWrite(true),
 	}, func(ctx context.Context, request *mcp.CallToolRequest, input mcpSubmitChangesetInput) (*mcp.CallToolResult, any, error) {
@@ -572,21 +570,14 @@ func (s *Server) submitMCPChangeset(ctx context.Context, principal application.P
 			return envelope, errors.New(decision.Reason)
 		}
 	}
-	result, err := s.submitPreparedOperations(ctx, principal, plan.Operations, plan.ExpectedRevisions, input.Reason, input.IdempotencyKey, input.ApprovalPreference)
+	result, err := s.submitPreparedOperations(ctx, principal, plan.Operations, plan.ExpectedRevisions, input.Reason, input.IdempotencyKey)
 	if err == nil {
 		s.recordToolCall(ctx, principal, "changesets.submit", input, result.Status, capability.DataInternal)
 	}
 	return result, err
 }
 
-func (s *Server) submitPreparedOperations(ctx context.Context, principal application.Principal, planOperations []mcpOperationRef, expectedRevisions map[string]string, reason, idempotencyKey, approvalPreference string) (*ToolEnvelope, error) {
-	mode := strings.TrimSpace(approvalPreference)
-	if mode == "" {
-		mode = "request_approval"
-	}
-	if mode != "request_approval" && mode != "use_preapproval_if_available" {
-		return nil, errors.New("approval_preference must be request_approval or use_preapproval_if_available")
-	}
+func (s *Server) submitPreparedOperations(ctx context.Context, principal application.Principal, planOperations []mcpOperationRef, expectedRevisions map[string]string, reason, idempotencyKey string) (*ToolEnvelope, error) {
 	base, err := json.Marshal(expectedRevisions)
 	if err != nil {
 		return nil, err
@@ -611,7 +602,7 @@ func (s *Server) submitPreparedOperations(ctx context.Context, principal applica
 			kind = "access_change"
 		}
 	}
-	item, err := s.automation.Create(ctx, principal, automation.CreateRequest{Reason: reason, IdempotencyKey: idempotencyKey, BaseRevisions: base, AutoApply: mode == "use_preapproval_if_available", Operations: operations})
+	item, err := s.automation.Create(ctx, principal, automation.CreateRequest{Reason: reason, IdempotencyKey: idempotencyKey, BaseRevisions: base, AutoApply: true, Operations: operations})
 	if err != nil {
 		return nil, err
 	}

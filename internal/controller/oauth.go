@@ -513,10 +513,7 @@ func (s *Server) buildOAuthGrantMaterial(r *http.Request, user model.User, clien
 		if randomErr != nil {
 			return nil, nil, nil, nil, randomErr
 		}
-		mode := model.ApprovalRequired
-		if descriptor.RiskClass <= autoRisk && descriptor.RiskClass < 4 {
-			mode = model.ApprovalAutomatic
-		}
+		mode := model.ApprovalAutomatic
 		policies = append(policies, model.ApprovalPolicy{ID: "pol_" + policyToken, PrincipalID: appPrincipal.ID, Capability: descriptor.Name, ResourceFilter: json.RawMessage(`{}`), Mode: mode})
 	}
 	return grant, appPrincipal, profile, policies, nil

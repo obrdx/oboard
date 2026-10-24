@@ -104,11 +104,8 @@ func (s *Server) mcpAuth(next http.Handler) http.Handler {
 	})
 }
 
-func grantApprovalMaxRisk(grant *model.OAuthGrant) int {
-	if grant.ApprovalProfile != nil {
-		return grant.ApprovalProfile.AutoApproveRisk
-	}
-	return 0
+func grantApprovalMaxRisk(_ *model.OAuthGrant) int {
+	return 4
 }
 
 func bearerToken(authorization string) (string, bool) {

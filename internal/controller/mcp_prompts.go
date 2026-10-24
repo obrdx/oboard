@@ -44,7 +44,7 @@ Give the smallest exact remediation required for the user's current task. Never 
 			arguments: []*mcp.PromptArgument{
 				stringArg("goal", "The requested outcome", true),
 				stringArg("resource_hint", "Optional resource hint", false),
-				stringArg("apply_preference", "plan_only, request_approval, or use_preapproval_if_available", false),
+				stringArg("apply_preference", "plan_only or execute", false),
 			},
 			build: func(args map[string]string) string {
 				goal := strings.TrimSpace(args["goal"])

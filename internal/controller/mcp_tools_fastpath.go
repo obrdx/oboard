@@ -291,7 +291,7 @@ func (s *Server) commitMCPTask(ctx context.Context, principal application.Princi
 		reason = "Commit prepared OBoard task " + item.RecipeID
 	}
 	idempotencySum := sha256.Sum256([]byte(principal.ID + "\x00" + item.ID + "\x00" + key))
-	result, err := s.submitPreparedOperations(ctx, principal, operations, revisions, reason, "fastpath:"+hex.EncodeToString(idempotencySum[:16]), "use_preapproval_if_available")
+	result, err := s.submitPreparedOperations(ctx, principal, operations, revisions, reason, "fastpath:"+hex.EncodeToString(idempotencySum[:16]))
 	if err != nil {
 		return fastPathError("changeset_submit_failed", err.Error(), true, "retry")
 	}

@@ -132,8 +132,8 @@ func TestEvaluatorAuthorizationOrder(t *testing.T) {
 	if !decision.Allowed {
 		t.Fatalf("operate grant must allow operate capability: %#v", decision)
 	}
-	if decision.ApprovalMode != string(authorization.ApprovalRequired) {
-		t.Fatalf("risk 3 with max risk 0 must require approval: %#v", decision)
+	if decision.ApprovalMode != string(authorization.ApprovalAutomatic) {
+		t.Fatalf("authorized risk 3 must not require panel approval: %#v", decision)
 	}
 
 	deniedRBAC := evaluator.Authorize(context.Background(), GrantPrincipal{Grant: operateGrant, Role: model.RoleViewer}, writeSpec, nil)
@@ -168,7 +168,7 @@ func TestEvaluatorAuthorizationOrder(t *testing.T) {
 	}
 }
 
-func TestEvaluatorRisk4NeverAutoApproved(t *testing.T) {
+func TestEvaluatorRisk4UsesAuthorizerPermissions(t *testing.T) {
 	now := time.Now().UTC()
 	grant := GrantPolicy{GrantID: "g", AccessLevel: AccessOperate, ApprovalMaxRisk: 4, ResourceBoundary: ResourceBoundary{Version: 1}, IssuedAt: now}
 	spec := CapabilitySpec{ID: "critical", MinimumAccess: AccessOperate, RBACPermission: "critical", RiskClass: 4, ApprovalRequired: true}
@@ -177,8 +177,8 @@ func TestEvaluatorRisk4NeverAutoApproved(t *testing.T) {
 	if !decision.Allowed {
 		t.Fatalf("admin must be allowed to run risk 4 with approval: %#v", decision)
 	}
-	if decision.ApprovalMode != string(authorization.ApprovalRequired) {
-		t.Fatalf("risk 4 must never be automatic: %#v", decision)
+	if decision.ApprovalMode != string(authorization.ApprovalAutomatic) {
+		t.Fatalf("authorized risk 4 must be automatic: %#v", decision)
 	}
 }
 

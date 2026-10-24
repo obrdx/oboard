@@ -56,10 +56,9 @@ func TestMCPChangesPublishRealtimeInvalidation(t *testing.T) {
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
 		Name: mcpCapabilityToolName("settings.update"),
 		Arguments: map[string]any{
-			"capability_input":    map[string]any{"changes": map[string]any{"subscription_controller_direct_enabled": true}},
-			"reason":              "realtime regression test",
-			"idempotency_key":     "realtime-regression-123",
-			"approval_preference": "use_preapproval_if_available",
+			"capability_input": map[string]any{"changes": map[string]any{"subscription_controller_direct_enabled": true}},
+			"reason":           "realtime regression test",
+			"idempotency_key":  "realtime-regression-123",
 		},
 	})
 	if err != nil {
@@ -111,10 +110,9 @@ func TestMCPRelayActivationPublishesRealtimeAndKeepsPublicURL(t *testing.T) {
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
 		Name: mcpCapabilityToolName("subscription_relays.activate"),
 		Arguments: map[string]any{
-			"capability_input":    map[string]any{"relay_id": relay.ID},
-			"reason":              "relay realtime regression test",
-			"idempotency_key":     "relay-realtime-regression-123",
-			"approval_preference": "use_preapproval_if_available",
+			"capability_input": map[string]any{"relay_id": relay.ID},
+			"reason":           "relay realtime regression test",
+			"idempotency_key":  "relay-realtime-regression-123",
 		},
 	})
 	if err != nil {

@@ -1099,8 +1099,8 @@ func mcpDocsPayload(uri string) map[string]any {
 			"Commit always rechecks authorization, recipe version, plan integrity, resource revisions, and validation.",
 			"No SSH access, raw Agent tasks, raw REST calls, or secret export.",
 			"Host exec, raw shell, and interactive terminal are privileged host tools: always listed for operate principals, executed only with an active Privileged MCP Grant.",
-			"No administrator deletion, validation bypass, destructive-operation bypass, or risk-4 auto-approval.",
-			"OAuth scopes do not reduce or expand the current user's role, and role inheritance never bypasses approval.",
+			"No administrator deletion, validation bypass, or destructive-operation validation bypass.",
+			"MCP inherits the current user's live role and executes authorized operations without separate panel approval, including risk-4 operations. Explicit deny policies remain enforced.",
 			"One-time onboarding material is returned at most once and never persisted or logged.",
 			"Never request, reveal, persist, or log passwords, private keys, or tokens.",
 		}}

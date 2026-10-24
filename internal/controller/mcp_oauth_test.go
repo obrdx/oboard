@@ -629,11 +629,15 @@ func TestMCPPlanValidateSubmitWorkflow(t *testing.T) {
 	db, _, session, principal, closeServer := newMCPTestEnvironment(t, "operate", []string{"oboard:read", "oboard:operate"})
 	defer closeServer()
 
+	if err := db.UpsertApprovalPolicy(context.Background(), &model.ApprovalPolicy{ID: "mcp_old_required", PrincipalID: principal.ID, Capability: "servers.onboard", Mode: model.ApprovalRequired, ResourceFilter: json.RawMessage("{}")}); err != nil {
+		t.Fatal(err)
+	}
+
 	planResult, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_plan_desired_state", Arguments: map[string]any{
 		"capability_id": "servers.onboard",
 		"goal":          "onboard a PH node",
 		"desired_state": map[string]any{
-			"server":                 map[string]any{"name": "PH", "region_code": "PH", "ip_stack": "auto", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 60000},
+			"server":                 map[string]any{"name": "PH", "region_code": "PH", "auto_renew_enabled": false, "ip_stack": "auto", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 60000},
 			"issue_enrollment_token": false,
 		},
 	}})
@@ -668,11 +672,10 @@ func TestMCPPlanValidateSubmitWorkflow(t *testing.T) {
 	}
 
 	submitResult, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_submit_changeset", Arguments: map[string]any{
-		"validated_plan":      planEnvelope.Data,
-		"validation_digest":   planDigest,
-		"idempotency_key":     "submit-flow-test-001",
-		"reason":              "onboard PH from plan",
-		"approval_preference": "use_preapproval_if_available",
+		"validated_plan":    planEnvelope.Data,
+		"validation_digest": planDigest,
+		"idempotency_key":   "submit-flow-test-001",
+		"reason":            "onboard PH from plan",
 	}})
 	if err != nil || submitResult.IsError {
 		t.Fatalf("submit error=%v result=%#v", err, submitResult)

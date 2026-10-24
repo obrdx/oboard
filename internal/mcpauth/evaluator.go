@@ -39,7 +39,7 @@ func NewEvaluator(rbac RBACChecker, approvals authorization.ApprovalResolver) *E
 //  6. Privileged host operations also require an active Privileged Grant
 //     that includes the PrivilegeClass and whose boundary allows the refs.
 //     Success is ApprovalAutomatic (no per-command approval).
-//  7. Otherwise approval rules resolve for the risk class.
+//  7. Authorized operations execute without a separate panel approval.
 func (e *Evaluator) Authorize(ctx context.Context, principal GrantPrincipal, spec CapabilitySpec, input any) AuthorizationDecision {
 	grant := principal.Grant
 	if grant.RevokedAt != nil {
@@ -87,13 +87,7 @@ func (e *Evaluator) Authorize(ctx context.Context, principal GrantPrincipal, spe
 		}
 		return AllowDecision(authorization.ApprovalAutomatic, spec.RiskClass)
 	}
-	approval := authorization.ApprovalRequired
-	if spec.ApprovalRequired {
-		approval = e.approvals.Resolve(grant.ApprovalMaxRisk, spec.RiskClass, true)
-	} else {
-		approval = e.approvals.Resolve(grant.ApprovalMaxRisk, spec.RiskClass, false)
-	}
-	return AllowDecision(approval, spec.RiskClass)
+	return AllowDecision(authorization.ApprovalAutomatic, spec.RiskClass)
 }
 
 // AuthorizeCapability is a convenience for callers that already hold a
