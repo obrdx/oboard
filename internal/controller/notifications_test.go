@@ -485,7 +485,7 @@ func TestCertificateFailureNotificationCoversAllIssuersAndRedactsEABSecret(t *te
 	sentMu.Lock()
 	message := sent[0]
 	sentMu.Unlock()
-	if !strings.Contains(message.title, "证书签发失败") || !strings.Contains(message.body, "Google Trust Services") || !strings.Contains(message.body, "notify-key-id") || !strings.Contains(message.body, "externalAccountRequired") {
+	if !strings.Contains(message.title, "证书签发未完成") || !strings.Contains(message.body, "外部账号绑定异常") || strings.Contains(message.body, "notify-key-id") || strings.Contains(message.body, "externalAccountRequired") {
 		t.Fatalf("Google certificate failure message = %#v", message)
 	}
 	if strings.Contains(message.body, hmacKey) {
@@ -511,7 +511,7 @@ func TestCertificateFailureNotificationCoversAllIssuersAndRedactsEABSecret(t *te
 	sentMu.Lock()
 	message = sent[1]
 	sentMu.Unlock()
-	if !strings.Contains(message.body, "Let's Encrypt") || !strings.Contains(message.body, "DNS validation failed") {
+	if !strings.Contains(message.body, "le.example.com") || !strings.Contains(message.body, "DNS 验证未通过") {
 		t.Fatalf("Let's Encrypt failure message = %#v", message)
 	}
 }
@@ -569,7 +569,7 @@ func TestHTTPCertificateTaskFailureQueuesCertificateNotification(t *testing.T) {
 	}
 	sentMu.Lock()
 	defer sentMu.Unlock()
-	if !strings.Contains(sent[0], "证书签发失败 · HTTP 证书") || !strings.Contains(sent[0], "HTTP-01 验证未通过") {
+	if !strings.Contains(sent[0], "证书签发未完成 · HTTP 证书") || !strings.Contains(sent[0], "HTTP-01 验证未通过") {
 		t.Fatalf("certificate notification = %q", sent[0])
 	}
 }

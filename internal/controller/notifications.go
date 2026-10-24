@@ -123,8 +123,8 @@ var defaultNotificationTemplates = map[string]model.NotificationTemplate{
 		Body:  "服务器：{{.ServerName}}\n任务：#{{.TaskID}} {{.TaskType}}\n原因：{{.Error}}\n时间：{{.Time}}",
 	},
 	notificationCertificateFailed: {
-		Title: "证书签发失败 · {{.CertificateName}}",
-		Body:  "证书：{{.CertificateName}}\n域名：{{.Domains}}\n签发机构：{{.Issuer}}\n外部账号：{{.EABKeyID}}\n原因：{{.Error}}\n时间：{{.Time}}",
+		Title: "证书签发未完成 · {{.CertificateName}}",
+		Body:  "域名：{{.Domains}}\n原因：{{.Error}}\n时间：{{.Time}}",
 	},
 	notificationCertificateExpiry: {
 		Title: "证书到期提醒 · {{.CertificateName}}",
@@ -1567,9 +1567,8 @@ func (s *Server) notifyCertificateIssueFailure(ctx context.Context, certificate 
 	if errorText == "" {
 		errorText = "签发服务未返回具体原因"
 	}
-	if len(errorText) > 1000 {
-		errorText = errorText[len(errorText)-1000:]
-	}
+	detail := trimACMEError(errorText)
+	errorText = certificateFailureSummary(errorText)
 	attempt := time.Now().UTC()
 	if certificate.LastRenewalAttemptAt != nil {
 		attempt = certificate.LastRenewalAttemptAt.UTC()
@@ -1577,7 +1576,7 @@ func (s *Server) notifyCertificateIssueFailure(ctx context.Context, certificate 
 	s.enqueueNotificationEvent(ctx, notificationEvent{
 		Name:    notificationCertificateFailed,
 		Key:     fmt.Sprintf("certificate:%d:failed:%s", certificate.ID, attempt.Format(time.RFC3339Nano)),
-		Context: notificationContext{CertificateID: certificate.ID},
+		Context: notificationContext{CertificateID: certificate.ID, FailureLog: detail},
 		Data: map[string]string{
 			"CertificateName": certificate.Name,
 			"Domains":         notificationCertificateDomains(certificate),

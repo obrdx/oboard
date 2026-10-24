@@ -19130,7 +19130,7 @@ const fallbackNotificationTemplates: Record<string, NotificationTemplate> = {
   subscription_abnormal: { title: '订阅异常提醒 · {{.UserName}}', body: '{{.UserName}} 的订阅在{{.Window}}内出现 {{.Count}} 次异常\n常见原因：订阅链接被分享、客户端配置错误或链接失效\n请登录面板检查该用户的订阅状态。\n时间：{{.Time}}' },
   task_failed: { title: '任务失败 · {{.TaskType}}', body: '服务器：{{.ServerName}}\n任务：#{{.TaskID}} {{.TaskType}}\n原因：{{.Error}}\n时间：{{.Time}}' },
   task_timeout: { title: '任务超时 · {{.TaskType}}', body: '服务器：{{.ServerName}}\n任务：#{{.TaskID}} {{.TaskType}}\n原因：{{.Error}}\n时间：{{.Time}}' },
-  certificate_issuance_failed: { title: '证书签发失败 · {{.CertificateName}}', body: '证书：{{.CertificateName}}\n域名：{{.Domains}}\n签发机构：{{.Issuer}}\n外部账号：{{.EABKeyID}}\n原因：{{.Error}}\n时间：{{.Time}}' },
+  certificate_issuance_failed: { title: '证书签发未完成 · {{.CertificateName}}', body: '域名：{{.Domains}}\n原因：{{.Error}}\n时间：{{.Time}}' },
   certificate_expiring: { title: '证书到期提醒 · {{.CertificateName}}', body: '证书：{{.CertificateName}}\n域名：{{.Domains}}\n签发机构：{{.Issuer}}\n状态：{{.ExpiryStatus}}\n到期时间：{{.ExpiresAt}}' },
   server_expiring: { title: '服务器到期提醒 · {{.ServerName}}', body: '{{.ServerName}}\n状态：{{.Status}}\n剩余：{{.RemainingDays}} 天\n到期：{{.ExpiresAt}}\n时间：{{.Time}}' },
   backup_failed: { title: '自动备份失败 · {{.Stage}}', body: '{{.Stage}}未完成\n原因：{{.Error}}\n时间：{{.Time}}' },

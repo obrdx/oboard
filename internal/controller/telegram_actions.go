@@ -31,6 +31,7 @@ const (
 )
 
 type notificationContext struct {
+	FailureLog    string `json:"failure_log,omitempty"`
 	ServerID      int64  `json:"server_id,omitempty"`
 	TaskID        int64  `json:"task_id,omitempty"`
 	TaskType      string `json:"task_type,omitempty"`
@@ -124,6 +125,9 @@ func telegramNotificationActionSpecs(in telegramActionInput) []telegramActionSpe
 			add(1, "retry_delivery", "重试下发", nil)
 		}
 	case notificationCertificateFailed, notificationCertificateExpiry:
+		if in.Event == notificationCertificateFailed && in.Context.CertificateID > 0 && in.Context.FailureLog != "" {
+			add(0, "view_certificate_log", "查看详细日志", nil)
+		}
 		if in.CertificateIssueAllowed && in.Context.CertificateID > 0 {
 			add(1, "issue_certificate", "重新签发", nil)
 		}
@@ -474,8 +478,12 @@ func (s *Server) handleTelegramActionCallback(ctx context.Context, channel teleg
 			s.telegramBotAnswerCallback(ctx, botToken, callback.ID, telegramCallbackToast(execErr.Error()))
 			return
 		}
-		if err := s.presentTelegramActionMessage(ctx, botToken, chatID, messageID, payload, payload.Notice+"\n\n"+text); err != nil {
-			_ = s.editTelegramMarkup(ctx, botToken, chatID, messageID, payload.Notice+"\n\n"+text, "")
+		display := payload.Notice + "\n\n" + text
+		if payload.Action == "view_certificate_log" || payload.Action == "hide_certificate_log" {
+			display = text
+		}
+		if err := s.presentTelegramActionMessage(ctx, botToken, chatID, messageID, payload, display); err != nil {
+			_ = s.editTelegramMarkup(ctx, botToken, chatID, messageID, display, "")
 		}
 		s.telegramBotAnswerCallback(ctx, botToken, callback.ID, "已更新")
 	}
@@ -527,6 +535,15 @@ func (s *Server) presentTelegramActionMessage(ctx context.Context, token string,
 		return nil
 	}
 	specs := s.telegramActionsForDelivery(ctx, model.NotificationDelivery{Event: payload.Event, Title: payload.Notice, ContextJSON: payload.ContextJSON})
+	if payload.Action == "view_certificate_log" {
+		for i := range specs {
+			if specs[i].Action == "view_certificate_log" {
+				specs[i].Label = "收起日志"
+				specs[i].Action = "hide_certificate_log"
+				specs[i].Payload.Action = "hide_certificate_log"
+			}
+		}
+	}
 	markup, hashes, err := s.issueTelegramKeyboard(ctx, chatID, messageID, specs, telegramActionOfferTTL)
 	if err != nil {
 		return err
@@ -606,6 +623,11 @@ func (s *Server) authorizeTelegramAction(principal application.Principal, role m
 			return err
 		}
 		return requireServer(payload.ServerID)
+	case "view_certificate_log", "hide_certificate_log":
+		if err := requireAdmin(); err != nil {
+			return err
+		}
+		return requireCapability("certificates.list")
 	case "issue_certificate":
 		return requireCapability("certificates.issue")
 	case "sync_dns", "recheck_time":
@@ -722,6 +744,18 @@ func (s *Server) telegramIncidentPreviewText(ctx context.Context, payload telegr
 
 func (s *Server) executeTelegramAction(ctx context.Context, user model.User, role model.Role, principal application.Principal, payload telegramActionPayload, confirmToken string) (string, error) {
 	switch payload.Action {
+	case "view_certificate_log", "hide_certificate_log":
+		if err := s.authorizeTelegramAction(principal, role, user, payload); err != nil {
+			return "", err
+		}
+		if payload.Action == "hide_certificate_log" {
+			return payload.Notice, nil
+		}
+		detail := parseNotificationContext(payload.ContextJSON).FailureLog
+		if strings.TrimSpace(detail) == "" {
+			return "", errors.New("这条通知没有保留日志，请在证书页面查看")
+		}
+		return telegramCertificateLogText(detail), nil
 	case "view_server":
 		if err := s.authorizeTelegramAction(principal, role, user, payload); err != nil {
 			return "", err
