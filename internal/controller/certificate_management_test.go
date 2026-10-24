@@ -467,6 +467,7 @@ func TestManualDNSACMEIssueAndResume(t *testing.T) {
 	scriptBody := `#!/bin/sh
 set -eu
 mode=""
+force=0
 cert_file=""
 fullchain_file=""
 key_file=""
@@ -474,6 +475,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --issue) mode=issue ;;
     --renew) mode=renew ;;
+    --force) force=1 ;;
     --install-cert) mode=install ;;
     --cert-file) shift; cert_file=$1 ;;
     --fullchain-file) shift; fullchain_file=$1 ;;
@@ -485,6 +487,10 @@ if [ "$mode" = issue ]; then
   echo "Domain: '_acme-challenge.entry.example.com'"
   echo "TXT value: 'manual-token'"
   exit 1
+fi
+if [ "$mode" = renew ] && [ "$force" != 1 ]; then
+  echo "Skipping. Next renewal time is: 2099-01-01T00:00:00Z"
+  exit 2
 fi
 if [ "$mode" = install ]; then
   cp "$FAKE_ACME_CERT" "$cert_file"

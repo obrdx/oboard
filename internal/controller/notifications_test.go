@@ -735,6 +735,17 @@ func TestCertificateRenewalExpiryNotificationRequiresUserAction(t *testing.T) {
 	expiresAt := time.Now().UTC().Add(10 * 24 * time.Hour)
 	manual := model.Certificate{Name: "手动证书", PrimaryDomain: "manual.example.com", Domains: []string{"manual.example.com"}, ChallengeType: "imported", ACMECA: "letsencrypt", Status: model.CertificateStatusReady, NotAfter: &expiresAt}
 	automatic := model.Certificate{Name: "自动证书", PrimaryDomain: "automatic.example.com", Domains: []string{"automatic.example.com"}, ChallengeType: model.CertificateChallengeHTTP, IssuanceServerID: &server.ID, ACMECA: "letsencrypt", Status: model.CertificateStatusReady, NotAfter: &expiresAt, AutoRenew: true}
+	boundaryExpiry := time.Now().UTC().Add(14 * 24 * time.Hour)
+	automatic.NotAfter = &boundaryExpiry
+	laterExpiry := time.Now().UTC().Add(15 * 24 * time.Hour)
+	later := automatic
+	later.Name = "尚未到续期时间"
+	later.PrimaryDomain = "later.example.com"
+	later.Domains = []string{later.PrimaryDomain}
+	later.NotAfter = &laterExpiry
+	if err := db.CreateCertificate(context.Background(), &later); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.CreateCertificate(context.Background(), &manual); err != nil {
 		t.Fatal(err)
 	}
@@ -764,6 +775,13 @@ func TestCertificateRenewalExpiryNotificationRequiresUserAction(t *testing.T) {
 	}
 	if storedAutomatic.Status != model.CertificateStatusIssuing {
 		t.Fatalf("automatic certificate status = %q", storedAutomatic.Status)
+	}
+	storedLater, err := db.GetCertificate(context.Background(), later.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedLater.Status != model.CertificateStatusReady || storedLater.LastRenewalAttemptAt != nil {
+		t.Fatalf("certificate outside 14-day window was renewed: %#v", storedLater)
 	}
 }
 

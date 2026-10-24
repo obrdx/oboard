@@ -1541,16 +1541,11 @@ func (s *Server) notifyHTTPCertificateTaskFailure(ctx context.Context, task mode
 	if err != nil {
 		return
 	}
-	certificate.Status = model.CertificateStatusFailed
-	certificate.LastError = notificationErrorText(errorText)
 	if certificate.LastRenewalAttemptAt == nil {
 		now := time.Now().UTC()
 		certificate.LastRenewalAttemptAt = &now
 	}
-	if err := s.store.UpdateCertificate(ctx, certificate); err != nil {
-		log.Printf("certificate %d: persist HTTP-01 failure: %v", certificate.ID, err)
-	}
-	s.notifyCertificateIssueFailure(ctx, certificate)
+	s.markCertificateIssueFailed(ctx, certificate, errors.New(notificationErrorText(errorText)))
 }
 
 func (s *Server) notifyCertificateIssueFailure(ctx context.Context, certificate *model.Certificate) {

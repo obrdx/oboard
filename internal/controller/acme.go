@@ -22,7 +22,12 @@ var (
 	acmeTXTValuePattern = regexp.MustCompile(`(?i)TXT\s+value:\s*['"]([^'"]+)['"]`)
 )
 
+const certificateRenewalInterval = 12 * time.Hour
+
 func (s *Server) startACMECertificateIssue(ctx context.Context, certificate *model.Certificate, renew, resumeManual bool) error {
+	if certificate.ChallengeType == model.CertificateChallengeHTTP && (certificate.IssuanceServerID == nil || *certificate.IssuanceServerID <= 0) {
+		return errors.New("HTTP-01 certificate has no issuance server")
+	}
 	if certificate.ACMECA == "google" && certificate.ChallengeType == model.CertificateChallengeHTTP {
 		return errors.New("Google Trust Services 的 EAB 目前仅支持面板 DNS-01 或手动 DNS-01")
 	}
@@ -73,6 +78,16 @@ func (s *Server) releaseCertificateIssue(id int64) {
 }
 
 func (s *Server) markCertificateIssueFailed(ctx context.Context, certificate *model.Certificate, issueErr error) {
+	if strings.Contains(strings.ToLower(issueErr.Error()), "skipping. next renewal time is:") && s.storedCertificateUsable(certificate) {
+		certificate.Status = model.CertificateStatusReady
+		certificate.LastError = ""
+		certificate.ValidationRecords = nil
+		if err := s.store.UpdateCertificate(ctx, certificate); err != nil {
+			log.Printf("certificate %d: persist skipped renewal: %v", certificate.ID, err)
+		}
+		s.signalConfigurationReconcile()
+		return
+	}
 	certificate.Status = model.CertificateStatusFailed
 	certificate.LastError = trimACMEError(issueErr.Error())
 	if _, hmacKey, err := s.certificateEABCredentials(ctx, certificate); err == nil && hmacKey != "" {
@@ -83,6 +98,19 @@ func (s *Server) markCertificateIssueFailed(ctx context.Context, certificate *mo
 	}
 	s.signalConfigurationReconcile()
 	s.notifyCertificateIssueFailure(ctx, certificate)
+}
+
+func (s *Server) storedCertificateUsable(certificate *model.Certificate) bool {
+	key, err := security.DecryptSecret(s.sessionSecret, "certificate-private-key", certificate.PrivateKeyEncrypted)
+	if err != nil {
+		return false
+	}
+	material, err := validateCertificateMaterial(certificate.CertificatePEM, certificate.FullchainPEM, key, certificate.Domains, certificateMaterialPolicy{})
+	if err != nil {
+		return false
+	}
+	now := time.Now()
+	return !now.Before(material.Leaf.NotBefore) && now.Before(material.Leaf.NotAfter)
 }
 
 // markCertificateServersForSync makes completed certificate issuance and
@@ -271,7 +299,7 @@ func (s *Server) certificateEABCredentials(ctx context.Context, certificate *mod
 }
 
 func resumeACMEArgs(home string, certificate model.Certificate) []string {
-	args := []string{"--home", home, "--config-home", home, "--server", certificate.ACMECA, "--renew", "--ecc", "--yes-I-know-dns-manual-mode-enough-go-ahead-please", "-d", certificate.PrimaryDomain}
+	args := []string{"--home", home, "--config-home", home, "--server", certificate.ACMECA, "--renew", "--force", "--ecc", "--yes-I-know-dns-manual-mode-enough-go-ahead-please", "-d", certificate.PrimaryDomain}
 	return args
 }
 
@@ -387,7 +415,7 @@ func trimACMEError(value string) string {
 
 func (s *Server) StartCertificateRenewal(ctx context.Context) {
 	s.renewCertificates(ctx)
-	ticker := time.NewTicker(12 * time.Hour)
+	ticker := time.NewTicker(certificateRenewalInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -405,14 +433,22 @@ func (s *Server) renewCertificates(ctx context.Context) {
 		log.Printf("certificate renewal: list certificates: %v", err)
 		return
 	}
-	deadline := time.Now().Add(30 * 24 * time.Hour)
+	now := time.Now()
+	deadline := now.Add(30 * 24 * time.Hour)
+	renewalDeadline := now.Add(14 * 24 * time.Hour)
 	for i := range certificates {
 		certificate := &certificates[i]
-		if certificate.Status != model.CertificateStatusReady || certificate.NotAfter == nil || certificate.NotAfter.After(deadline) {
+		if (certificate.Status != model.CertificateStatusReady && certificate.Status != model.CertificateStatusFailed) || certificate.NotAfter == nil || certificate.NotAfter.After(deadline) {
 			continue
 		}
 		if !certificate.AutoRenew || certificate.ChallengeType == model.CertificateChallengeDNSManual || certificate.ChallengeType == "imported" {
 			s.notifyCertificateExpiring(ctx, certificate)
+			continue
+		}
+		if certificate.NotAfter.After(renewalDeadline) {
+			continue
+		}
+		if certificate.LastRenewalAttemptAt != nil && now.Sub(*certificate.LastRenewalAttemptAt) < certificateRenewalInterval {
 			continue
 		}
 		if err := s.startACMECertificateIssue(ctx, certificate, true, false); err != nil {
