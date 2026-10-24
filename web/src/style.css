@@ -25406,10 +25406,6 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
   border-color: var(--control-border);
   border-radius: var(--radius-sm);
 }
-:is(.ui-input, .ui-select, .custom-select-trigger, .searchable-multi-select-trigger):focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 3px;
-}
 .ui-btn:active:not(:disabled) { filter: brightness(0.94); }
 .ui-switch-track { background-color: var(--control-border); }
 .ui-switch.is-checked .ui-switch-thumb { background-color: var(--primary-contrast); }
