@@ -17986,16 +17986,16 @@ select:-webkit-autofill {
   background: rgba(255, 255, 255, 0.28);
 }
 
-.theme-selector--hero {
+.theme-selector.theme-selector--hero {
   width: 120px;
   border-color: rgba(255, 255, 255, 0.2);
   background: rgba(255, 255, 255, 0.1);
 }
-.theme-selector--hero::before { background: rgba(255, 255, 255, 0.2); }
-.theme-selector--hero .theme-selector-option { color: rgba(255, 255, 255, 0.62); }
-.theme-selector--hero .theme-selector-option:hover,
-.theme-selector--hero .theme-selector-option[aria-pressed="true"] { color: #fff; }
-.theme-selector--hero .theme-selector-option:focus-visible { outline-color: #fff; }
+.theme-selector.theme-selector--hero::before { background: rgba(255, 255, 255, 0.2); box-shadow: none; }
+.theme-selector.theme-selector--hero .theme-selector-option { color: rgba(255, 255, 255, 0.62); }
+.theme-selector.theme-selector--hero .theme-selector-option:hover,
+.theme-selector.theme-selector--hero .theme-selector-option[aria-pressed="true"] { color: #fff; }
+.theme-selector.theme-selector--hero .theme-selector-option:focus-visible { outline-color: #fff; }
 
 .login-panel {
   position: relative;
