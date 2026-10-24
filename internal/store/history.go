@@ -433,8 +433,8 @@ func HistoryPathFor(corePath string) string {
 		ext = ".sqlite"
 	}
 	history := stem + "-history" + ext
-	if query != "" {
-		return "file:" + history + "?" + query
+	if query != "" || strings.HasPrefix(corePath, "file:") {
+		return (&url.URL{Scheme: "file", Path: history, RawQuery: query}).String()
 	}
 	return history
 }
@@ -559,6 +559,23 @@ func (s *Store) dropLegacyHistoryTables(ctx context.Context) error {
 	return tx.Commit()
 }
 
+func (s *Store) finishHistoryMigration(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, table := range migratedHistoryTables {
+		if _, err := tx.ExecContext(ctx, `drop table if exists `+table); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `update oboard_history_migration set status='complete',completed_at=?,last_error='',updated_at=? where id=?`, now(), now(), historyMigrationStatusID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) openHistory(ctx context.Context, base SQLiteOptions, restore, allowHistoryReset bool) error {
 	if strings.TrimSpace(s.historyPath) == "" {
 		s.recordHistoryError(errors.New("history database path is empty"))
@@ -576,6 +593,9 @@ func (s *Store) openHistory(ctx context.Context, base SQLiteOptions, restore, al
 		return err
 	}
 	complete := state.Status == "complete"
+	if complete && s.legacyHistory {
+		return errors.New("core history tables exist after completed cutover; preserve both databases and reconcile before retrying")
+	}
 	if complete {
 		if !historyFileExists(s.historyPath) && !sqliteMemoryDatabase(s.historyPath) {
 			if restore && allowHistoryReset {
@@ -640,10 +660,7 @@ func (s *Store) openHistory(ctx context.Context, base SQLiteOptions, restore, al
 		_ = s.setHistoryMigrationStatus(ctx, "failed", err.Error())
 		return err
 	}
-	if err := s.setHistoryMigrationStatus(ctx, "complete", ""); err != nil {
-		return err
-	}
-	if err := s.dropLegacyHistoryTables(ctx); err != nil {
+	if err := s.finishHistoryMigration(ctx); err != nil {
 		return err
 	}
 	if err := s.attachHistoryReader(base); err != nil {
@@ -821,7 +838,7 @@ func (s *Store) attachHistoryReader(base SQLiteOptions) error {
 
 func openHistorySQLite(path string, opts SQLiteOptions, restore bool) (*countingDB, error) {
 	if !sqliteMemoryDatabase(path) {
-		if dir := filepath.Dir(path); dir != "." && dir != "" {
+		if dir := filepath.Dir(sqliteFilesystemPath(path)); dir != "." && dir != "" {
 			if err := os.MkdirAll(dir, 0o700); err != nil {
 				return nil, err
 			}
@@ -913,112 +930,99 @@ func (s *Store) migrateHistoryTable(ctx context.Context, table string) error {
 			return fmt.Errorf("history migration schema mismatch for %s: target is missing column %s", table, column.name)
 		}
 	}
-	var cursor int64
-	var complete int
-	err = s.db.QueryRowContext(ctx, `select cursor,complete from oboard_history_migration_tables where table_name=?`, table).Scan(&cursor, &complete)
-	if errors.Is(err, sql.ErrNoRows) {
-		if _, err := s.db.ExecContext(ctx, `insert into oboard_history_migration_tables(table_name,updated_at) values(?,?)`, table, now()); err != nil {
-			return err
-		}
-		complete = 0
-	} else if err != nil {
-		return err
-	}
-	if complete != 0 {
-		return nil
-	}
-	columnNames := make([]string, len(columns))
-	for i := range columns {
-		columnNames[i] = columns[i].name
-	}
-	selectSQL := `select rowid,` + strings.Join(columnNames, ",") + ` from ` + table + ` where rowid>? order by rowid limit ?`
-	insertSQL := `insert or ignore into ` + table + `(` + strings.Join(columnNames, ",") + `) values(` + strings.TrimSuffix(strings.Repeat("?,", len(columnNames)), ",") + `)`
-	verifySQL := historyVerifySQL(table, columns)
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		rows, err := s.db.QueryContext(ctx, selectSQL, cursor, historyMigrationBatchSize)
-		if err != nil {
-			return err
-		}
-		tx, err := s.history.BeginTx(ctx, nil)
-		if err != nil {
-			_ = rows.Close()
-			return err
-		}
-		lastCursor := cursor
-		batchRows := 0
-		for rows.Next() {
-			values := make([]any, len(columns)+1)
-			pointers := make([]any, len(values))
-			for i := range values {
-				pointers[i] = &values[i]
-			}
-			if err := rows.Scan(pointers...); err != nil {
-				_ = rows.Close()
-				_ = tx.Rollback()
-				return err
-			}
-			lastCursor = values[0].(int64)
-			row := values[1:]
-			if _, err := tx.ExecContext(ctx, insertSQL, row...); err != nil {
-				_ = rows.Close()
-				_ = tx.Rollback()
-				return fmt.Errorf("copy %s rowid %d: %w", table, lastCursor, err)
-			}
-			verifyArgs := append(append([]any(nil), row...), row...)
-			var matches int
-			if err := tx.QueryRowContext(ctx, verifySQL, verifyArgs...).Scan(&matches); err != nil {
-				_ = rows.Close()
-				_ = tx.Rollback()
-				return fmt.Errorf("verify %s rowid %d: %w", table, lastCursor, err)
-			}
-			if matches != 1 {
-				_ = rows.Close()
-				_ = tx.Rollback()
-				return fmt.Errorf("history migration conflict in %s at rowid %d: primary key exists with different content", table, lastCursor)
-			}
-			batchRows++
-		}
-		readErr := rows.Err()
-		_ = rows.Close()
-		if readErr != nil {
-			_ = tx.Rollback()
-			return readErr
-		}
-		if batchRows == 0 {
-			_ = tx.Rollback()
-			break
-		}
-		if err := tx.Commit(); err != nil {
-			return err
-		}
-		cursor = lastCursor
-		if _, err := s.db.ExecContext(ctx, `update oboard_history_migration_tables set cursor=?,copied=copied+?,updated_at=? where table_name=?`, cursor, batchRows, now(), table); err != nil {
-			return err
-		}
-	}
-	var sourceCount, targetCount int64
-	if err := s.db.QueryRowContext(ctx, `select count(*) from `+table).Scan(&sourceCount); err != nil {
-		return err
-	}
-	if err := s.history.QueryRowContext(ctx, `select count(*) from `+table).Scan(&targetCount); err != nil {
-		return err
-	}
-	if sourceCount != targetCount {
-		return fmt.Errorf("history migration count mismatch for %s: source=%d target=%d", table, sourceCount, targetCount)
-	}
-	_, err = s.db.ExecContext(ctx, `update oboard_history_migration_tables set complete=1,verified=?,last_error='',updated_at=? where table_name=?`, sourceCount, now(), table)
-	return err
+	// The old Controller may have changed the source after an updater rollback.
+	// Reconcile every row, including tables previously marked complete.
+	return s.reconcileHistoryTable(ctx, table, columns)
 }
 
-func historyVerifySQL(table string, columns []historyTableColumn) string {
-	parts := make([]string, len(columns))
-	for i := range columns {
-		parts[i] = columns[i].name + ` is ?`
+func (s *Store) reconcileHistoryTable(ctx context.Context, table string, columns []historyTableColumn) error {
+	conn, err := s.history.Conn(ctx)
+	if err != nil {
+		return err
 	}
-	return `select count(*) from ` + table + ` where ` + strings.Join(parts, ` and `)
+	defer conn.Close()
+	sourcePath, err := filepath.Abs(sqliteFilesystemPath(s.path))
+	if err != nil {
+		return err
+	}
+	sourceURI := (&url.URL{Scheme: "file", Path: sourcePath, RawQuery: "mode=ro"}).String()
+	if _, err := conn.ExecContext(ctx, `attach database ? as migration_source`, sourceURI); err != nil {
+		return err
+	}
+	defer conn.ExecContext(context.Background(), `detach database migration_source`)
+	names := make([]string, len(columns))
+	keys := []string{}
+	updates := []string{}
+	differences := []string{}
+	for i, column := range columns {
+		names[i] = strconv.Quote(column.name)
+		if column.pk > 0 {
+			keys = append(keys, `target.`+names[i]+` is source.`+names[i])
+		}
+		updates = append(updates, names[i]+`=excluded.`+names[i])
+		differences = append(differences, names[i]+` is not excluded.`+names[i])
+	}
+	if len(keys) == 0 {
+		return fmt.Errorf("history migration source table %s has no primary key", table)
+	}
+	cols := strings.Join(names, ",")
+	source := `migration_source.` + table
+	upsert := `insert into main.` + table + `(` + cols + `) select ` + cols + ` from ` + source +
+		` where rowid>? and rowid<=? on conflict do update set ` + strings.Join(updates, ",") + ` where ` + strings.Join(differences, ` or `)
+	if _, err := s.db.ExecContext(ctx, `insert into oboard_history_migration_tables(table_name,cursor,copied,verified,complete,updated_at) values(?,0,0,0,0,?)
+		on conflict(table_name) do update set cursor=0,copied=0,verified=0,complete=0,last_error='',updated_at=excluded.updated_at`, table, now()); err != nil {
+		return err
+	}
+	prune := `delete from main.` + table + ` where rowid in (select target.rowid from main.` + table + ` target
+		where target.rowid>? and target.rowid<=? and not exists(select 1 from ` + source + ` source where ` + strings.Join(keys, ` and `) + `))`
+	pruneCursor := int64(-1 << 63)
+	for {
+		var last sql.NullInt64
+		if err := conn.QueryRowContext(ctx, `select max(rowid) from (select rowid from main.`+table+` where rowid>? order by rowid limit ?)`, pruneCursor, historyMigrationBatchSize).Scan(&last); err != nil {
+			return err
+		}
+		if !last.Valid {
+			break
+		}
+		if _, err := conn.ExecContext(ctx, prune, pruneCursor, last.Int64); err != nil {
+			return err
+		}
+		pruneCursor = last.Int64
+	}
+	cursor := int64(-1 << 63)
+	for {
+		var last sql.NullInt64
+		var count int64
+		if err := conn.QueryRowContext(ctx, `select max(rowid),count(*) from (select rowid from `+source+` where rowid>? order by rowid limit ?)`, cursor, historyMigrationBatchSize).Scan(&last, &count); err != nil {
+			return err
+		}
+		if !last.Valid {
+			break
+		}
+		if _, err := conn.ExecContext(ctx, upsert, cursor, last.Int64); err != nil {
+			return fmt.Errorf("copy %s: %w", table, err)
+		}
+		cursor = last.Int64
+		if _, err := s.db.ExecContext(ctx, `update oboard_history_migration_tables set cursor=?,copied=copied+?,updated_at=? where table_name=?`, cursor, count, now(), table); err != nil {
+			return err
+		}
+	}
+	// Compare content both ways: equal counts can conceal missing source rows.
+	for _, pair := range [][2]string{{source, `main.` + table}, {`main.` + table, source}} {
+		var mismatch int
+		if err := conn.QueryRowContext(ctx, `select exists(select `+cols+` from `+pair[0]+` except select `+cols+` from `+pair[1]+`)`).Scan(&mismatch); err != nil {
+			return err
+		}
+		if mismatch != 0 {
+			return fmt.Errorf("history migration content mismatch for %s", table)
+		}
+	}
+	var count int64
+	if err := conn.QueryRowContext(ctx, `select count(*) from `+source).Scan(&count); err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `update oboard_history_migration_tables set complete=1,verified=?,last_error='',updated_at=? where table_name=?`, count, now(), table)
+	return err
 }
 
 func (s *Store) tableExistsIn(ctx context.Context, db *countingDB, table string) (bool, error) {
@@ -1180,6 +1184,16 @@ func (s *Store) drainHistoryCleanupQueue(ctx context.Context, limit int) (int, e
 		var cleanupErr error
 		switch target.kind {
 		case "server":
+			var live int
+			if err := s.db.QueryRowContext(ctx, "select exists(select 1 from servers where id=?)", target.id).Scan(&live); err != nil {
+				return processed, err
+			}
+			if live != 0 {
+				// A queue left by the previous version may already refer to a
+				// recycled ID. Never purge a currently existing server.
+				done = true
+				break
+			}
 			removed := 0
 			for batch := 0; batch < 8; batch++ {
 				n, err := s.PurgeServerHistoryBatch(ctx, target.id, 2000)

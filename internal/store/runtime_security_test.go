@@ -81,6 +81,9 @@ func TestRuntimeSecurityRejectsRecycledServer(t *testing.T) {
 	if err := db.DeleteServer(ctx, old.ID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.drainHistoryCleanupQueue(ctx, 8); err != nil {
+		t.Fatal(err)
+	}
 	fresh := model.Server{Name: "replacement", AgentID: "new-agent"}
 	if err := db.CreateServer(ctx, &fresh); err != nil {
 		t.Fatal(err)

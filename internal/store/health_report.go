@@ -409,11 +409,12 @@ func (s *Store) updateServerTelemetryReportTx(ctx context.Context, tx *countingT
 	// existing sample instead of a separate SELECT MAX(sampled_at) + INSERT.
 	history, err := s.historyDB()
 	if err != nil {
-		return false, false, err
+		return false, true, nil
 	}
 	res, err := history.ExecContext(ctx, `insert into server_metric_samples(server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at) select ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? where not exists(select 1 from server_metric_samples where server_id=? and sampled_at>?)`, serverID, cpuUsage, memoryUsed, memoryTotal, diskUsed, diskTotal, tcpConnections, udpConnections, processes, resourceHistoryEnabled, uploadBPS, downloadBPS, periodUp, periodDown, connectivityAvailable, connectivityLatency, nowText, serverID, ts.Add(-interval).Format(time.RFC3339Nano))
 	if err != nil {
-		return false, false, err
+		s.recordHistoryError(err)
+		return false, true, nil
 	}
 	affected, err := res.RowsAffected()
 	if err != nil {

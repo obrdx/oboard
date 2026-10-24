@@ -231,6 +231,9 @@ func openPairWithOptions(path, historyPath string, opts SQLiteOptions, restore, 
 		return nil, err
 	}
 	if err := s.openHistory(ctx, opts, restore, allowHistoryReset); err != nil {
+		if s.history != nil {
+			_ = s.history.Close()
+		}
 		_ = db.Close()
 		return nil, err
 	}
@@ -319,6 +322,11 @@ func sqliteDSN(path string, busyTimeout time.Duration, cacheKB int, restore bool
 			return "", fmt.Errorf("parse SQLite DSN query: %w", err)
 		}
 		dsn = dsn[:queryAt]
+	}
+	if path != ":memory:" && !strings.HasPrefix(path, "file:") {
+		// SQLite treats # as a URI fragment, even inside a directory name.
+		// Escape filesystem paths before adding the driver's query options.
+		dsn = (&url.URL{Scheme: "file", Path: strings.TrimPrefix(dsn, "file:")}).String()
 	}
 	pragmas.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", timeoutMS))
 	pragmas.Add("_pragma", "foreign_keys(1)")
@@ -490,7 +498,13 @@ func secureSQLiteFile(path string) error {
 	return os.Chmod(path, 0o600)
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	var historyErr error
+	if s.history != nil {
+		historyErr = s.history.Close()
+	}
+	return errors.Join(historyErr, s.db.Close())
+}
 
 func (s *Store) DBStats() sql.DBStats { return s.db.Stats() }
 
@@ -2943,6 +2957,7 @@ func (s *Store) createServer(ctx context.Context, v *model.Server, used *int64, 
 	var recycled bool
 	if err := tx.QueryRowContext(ctx, `with occupied(id) as (
 		select id from servers union select server_id from server_deletions
+		union select object_id from history_cleanup_queue where kind='server'
 		union select cast(json_extract(j.value,'$.server_id') as integer)
 		from app_settings s,json_each(case when json_valid(s.value) then s.value else '[]' end) j
 		where s.key='controller_base_path_migration_targets' and json_extract(j.value,'$.server_id')>0
@@ -3792,10 +3807,11 @@ func (s *Store) UpdateServerTelemetryReport(ctx context.Context, serverID int64,
 	var lastSample sql.NullString
 	history, err := s.historyDB()
 	if err != nil {
-		return err
+		return tx.Commit()
 	}
 	if err := history.QueryRowContext(ctx, `select max(sampled_at) from server_metric_samples where server_id=?`, serverID).Scan(&lastSample); err != nil {
-		return err
+		s.recordHistoryError(err)
+		return tx.Commit()
 	}
 	rateLimited := false
 	if lastSample.Valid {
@@ -3805,7 +3821,7 @@ func (s *Store) UpdateServerTelemetryReport(ctx context.Context, serverID int64,
 	}
 	if !rateLimited {
 		if _, err := history.ExecContext(ctx, `insert into server_metric_samples(server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, serverID, cpuUsage, memoryUsed, memoryTotal, diskUsed, diskTotal, tcpConnections, udpConnections, processes, resourceHistoryEnabled, uploadBPS, downloadBPS, periodUp, periodDown, available, latency, nowText); err != nil {
-			return err
+			s.recordHistoryError(err)
 		}
 	}
 	return tx.Commit()

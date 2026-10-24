@@ -2166,16 +2166,17 @@ func (s *Store) refreshConnectionProbeEpisodes(ctx context.Context, userID int64
 	if err != nil {
 		return err
 	}
-	historyTx, err := history.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer historyTx.Rollback()
+	// Match the health path: acquire the core writer before the history writer.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	historyTx, err := history.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer historyTx.Rollback()
 	cutoffRaw := cutoff.UTC().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `delete from connection_probe_episodes where user_id=? and ended_at>=?`, userID, cutoffRaw); err != nil {
 		return err

@@ -42,6 +42,9 @@ func TestServerDeletionReusesIDAndIgnoresStaleWorker(t *testing.T) {
 	if _, err := srv.deleteServerRecord(ctx, first.ID, nil, "test"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.RunMaintenance(ctx, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
 	replacement := &model.Server{Name: "new"}
 	if err := db.CreateServer(ctx, replacement); err != nil {
 		t.Fatal(err)
@@ -70,7 +73,7 @@ func TestServerDeletionReusesIDAndIgnoresStaleWorker(t *testing.T) {
 	}
 }
 
-func TestServerDeletionAPIReusesIDImmediately(t *testing.T) {
+func TestServerDeletionAPIReusesIDAfterHistoryCleanup(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -85,6 +88,9 @@ func TestServerDeletionAPIReusesIDImmediately(t *testing.T) {
 	}
 	first := create("old")
 	request(t, h, http.MethodDelete, fmt.Sprintf("/api/v1/ui/servers/%d", int64(first["id"].(float64))), token, nil, http.StatusOK)
+	if _, err := db.RunMaintenance(context.Background(), time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
 	replacement := create("replacement")
 	if replacement["id"] != first["id"] {
 		t.Fatalf("replacement ID=%v want %v", replacement["id"], first["id"])

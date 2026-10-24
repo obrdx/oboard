@@ -1,0 +1,12 @@
+create table if not exists server_metric_samples (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, cpu_usage_percent real not null default 0, memory_used_bytes integer not null default 0, memory_total_bytes integer not null default 0, disk_used_bytes integer not null default 0, disk_total_bytes integer not null default 0, tcp_connection_count integer not null default 0, udp_connection_count integer not null default 0, process_count integer not null default 0, resource_recorded integer not null default 1, network_upload_bps integer not null default 0, network_download_bps integer not null default 0, traffic_upload_bytes integer not null default 0, traffic_download_bytes integer not null default 0, connectivity_available integer not null default -1, connectivity_latency_ms integer not null default 0, sampled_at text not null);
+
+create table if not exists server_latency_probe_results (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, report_id text not null default '', resource_version text not null, probe_id text not null, kind text not null default 'regional', mode text not null default 'icmp', province text not null, carrier text not null, host text not null default '', ip text not null, port integer not null default 0, available integer not null default 0, latency_ms integer not null default 0, min_latency_ms integer not null default 0, p95_latency_ms integer not null default 0, jitter_ms integer not null default 0, sample_count integer not null default 0, success_count integer not null default 0, error text not null default '', checked_at text not null, created_at text not null, unique(server_id,resource_version,probe_id,checked_at));
+
+create table if not exists latency_rollup_state (
+   id integer primary key check(id=1), schema_version integer not null,
+   generation integer not null default 1, live_cursor integer not null default -1,
+   historical_boundary integer not null default -1, backfill_cursor integer not null default -1,
+   expired_unprocessed integer not null default 0, retention_floor integer not null default 0,
+   initialized_at text not null default '', updated_at text not null default '');
+
+create table if not exists audit_rollup_state (id integer primary key check(id=1), backfill_cursor text not null default '', backfill_complete integer not null default 0, read_path text not null default 'raw', algorithm_version integer not null default 1, updated_at text not null);

@@ -38,6 +38,9 @@ func TestServerIDReusesSmallestGapAfterDeletionCompletes(t *testing.T) {
 	if err := db.DeleteServer(ctx, 2); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.drainHistoryCleanupQueue(ctx, 8); err != nil {
+		t.Fatal(err)
+	}
 	create(2)
 	if _, _, err := db.BeginServerDeletion(ctx, 1, first.Name, `{}`); err != nil {
 		t.Fatal(err)
@@ -54,6 +57,9 @@ func TestServerIDReusesSmallestGapAfterDeletionCompletes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.drainHistoryCleanupQueue(ctx, 8); err != nil {
+		t.Fatal(err)
+	}
 	replacement := create(1)
 	if replacement.ChainSecret == first.ChainSecret {
 		t.Fatal("replacement inherited old chain secret")
@@ -62,6 +68,9 @@ func TestServerIDReusesSmallestGapAfterDeletionCompletes(t *testing.T) {
 		t.Fatalf("stale server update error=%v, want revision conflict", err)
 	}
 	if err := db.DeleteServer(ctx, 4); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.drainHistoryCleanupQueue(ctx, 8); err != nil {
 		t.Fatal(err)
 	}
 	create(4)
@@ -168,6 +177,9 @@ func TestServerIDRemovesPersistedAccess(t *testing.T) {
 	}
 	if len(filter.Servers.IDs) != 1 || filter.Servers.IDs[0] != 2 {
 		t.Fatalf("old access survives deletion: %s", raw)
+	}
+	if _, err := db.drainHistoryCleanupQueue(ctx, 8); err != nil {
+		t.Fatal(err)
 	}
 	replacement := &model.Server{Name: "replacement"}
 	if err := db.CreateServer(ctx, replacement); err != nil {

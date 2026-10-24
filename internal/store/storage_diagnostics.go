@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -229,7 +230,14 @@ func sqliteFilesystemPath(path string) string {
 		return ""
 	}
 	if strings.HasPrefix(path, "file:") {
-		path = strings.TrimPrefix(path, "file:")
+		if parsed, err := url.Parse(path); err == nil {
+			path = parsed.Path
+			if path == "" {
+				path = parsed.Opaque
+			}
+		} else {
+			path = strings.TrimPrefix(path, "file:")
+		}
 	}
 	if queryAt := strings.IndexByte(path, '?'); queryAt >= 0 {
 		path = path[:queryAt]

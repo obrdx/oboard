@@ -806,3 +806,10 @@ func TestReplaceBinaryProgramSkipsUninstalledPluginWorker(t *testing.T) {
 		t.Fatalf("opted-in missing worker was not repaired: %q %v", got, err)
 	}
 }
+
+func TestDefaultHealthTimeoutAllowsDatabaseMigration(t *testing.T) {
+	config := DefaultServiceConfig()
+	if config.HealthTimeout != 10*time.Minute {
+		t.Fatalf("health timeout=%s", config.HealthTimeout)
+	}
+}

@@ -25,6 +25,9 @@ func TestProxyDSCPPolicyRemovedBeforeIDReuse(t *testing.T) {
 	if err = db.DeleteServer(ctx, old.ID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.drainHistoryCleanupQueue(ctx, 8); err != nil {
+		t.Fatal(err)
+	}
 	next := &model.Server{Name: "replacement-dscp"}
 	if err = db.CreateServer(ctx, next); err != nil {
 		t.Fatal(err)

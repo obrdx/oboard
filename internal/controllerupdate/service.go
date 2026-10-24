@@ -93,7 +93,7 @@ func DefaultServiceConfig() ServiceConfig {
 		DownloadAttempts:    4,
 		DownloadRetryDelay:  time.Second,
 		HealthClient:        &http.Client{Timeout: 2 * time.Second},
-		HealthTimeout:       3 * time.Minute,
+		HealthTimeout:       10 * time.Minute,
 		HealthPollInterval:  time.Second,
 		ReadyWindow:         4 * time.Second,
 		InstallGracePeriod:  4 * time.Second,
