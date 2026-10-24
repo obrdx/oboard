@@ -12,6 +12,7 @@ import (
 	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
+	"github.com/OboardProject/oboard/internal/store"
 )
 
 func TestSettingsCapabilities(t *testing.T) {
@@ -76,6 +77,11 @@ func TestSettingsCapabilities(t *testing.T) {
 	payload, err := server.readSystemResource(ctx, principal, "settings")
 	if err != nil {
 		t.Fatalf("settings.get: %v", err)
+	}
+	settingsPayload := payload.(map[string]any)["settings"].(map[string]any)
+	diagnostics, ok := settingsPayload["storage_diagnostics"].(store.StorageDiagnostics)
+	if !ok || len(diagnostics.Performance) == 0 || diagnostics.Performance[0].TrafficLedger == nil {
+		t.Fatalf("MCP settings missing ledger diagnostics: %#v", settingsPayload["storage_diagnostics"])
 	}
 	encoded, _ := json.Marshal(payload)
 	if len(encoded) == 0 || string(encoded) == "{}" {

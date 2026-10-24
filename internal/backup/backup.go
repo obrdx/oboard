@@ -54,6 +54,7 @@ type Config struct {
 
 type Manager struct {
 	config Config
+	spaceProbe func(string) (backupVolume, error)
 }
 
 type Manifest struct {
@@ -343,32 +344,6 @@ func (m *Manager) CreateWithProgress(ctx context.Context, password, requestedID 
 	}
 	ReportProgress(ctx, "archive", 100)
 	return Created{Manifest: manifest, Path: output, Size: info.Size()}, nil
-}
-
-func (m *Manager) ensureFreeSpace() error {
-	var bytes int64
-	if info, err := os.Stat(m.config.DatabasePath); err == nil {
-		bytes += info.Size()
-	}
-	if info, err := os.Stat(m.config.DatabasePath + "-wal"); err == nil {
-		bytes += info.Size()
-	}
-	if info, err := os.Stat(m.config.HistoryDatabasePath); err == nil {
-		bytes += info.Size()
-	}
-	if info, err := os.Stat(m.config.HistoryDatabasePath + "-wal"); err == nil {
-		bytes += info.Size()
-	}
-	bytes += directorySize(m.config.ACMEHome)
-	free, err := store.DiskFreeBytes(m.config.Root)
-	if err != nil {
-		return fmt.Errorf("无法检查备份磁盘空间：%w", err)
-	}
-	need := store.RequiredBackupFreeBytes(bytes)
-	if free < need {
-		return fmt.Errorf("磁盘空间不足：创建备份至少需要 %d 字节，当前可用 %d 字节", need, free)
-	}
-	return nil
 }
 
 func buildDatabaseManifests(corePath, historyPath string) ([]DatabaseManifest, error) {

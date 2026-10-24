@@ -228,29 +228,60 @@ func (s *Store) ExpireStaleTrafficLeases(ctx context.Context) error {
 
 type trafficTx interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
-	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryRowContext(context.Context, string, ...any) trafficRow
 }
 
-func (s *Store) CommitTrafficLedger(ctx context.Context, commit TrafficLedgerCommit) (TrafficLedgerResult, error) {
-	var result TrafficLedgerResult
+func (s *Store) CommitTrafficLedger(ctx context.Context, commit TrafficLedgerCommit) (result TrafficLedgerResult, returnErr error) {
+	started := time.Now()
+	sample := ledgerSample{at: started, reports: int64(len(commit.Reports)), streams: int64(len(commit.Streams))}
+	defer func() {
+		sample.durations[ledgerTotal] = time.Since(started)
+		sample.failed = returnErr != nil
+		sample.timeout = errors.Is(returnErr, context.DeadlineExceeded)
+		sample.canceled = errors.Is(returnErr, context.Canceled)
+		s.databaseMetrics.observeLedger(sample)
+	}()
 	if commit.ServerID <= 0 {
 		return result, errors.New("server id is required")
 	}
+	phase := time.Now()
 	conn, err := s.db.Conn(ctx)
+	sample.durations[ledgerConnection] = time.Since(phase)
 	if err != nil {
 		return result, err
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, `begin immediate`); err != nil {
+	phase = time.Now()
+	_, err = conn.ExecContext(ctx, `begin immediate`)
+	sample.durations[ledgerBegin] = time.Since(phase)
+	s.databaseMetrics.observeOperation("core", "ledger_begin", sample.durations[ledgerBegin], err)
+	if err != nil {
 		return result, err
 	}
 	committed := false
+	heldAt := time.Now()
 	defer func() {
 		if !committed {
-			_, _ = conn.ExecContext(context.Background(), `rollback`)
+			rollbackAt := time.Now()
+			_, rollbackErr := conn.ExecContext(context.Background(), `rollback`)
+			sample.durations[ledgerRollback] = time.Since(rollbackAt)
+			s.databaseMetrics.observeOperation("core", "ledger_rollback", sample.durations[ledgerRollback], rollbackErr)
+			if rollbackErr != nil {
+				returnErr = errors.Join(returnErr, rollbackErr)
+			}
+		}
+		if sample.durations[ledgerHold] == 0 {
+			sample.durations[ledgerHold] = time.Since(heldAt)
 		}
 	}()
-	tx := trafficTx(conn)
+	tx := &ledgerTx{conn: conn, sample: &sample, metrics: s.databaseMetrics, streams: map[string]model.TrafficCounterStream{}}
+	stage := ledgerStream
+	phase = time.Now()
+	defer func() {
+		if !phase.IsZero() {
+			sample.durations[stage] = time.Since(phase)
+		}
+	}()
 	ts := now()
 	seen := map[string]model.TrafficStreamCheckpoint{}
 	for _, observation := range commit.Streams {
@@ -272,6 +303,10 @@ func (s *Store) CommitTrafficLedger(ctx context.Context, commit TrafficLedgerCom
 			seen[key] = checkpoint
 		}
 	}
+	sample.durations[stage] = time.Since(phase)
+	stage = ledgerReport
+	phase = time.Now()
+	touchedPeriods := map[string]bool{}
 	touchedUsers := map[int64]string{}
 	for _, report := range commit.Reports {
 		accepted, checkpoint, err := commitTrafficReportTx(tx, ctx, commit.ServerID, commit.AgentInstanceID, report, commit.periodFor(report.UserID, report.PeriodKey), ts)
@@ -279,10 +314,23 @@ func (s *Store) CommitTrafficLedger(ctx context.Context, commit TrafficLedgerCom
 			return result, err
 		}
 		result.AcceptedReports = append(result.AcceptedReports, accepted)
+		switch accepted.Status {
+		case trafficAcceptAccepted:
+			sample.accepted++
+		case trafficAcceptDuplicate:
+			sample.duplicate++
+		case trafficAcceptCovered:
+			sample.covered++
+		default:
+			sample.rejected++
+		}
 		key := trafficStreamKey(report.CounterSource, report.StreamID, report.CounterEpoch, report.PeriodKey)
 		seen[key] = checkpoint
 		if accepted.Status == trafficAcceptAccepted {
 			touchedUsers[report.UserID] = report.PeriodKey
+			touchedPeriods[TrafficLedgerPeriodKey(report.UserID, report.PeriodKey)] = true
+			sample.users = int64(len(touchedUsers))
+			sample.periods = int64(len(touchedPeriods))
 		}
 		if accepted.Status == trafficAcceptGap || accepted.Status == trafficAcceptOverlap || accepted.Status == trafficAcceptEpochConflict {
 			if err := insertTrafficReconciliationEventTx(tx, ctx, model.TrafficReconciliationEvent{
@@ -293,11 +341,16 @@ func (s *Store) CommitTrafficLedger(ctx context.Context, commit TrafficLedgerCom
 			}
 		}
 	}
-	for userID, periodKey := range touchedUsers {
+	sample.users = int64(len(touchedUsers))
+	sample.periods = int64(len(touchedPeriods))
+	sample.durations[stage] = time.Since(phase)
+	stage = ledgerFinalize
+	phase = time.Now()
+	for userID := range touchedUsers {
 		// traffic_used_bytes is a denormalized panel value, not desired-state.
 		// The users UPDATE trigger must ignore this field so configuration_revision
 		// and routing_cache_revision stay still.
-		if _, err := tx.ExecContext(ctx, `update users set traffic_used_bytes=(select coalesce(upload_bytes+download_bytes,0) from traffic_periods where user_id=? and period_key=?), updated_at=? where id=?`, userID, periodKey, ts, userID); err != nil {
+		if _, err := tx.ExecContext(ctx, `update users set traffic_used_bytes=coalesce((select upload_bytes+download_bytes from traffic_periods where user_id=? order by case when julianday(started_at)<=julianday(?) then 0 else 1 end, julianday(started_at) desc, id desc limit 1),0), updated_at=? where id=?`, userID, ts, ts, userID); err != nil {
 			return result, err
 		}
 	}
@@ -306,10 +359,18 @@ func (s *Store) CommitTrafficLedger(ctx context.Context, commit TrafficLedgerCom
 			return result, err
 		}
 	}
-	if _, err := conn.ExecContext(ctx, `commit`); err != nil {
+	sample.durations[stage] = time.Since(phase)
+	stage = ledgerCommit
+	phase = time.Now()
+	_, err = conn.ExecContext(ctx, `commit`)
+	s.databaseMetrics.observeOperation("core", "ledger_commit", time.Since(phase), err)
+	if err != nil {
 		return result, err
 	}
+	sample.durations[stage] = time.Since(phase)
+	phase = time.Time{}
 	committed = true
+	sample.durations[ledgerHold] = time.Since(heldAt)
 	for _, checkpoint := range seen {
 		result.StreamCheckpoints = append(result.StreamCheckpoints, checkpoint)
 	}
@@ -365,6 +426,9 @@ func commitTrafficReportTx(tx trafficTx, ctx context.Context, serverID int64, ag
 			return out, checkpoint, err
 		}
 		checkpoint.LastError = status
+		stream.Status = status
+		stream.LastError = status
+		cacheTrafficStream(tx, stream)
 		return out, checkpoint, nil
 	}
 	deltaUpload := report.ToUploadBytes - report.FromUploadBytes
@@ -381,9 +445,7 @@ func commitTrafficReportTx(tx trafficTx, ctx context.Context, serverID int64, ag
 	if period.EndsAt.IsZero() {
 		period.EndsAt = report.EndedAt
 	}
-	if _, err := tx.ExecContext(ctx, `insert into traffic_periods(user_id,period_key,started_at,ends_at,upload_bytes,download_bytes,traffic_limit_bytes,state,updated_at) values(?,?,?,?,0,0,?,?,?) on conflict(user_id,period_key) do update set started_at=excluded.started_at,ends_at=excluded.ends_at,traffic_limit_bytes=excluded.traffic_limit_bytes,updated_at=excluded.updated_at`, period.UserID, period.PeriodKey, period.StartedAt.Format(time.RFC3339Nano), period.EndsAt.Format(time.RFC3339Nano), period.Limit, periodState(period.Upload+period.Download, period.Limit), ts); err != nil {
-		return out, checkpoint, err
-	}
+
 	if _, err := tx.ExecContext(ctx, `insert into traffic_reports(report_id,server_id,user_id,inbound_id,path_id,period_key,upload_bytes,download_bytes,started_at,ended_at,created_at,protocol_version,counter_source,stream_id,counter_epoch,from_upload_bytes,to_upload_bytes,from_download_bytes,to_download_bytes,accept_status) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, report.ReportID, serverID, report.UserID, report.InboundID, report.PathID, report.PeriodKey, deltaUpload, deltaDownload, report.StartedAt.Format(time.RFC3339Nano), report.EndedAt.Format(time.RFC3339Nano), ts, 1, report.CounterSource, report.StreamID, report.CounterEpoch, report.FromUploadBytes, report.ToUploadBytes, report.FromDownloadBytes, report.ToDownloadBytes, trafficAcceptAccepted); err != nil {
 		if isUniqueConstraint(err) {
 			out.Status = trafficAcceptCovered
@@ -394,9 +456,10 @@ func commitTrafficReportTx(tx trafficTx, ctx context.Context, serverID int64, ag
 	if _, err := tx.ExecContext(ctx, `insert into traffic_stats(server_id,user_id,inbound_id,upload_bytes,download_bytes,created_at) values(?,?,?,?,?,?)`, serverID, report.UserID, report.InboundID, deltaUpload, deltaDownload, ts); err != nil {
 		return out, checkpoint, err
 	}
-	if _, err := tx.ExecContext(ctx, `update traffic_periods set upload_bytes=upload_bytes+?, download_bytes=download_bytes+?, state=case when traffic_limit_bytes>0 and upload_bytes+download_bytes+?+?>=traffic_limit_bytes then 'quota_exceeded' else 'active' end, updated_at=? where user_id=? and period_key=?`, deltaUpload, deltaDownload, deltaUpload, deltaDownload, ts, report.UserID, report.PeriodKey); err != nil {
+	if _, err := tx.ExecContext(ctx, `insert into traffic_periods(user_id,period_key,started_at,ends_at,upload_bytes,download_bytes,traffic_limit_bytes,state,updated_at) values(?,?,?,?,?,?,?,?,?) on conflict(user_id,period_key) do update set started_at=excluded.started_at, ends_at=excluded.ends_at, traffic_limit_bytes=excluded.traffic_limit_bytes, upload_bytes=traffic_periods.upload_bytes+excluded.upload_bytes, download_bytes=traffic_periods.download_bytes+excluded.download_bytes, state=case when excluded.traffic_limit_bytes>0 and traffic_periods.upload_bytes+traffic_periods.download_bytes+excluded.upload_bytes+excluded.download_bytes>=excluded.traffic_limit_bytes then 'quota_exceeded' else 'active' end, updated_at=excluded.updated_at`, period.UserID, period.PeriodKey, period.StartedAt.Format(time.RFC3339Nano), period.EndsAt.Format(time.RFC3339Nano), deltaUpload, deltaDownload, period.Limit, periodState(deltaUpload+deltaDownload, period.Limit), ts); err != nil {
 		return out, checkpoint, err
 	}
+
 	if _, err := tx.ExecContext(ctx, `insert into traffic_leases(server_id,user_id,period_key,lease_bytes,consumed_bytes,updated_at) values(?,?,?,0,?,?) on conflict(server_id,user_id,period_key) do update set consumed_bytes=consumed_bytes+excluded.consumed_bytes, updated_at=excluded.updated_at`, serverID, report.UserID, report.PeriodKey, deltaUpload+deltaDownload, ts); err != nil {
 		return out, checkpoint, err
 	}
@@ -410,6 +473,11 @@ func commitTrafficReportTx(tx trafficTx, ctx context.Context, serverID int64, ag
 	checkpoint.AcceptedDownload = report.ToDownloadBytes
 	checkpoint.Status = trafficStreamHealthy
 	checkpoint.LastError = ""
+	stream.AcceptedUploadBytes = report.ToUploadBytes
+	stream.AcceptedDownloadBytes = report.ToDownloadBytes
+	stream.Status = trafficStreamHealthy
+	stream.LastError = ""
+	cacheTrafficStream(tx, stream)
 	return out, checkpoint, nil
 }
 
@@ -432,7 +500,19 @@ func validateTrafficCheckpoint(fromUp, toUp, fromDown, toDown, acceptedUp, accep
 	return trafficAcceptRejected
 }
 
+func cacheTrafficStream(tx trafficTx, stream model.TrafficCounterStream) {
+	if ledger, ok := tx.(*ledgerTx); ok {
+		ledger.streams[trafficStreamKey(stream.CounterSource, stream.StreamID, stream.CounterEpoch, stream.PeriodKey)] = stream
+	}
+}
+
 func loadOrCreateTrafficStreamTx(tx trafficTx, ctx context.Context, serverID int64, agentInstanceID string, report model.TrafficReport, ts string) (model.TrafficCounterStream, error) {
+	if ledger, ok := tx.(*ledgerTx); ok {
+		key := trafficStreamKey(report.CounterSource, report.StreamID, report.CounterEpoch, report.PeriodKey)
+		if stream, found := ledger.streams[key]; found && (stream.AcceptedUploadBytes != 0 || stream.AcceptedDownloadBytes != 0) && stream.UserID == report.UserID && (report.InboundID == nil || *report.InboundID <= 0 || stream.InboundID == *report.InboundID) && (report.PathID == nil || *report.PathID <= 0 || stream.PathID == *report.PathID) {
+			return stream, nil
+		}
+	}
 	inboundID, pathID := optionalInt64(report.InboundID), optionalInt64(report.PathID)
 	obs := model.TrafficStreamObservation{
 		Source: report.CounterSource, StreamID: report.StreamID, CounterEpoch: report.CounterEpoch, PeriodKey: report.PeriodKey,
@@ -468,7 +548,11 @@ func upsertTrafficStreamTxReturn(tx trafficTx, ctx context.Context, serverID int
 	stream.FirstSeenAt = parseTime(first)
 	stream.LastSeenAt = parseTime(last)
 	stream.UpdatedAt = parseTime(updated)
-	return inheritTrafficStreamCheckpointTx(tx, ctx, stream, ts)
+	stream, err := inheritTrafficStreamCheckpointTx(tx, ctx, stream, ts)
+	if err == nil {
+		cacheTrafficStream(tx, stream)
+	}
+	return stream, err
 }
 
 func inheritTrafficStreamCheckpointTx(tx trafficTx, ctx context.Context, stream model.TrafficCounterStream, ts string) (model.TrafficCounterStream, error) {
@@ -751,9 +835,13 @@ func optionalInt64(v *int64) int64 {
 }
 
 func isUniqueConstraint(err error) bool {
+	var coded interface{ Code() int }
+	if errors.As(err, &coded) {
+		return coded.Code() == 1555 || coded.Code() == 2067
+	}
 	if err == nil {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "unique") || strings.Contains(msg, "constraint failed")
+	return strings.Contains(msg, "unique constraint failed") || strings.Contains(msg, "primary key constraint failed")
 }

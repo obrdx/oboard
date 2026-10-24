@@ -169,7 +169,7 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 		"created_at":            stringValue, "updated_at": stringValue,
 	})
 	descriptors := []Descriptor{
-		adminRead("settings.get", "读取主控全局设置（审计、订阅、通知、Agent 设置等，不含秘密）", schemaObject(nil), schemaObject(map[string]any{"settings": map[string]any{"type": "object", "properties": map[string]any{"stealth_transport": stealthStatus}, "additionalProperties": map[string]any{"type": []string{"string", "number", "integer", "boolean", "array", "object", "null"}}}}, "settings")),
+		adminRead("settings.get", "读取主控全局设置（审计、订阅、通知、Agent 设置等，不含秘密）", schemaObject(nil), schemaObject(map[string]any{"settings": map[string]any{"type": "object", "properties": map[string]any{"stealth_transport": stealthStatus, "storage_diagnostics": storageDiagnosticsSchema()}, "additionalProperties": map[string]any{"type": []string{"string", "number", "integer", "boolean", "array", "object", "null"}}}}, "settings")),
 		adminRead("telegram_bot.get", "读取统一 Telegram Bot 状态（不返回 Bot Token）", schemaObject(nil), schemaObject(map[string]any{"telegram_bot": telegramBot}, "telegram_bot")),
 		adminRead("controller_update.status", "读取主控更新通道、当前版本、异步更新状态及下载字节、速度、尝试次数和真实耗时", schemaObject(nil), rawSchema(controllerUpdate)),
 		adminRead("controller_update.diagnostics", "读取主控更新诊断报告：更新器状态、最近一次更新任务的阶段与耗时，以及主控日志中与更新相关的记录，用于排查更新失败或卡住", schemaObject(nil), schemaObject(map[string]any{
@@ -296,3 +296,17 @@ var errCertificateInput = &systemInputError{message: "certificate_id must be a p
 type systemInputError struct{ message string }
 
 func (e *systemInputError) Error() string { return e.message }
+
+func storageDiagnosticsSchema() map[string]any {
+	number := map[string]any{"type": "number"}
+	integer := map[string]any{"type": "integer"}
+	text := map[string]any{"type": "string"}
+	stage := schemaObject(map[string]any{"stage": text, "count": integer, "avg_ms": number, "p50_ms": number, "p95_ms": number, "p99_ms": number, "max_ms": number}, "stage", "count", "avg_ms", "p50_ms", "p95_ms", "p99_ms", "max_ms")
+	fields := map[string]any{"window_start": text, "window_end": text, "stages": map[string]any{"type": "array", "items": stage}}
+	for _, key := range []string{"count", "sample_count", "reports", "streams", "users", "periods", "accepted", "duplicate", "covered", "rejected", "queries", "writes", "failures", "timeouts", "canceled", "max_reports"} {
+		fields[key] = integer
+	}
+	operation := schemaObject(map[string]any{"role": text, "kind": text, "count": integer, "sample_count": integer, "window_start": text, "window_end": text, "avg_ms": number, "p50_ms": number, "p95_ms": number, "p99_ms": number, "max_ms": number})
+	performance := map[string]any{"type": "object", "properties": map[string]any{"role": text, "traffic_ledger": schemaObject(fields), "operations": map[string]any{"type": "array", "items": operation}}, "additionalProperties": true}
+	return map[string]any{"type": "object", "properties": map[string]any{"performance": map[string]any{"type": "array", "items": performance}}, "additionalProperties": true}
+}

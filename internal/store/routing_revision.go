@@ -310,7 +310,9 @@ func (s *Store) TrafficPolicyRevision(ctx context.Context) (uint64, error) {
 	return revision, nil
 }
 
-func bumpTrafficPolicyRevisionTx(tx trafficTx, ctx context.Context) error {
+func bumpTrafficPolicyRevisionTx(tx interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, ctx context.Context) error {
 	_, err := tx.ExecContext(ctx, `update traffic_policy_revision set revision=revision+1 where id=1`)
 	return err
 }

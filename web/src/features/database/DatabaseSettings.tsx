@@ -32,6 +32,10 @@ type TableSpace = {
 }
 
 type Operation = {
+ sample_count?: number
+ p50_ms?: number
+ window_start?: string
+ window_end?: string
   role: string
   kind: string
   count: number
@@ -41,7 +45,18 @@ type Operation = {
   max_ms: number
 }
 
+type LedgerStage = { stage: string; count: number; avg_ms: number; p50_ms: number; p95_ms: number; p99_ms: number; max_ms: number }
+type LedgerPerformance = {
+ count: number; sample_count: number; window_start: string; window_end: string; stages: LedgerStage[]
+ reports: number; streams: number; users: number; periods: number; accepted: number; duplicate: number; covered: number; rejected: number
+ queries: number; writes: number; failures: number; timeouts: number; canceled: number; max_reports: number
+}
+const ledgerStageLabels: Record<string, string> = {
+ connection_wait: '获取写连接', begin_duration: 'BEGIN IMMEDIATE', stream_duration: 'Stream 处理', report_duration: '报告入账',
+ sql_duration: '事务内 SQL', transaction_duration: '事务持有', finalize_duration: '累计及修订更新', commit_duration: 'COMMIT', rollback_duration: 'ROLLBACK', total_duration: '完整操作',
+}
 type Performance = {
+ traffic_ledger?: LedgerPerformance
   role: string
   wait_count: number
   wait_duration_ms: number
@@ -149,6 +164,7 @@ export function DatabaseSettingsPanel({ client, notify, data }: { client: APICli
   }
 
   const performance = diagnostics.performance || []
+ const ledger = performance.find(item => item.role === 'core')?.traffic_ledger
   const tables = diagnostics.tables || []
   return <div className="database-settings">
     <section className="settings-card">
@@ -171,12 +187,24 @@ export function DatabaseSettingsPanel({ client, notify, data }: { client: APICli
         </tbody></table></div>}
     </section>
     <section className="settings-card">
-      <div className="settings-card-head"><div className="settings-heading"><h3>性能诊断</h3><p>进程内有界采样，不逐条写入数据库。</p></div><RefreshCw size={18} /></div>
-      <div className="table-wrap"><table><thead><tr><th>数据库</th><th>操作</th><th>次数</th><th>平均</th><th>P95</th><th>P99</th><th>最大</th></tr></thead><tbody>
-        {performance.flatMap(item => (item.operations || []).map(op => <tr key={`${item.role}-${op.kind}`}><td>{item.role === 'history' ? '历史' : '核心'}</td><td>{op.kind}</td><td>{op.count}</td><td>{op.avg_ms.toFixed(2)} ms</td><td>{op.p95_ms.toFixed(2)} ms</td><td>{op.p99_ms.toFixed(2)} ms</td><td>{op.max_ms.toFixed(2)} ms</td></tr>))}
+      <div className="settings-card-head"><div className="settings-heading"><h3>性能诊断</h3><p>各操作耗时统计来自最近最多 512 个样本；累计次数为进程启动至今。</p></div><RefreshCw size={18} /></div>
+      <div className="table-wrap"><table><thead><tr><th>数据库</th><th>操作</th><th>累计/样本</th><th>平均</th><th>P50</th><th>P95</th><th>P99</th><th>最大</th></tr></thead><tbody>
+        {performance.flatMap(item => (item.operations || []).map(op => <tr key={`${item.role}-${op.kind}`}><td>{item.role === 'history' ? '历史' : '核心'}</td><td>{op.kind}</td><td title={op.window_start && op.window_end ? new Date(op.window_start).toLocaleString() + ' — ' + new Date(op.window_end).toLocaleString() : undefined}>{op.count} / {op.sample_count ?? '—'}</td><td>{op.avg_ms.toFixed(2)} ms</td><td>{(op.p50_ms ?? 0).toFixed(2)} ms</td><td>{op.p95_ms.toFixed(2)} ms</td><td>{op.p99_ms.toFixed(2)} ms</td><td>{op.max_ms.toFixed(2)} ms</td></tr>))}
       </tbody></table></div>
       <small className="muted">Go 连接池等待与 SQLite Busy/Locked 分开统计；写事务持有时间需结合维护结果与锁等待判断。</small>
     </section>
+    {ledger && <section className="settings-card">
+      <div className="settings-card-head"><div className="settings-heading"><h3>流量账本事务性能</h3><p>进程累计 {ledger.count} 批；以下统计来自最近 {ledger.sample_count} 批（最多 512 批）。</p></div></div>
+      {ledger.sample_count > 0 ? <>
+        <p className="muted">{new Date(ledger.window_start).toLocaleString()} — {new Date(ledger.window_end).toLocaleString()}</p>
+        <div className="table-wrap"><table className="tabular-nums"><thead><tr><th>阶段</th><th>样本</th><th>平均</th><th>P50</th><th>P95</th><th>P99</th><th>最大</th></tr></thead><tbody>
+          {ledger.stages.map(stage => <tr key={stage.stage}><td>{ledgerStageLabels[stage.stage] || stage.stage}</td><td>{stage.count}</td><td>{stage.avg_ms.toFixed(2)} ms</td><td>{stage.p50_ms.toFixed(2)} ms</td><td>{stage.p95_ms.toFixed(2)} ms</td><td>{stage.p99_ms.toFixed(2)} ms</td><td>{stage.max_ms.toFixed(2)} ms</td></tr>)}
+        </tbody></table></div>
+        <p className="muted">报告 {ledger.reports} · Stream {ledger.streams} · 用户/周期累计 {ledger.users}/{ledger.periods} · 最大批量 {ledger.max_reports}</p>
+        <p className="muted">接受 {ledger.accepted} · 重复 {ledger.duplicate} · 覆盖 {ledger.covered} · 拒绝 {ledger.rejected} · SQL 查询/写入 {ledger.queries}/{ledger.writes}</p>
+        <p className="muted">失败 {ledger.failures} · 超时 {ledger.timeouts} · 取消 {ledger.canceled}。结果计数为处理观测，失败批次全部回滚。获取连接耗时不等于 SQLite 内部锁等待；低样本量的 P99 仅供观察。</p>
+      </> : <p className="muted">尚无流量账本事务样本。</p>}
+    </section>}
     <section className="settings-card">
       <div className="settings-card-head"><div className="settings-heading"><h3>保留策略</h3><p>原始数据先聚合、校验游标后再清理；聚合失败时保留原始记录。</p></div><CheckCircle2 size={18} /></div>
       <div className="settings-form">
