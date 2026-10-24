@@ -112,8 +112,14 @@ func (s *Server) ConfigureControllerBackups(dbPath string) {
 		acmeHome = filepath.Join(filepath.Dir(dbPath), "acme")
 	}
 	s.acmeHome = acmeHome
-	manager, err := backup.New(backup.Config{Root: directory, DatabasePath: dbPath, ACMEHome: acmeHome, MasterSecret: s.sessionSecret, SourceVersion: version.Version, Snapshot: func(ctx context.Context, dest string) error {
+	historyPath := ""
+	if s.store != nil {
+		historyPath = s.store.HistoryPath()
+	}
+	manager, err := backup.New(backup.Config{Root: directory, DatabasePath: dbPath, HistoryDatabasePath: historyPath, ACMEHome: acmeHome, MasterSecret: s.sessionSecret, SourceVersion: version.Version, Snapshot: func(ctx context.Context, dest string) error {
 		return s.store.Backup(ctx, dest, store.BackupOptions{})
+	}, HistorySnapshot: func(ctx context.Context, dest string) error {
+		return s.store.BackupHistory(ctx, dest, store.BackupOptions{})
 	}})
 	if err != nil {
 		log.Printf("configure controller backups: %v", err)

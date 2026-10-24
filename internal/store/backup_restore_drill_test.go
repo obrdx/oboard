@@ -25,6 +25,10 @@ func TestRestoredPreMigrationSnapshotConvergesToTheCurrentSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	enableHistoricalAuditDetails(t, source)
+	if err := source.MigrateDeferredIndexes(ctx); err != nil {
+		t.Fatal(err)
+	}
 
 	// Put the source back into the pre-migration shape.
 	for _, stmt := range []string{
@@ -65,12 +69,16 @@ func TestRestoredPreMigrationSnapshotConvergesToTheCurrentSchema(t *testing.T) {
 	if err := source.Backup(ctx, snapshot, BackupOptions{}); err != nil {
 		t.Fatalf("backup of a pre-migration installation failed: %v", err)
 	}
+	historySnapshot := filepath.Join(dir, "snapshot-history.sqlite")
+	if err := source.BackupHistory(ctx, historySnapshot, BackupOptions{}); err != nil {
+		t.Fatalf("backup of pre-migration history failed: %v", err)
+	}
 	if err := source.Close(); err != nil {
 		t.Fatal(err)
 	}
 
 	// Restoring is putting the snapshot in place and opening it.
-	restored, err := Open(snapshot)
+	restored, err := OpenForRestorePair(snapshot, historySnapshot)
 	if err != nil {
 		t.Fatalf("restored snapshot does not open: %v", err)
 	}

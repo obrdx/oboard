@@ -65,7 +65,11 @@ func (s *Store) AttachServerMonitoringDisplays(ctx context.Context, servers []mo
 	}
 	// Bound each server before aggregating: a regional task can have multiple
 	// targets in one round, all of which contribute their real packet counts.
-	rows, err = s.db.QueryContext(ctx, `with targets(server_id,task_id) as (values `+strings.Join(values, ",")+`)
+	history, err := s.historyDB()
+	if err != nil {
+		return err
+	}
+	rows, err = history.QueryContext(ctx, `with targets(server_id,task_id) as (values `+strings.Join(values, ",")+`)
 	select t.server_id,r.checked_at,max(r.available),
 	  sum(case when r.available=1 then r.latency_ms * max(1,r.success_count) else 0 end) * 1.0 / nullif(sum(case when r.available=1 then max(1,r.success_count) else 0 end),0),
 	  sum(max(1,r.sample_count,r.success_count)),

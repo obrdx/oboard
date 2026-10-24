@@ -153,7 +153,14 @@ func (s *Store) CompleteServerDeletion(ctx context.Context, serverID int64) erro
 // is large. Purging them in bounded batches first keeps the final row delete
 // small, so an unrelated write is never queued behind one server's months of
 // samples.
-var serverHistoryPurgeTables = []string{"server_metric_samples", "server_connectivity_events"}
+var serverHistoryPurgeTables = []string{
+	"server_metric_samples",
+	"server_metric_hourly",
+	"server_metric_daily",
+	"server_latency_probe_results",
+	"latency_rollup_buckets",
+	"connection_audit_reports",
+}
 
 // PurgeServerHistoryBatch removes at most limit rows of per-server history in
 // total across those tables and reports how many it removed. Zero means the
@@ -163,12 +170,84 @@ func (s *Store) PurgeServerHistoryBatch(ctx context.Context, serverID int64, lim
 		return 0, errors.New("purge batch limit must be positive")
 	}
 	removed := 0
+	history, err := s.historyDB()
+	if err != nil {
+		return 0, err
+	}
 	for _, table := range serverHistoryPurgeTables {
 		remaining := limit - removed
 		if remaining <= 0 {
 			break
 		}
-		result, err := s.db.ExecContext(ctx, `delete from `+table+` where rowid in (select rowid from `+table+` where server_id=? limit ?)`, serverID, remaining)
+		if table == "connection_audit_reports" {
+			tx, err := history.BeginTx(ctx, nil)
+			if err != nil {
+				return removed, err
+			}
+			ids := []any{}
+			rows, err := tx.QueryContext(ctx, `select report_id,user_id,started_at,ended_at from connection_audit_reports where server_id=? limit ?`, serverID, remaining)
+			if err != nil {
+				_ = tx.Rollback()
+				return removed, err
+			}
+			for rows.Next() {
+				var reportID, userID, startedAt, endedAt any
+				if err := rows.Scan(&reportID, &userID, &startedAt, &endedAt); err != nil {
+					_ = rows.Close()
+					_ = tx.Rollback()
+					return removed, err
+				}
+				ids = append(ids, reportID)
+				for _, value := range []any{startedAt, endedAt} {
+					if hour := connectionAuditHourKeyFromAny(value); hour != "" {
+						if _, err := tx.ExecContext(ctx, `insert into connection_audit_hourly_dirty(user_id,utc_hour,dirty_at) values(?,?,?) on conflict(user_id,utc_hour) do update set dirty_at=excluded.dirty_at`, userID, hour, now()); err != nil {
+							_ = rows.Close()
+							_ = tx.Rollback()
+							return removed, err
+						}
+					}
+				}
+			}
+			if err := rows.Close(); err != nil {
+				_ = tx.Rollback()
+				return removed, err
+			}
+			if err := rows.Err(); err != nil {
+				_ = tx.Rollback()
+				return removed, err
+			}
+			if len(ids) == 0 {
+				_ = tx.Rollback()
+				continue
+			}
+			result, err := tx.ExecContext(ctx, `delete from connection_audit_reports where report_id in (`+inClause(len(ids))+`)`, ids...)
+			if err != nil {
+				_ = tx.Rollback()
+				return removed, err
+			}
+			count, err := result.RowsAffected()
+			if err != nil {
+				_ = tx.Rollback()
+				return removed, err
+			}
+			if err := tx.Commit(); err != nil {
+				return removed, err
+			}
+			removed += int(count)
+			continue
+		}
+		result, err := history.ExecContext(ctx, `delete from `+table+` where rowid in (select rowid from `+table+` where server_id=? limit ?)`, serverID, remaining)
+		if err != nil {
+			return removed, err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return removed, err
+		}
+		removed += int(count)
+	}
+	if removed < limit {
+		result, err := s.db.ExecContext(ctx, `delete from server_connectivity_events where rowid in (select rowid from server_connectivity_events where server_id=? limit ?)`, serverID, limit-removed)
 		if err != nil {
 			return removed, err
 		}
@@ -179,4 +258,16 @@ func (s *Store) PurgeServerHistoryBatch(ctx context.Context, serverID int64, lim
 		removed += int(count)
 	}
 	return removed, nil
+}
+
+func connectionAuditHourKeyFromAny(value any) string {
+	text, _ := value.(string)
+	if text == "" {
+		return ""
+	}
+	at := parseTime(text)
+	if at.IsZero() {
+		return ""
+	}
+	return ConnectionAuditHourKey(at)
 }

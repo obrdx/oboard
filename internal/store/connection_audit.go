@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/netip"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -82,7 +83,15 @@ func (s *Store) AddConnectionAuditReportsResult(ctx context.Context, reports []m
 	if len(reports) == 0 {
 		return result, nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	var collectionRaw string
+	if err := s.db.QueryRowContext(ctx, `select value from app_settings where key=?`, auditCollectionSetting).Scan(&collectionRaw); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return result, err
+	}
+	history, err := s.historyDB()
+	if err != nil {
+		return result, err
+	}
+	tx, err := history.BeginTx(ctx, nil)
 	if err != nil {
 		return result, err
 	}
@@ -106,7 +115,7 @@ func (s *Store) AddConnectionAuditReportsResult(ctx context.Context, reports []m
 			return result, err
 		}
 		if budget == nil {
-			budget, err = newAuditDetailBudget(ctx, tx, budgetAt)
+			budget, err = newAuditDetailBudgetFromRaw(collectionRaw, budgetAt)
 			if err != nil {
 				return result, err
 			}
@@ -202,14 +211,11 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int, co
 	if !connectionAuditEnabled {
 		overview.EnabledServerCount = 0
 	}
-	rows, err := s.db.QueryContext(ctx, `select r.user_id,u.username,u.nickname,count(distinct r.source_ip),count(distinct r.server_id),coalesce(sum(r.connection_count),0),coalesce(max(r.active_peak),0),count(*),max(r.ended_at),coalesce(u.device_limit,0),coalesce(user_device_counts.active_count,0)
-		from connection_audit_reports r join users u on u.id=r.user_id
-		left join (select user_id, count(*) as active_count from user_devices where status='active' group by user_id) user_device_counts on user_device_counts.user_id=u.id
-		where r.ended_at>=? group by r.user_id,u.username,u.nickname`, since)
+	aggregates, err := s.connectionAuditUserAggregates(ctx, nil, since)
 	if err != nil {
 		return overview, err
 	}
-	overview.Users, err = scanConnectionAuditOverviewUsers(rows)
+	overview.Users, err = s.connectionAuditUserSummaries(ctx, aggregates)
 	if err != nil {
 		return overview, err
 	}
@@ -260,7 +266,7 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int, co
 	usersByIP := map[string]map[int64]struct{}{}
 	sharedIPsByUser := map[int64]map[string]struct{}{}
 	subnetsByUser := map[int64]map[string]struct{}{}
-	ipRows, err := s.db.QueryContext(ctx, `select distinct user_id,source_ip from connection_audit_reports where ended_at>=?`, since)
+	ipRows, err := s.history.QueryContext(ctx, `select distinct user_id,source_ip from connection_audit_reports where ended_at>=?`, since)
 	if err != nil {
 		return overview, err
 	}
@@ -357,18 +363,6 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int, co
 // and shared-IP evidence still consider all users) but skips materializing the
 // summaries of every other user, so the auto-action path evaluates only the
 // users that just reported.
-// connectionAuditOverviewUsersQuery is the per-user window aggregate the audit
-// risk queue re-runs for every dirty user. Every column it reads from
-// connection_audit_reports is carried by idx_connection_audit_user_window, so
-// it is answered without touching the table; TestConnectionAuditOverviewIsIndexOnly
-// fails if a column is added here that the index does not cover.
-func connectionAuditOverviewUsersQuery(users int) string {
-	return `select r.user_id,u.username,u.nickname,count(distinct r.source_ip),count(distinct r.server_id),coalesce(sum(r.connection_count),0),coalesce(max(r.active_peak),0),count(*),max(r.ended_at),coalesce(u.device_limit,0),coalesce(user_device_counts.active_count,0)
-		from connection_audit_reports r join users u on u.id=r.user_id
-		left join (select user_id, count(*) as active_count from user_devices where status='active' group by user_id) user_device_counts on user_device_counts.user_id=u.id
-		where r.user_id in (` + inClause(users) + `) and r.ended_at>=? group by r.user_id,u.username,u.nickname`
-}
-
 func (s *Store) ConnectionAuditOverviewForUsers(ctx context.Context, windowHours int, connectionAuditEnabled bool, policy model.AuditPolicy, userIDs []int64) (model.ConnectionAuditOverview, error) {
 	if windowHours < 1 {
 		windowHours = 24
@@ -399,11 +393,11 @@ func (s *Store) ConnectionAuditOverviewForUsers(ctx context.Context, windowHours
 	if len(seen) == 0 {
 		return overview, nil
 	}
-	rows, err := s.db.QueryContext(ctx, connectionAuditOverviewUsersQuery(len(seen)), append(seenAny(seen), since)...)
+	aggregates, err := s.connectionAuditUserAggregates(ctx, seen, since)
 	if err != nil {
 		return overview, err
 	}
-	overview.Users, err = scanConnectionAuditOverviewUsers(rows)
+	overview.Users, err = s.connectionAuditUserSummaries(ctx, aggregates)
 	if err != nil {
 		return overview, err
 	}
@@ -458,7 +452,7 @@ func (s *Store) ConnectionAuditOverviewForUsers(ctx context.Context, windowHours
 	// production Controller the busiest user had 135,451 rows in the window and
 	// 19 distinct addresses in them, so the original shape ran the probe more
 	// than seven thousand times per address.
-	sharedIPRows, err := s.db.QueryContext(ctx, `select r.user_id,count(*) from (
+	sharedIPRows, err := s.history.QueryContext(ctx, `select r.user_id,count(*) from (
 			select distinct user_id,source_ip from connection_audit_reports
 			where user_id in (`+inClause(len(seen))+`) and ended_at>=?
 		) r
@@ -543,6 +537,92 @@ func scanConnectionAuditOverviewUsers(rows *sql.Rows) ([]model.ConnectionAuditUs
 	return out, rows.Err()
 }
 
+type connectionAuditUserAggregate struct {
+	sourceIPs          int64
+	servers            int64
+	connections        int64
+	activePeak         int64
+	reports            int64
+	lastSeen           sql.NullString
+	deviceLimit        int
+	registeredDevices  int
+	username, nickname string
+}
+
+func (s *Store) connectionAuditUserAggregates(ctx context.Context, userIDs []int64, since string) (map[int64]*connectionAuditUserAggregate, error) {
+	query := `select user_id,count(distinct case when source_ip<>'' then source_ip end),count(distinct server_id),coalesce(sum(connection_count),0),coalesce(max(active_peak),0),count(*),max(ended_at)
+		from connection_audit_reports where ended_at>=?`
+	args := []any{since}
+	if len(userIDs) > 0 {
+		query += ` and user_id in (` + inClause(len(userIDs)) + `)`
+		args = append(args, seenAny(userIDs)...)
+	}
+	query += ` group by user_id`
+	rows, err := s.history.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]*connectionAuditUserAggregate{}
+	for rows.Next() {
+		var userID int64
+		item := &connectionAuditUserAggregate{}
+		if err := rows.Scan(&userID, &item.sourceIPs, &item.servers, &item.connections, &item.activePeak, &item.reports, &item.lastSeen); err != nil {
+			return nil, err
+		}
+		out[userID] = item
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) connectionAuditUserSummaries(ctx context.Context, aggregates map[int64]*connectionAuditUserAggregate) ([]model.ConnectionAuditUserSummary, error) {
+	if len(aggregates) == 0 {
+		return []model.ConnectionAuditUserSummary{}, nil
+	}
+	ids := make([]int64, 0, len(aggregates))
+	for id := range aggregates {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	args := make([]any, 0, len(ids))
+	placeholders := make([]string, 0, len(ids))
+	for _, id := range ids {
+		args = append(args, id)
+		placeholders = append(placeholders, "?")
+	}
+	rows, err := s.db.QueryContext(ctx, `select u.id,u.username,u.nickname,coalesce(u.device_limit,0),coalesce(user_device_counts.active_count,0)
+		from users u left join (select user_id,count(*) as active_count from user_devices where status='active' group by user_id) user_device_counts on user_device_counts.user_id=u.id
+		where u.id in (`+strings.Join(placeholders, ",")+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.ConnectionAuditUserSummary{}
+	for rows.Next() {
+		var userID int64
+		var username, nickname string
+		var deviceLimit, registered int
+		if err := rows.Scan(&userID, &username, &nickname, &deviceLimit, &registered); err != nil {
+			return nil, err
+		}
+		aggregate := aggregates[userID]
+		if aggregate == nil {
+			continue
+		}
+		item := model.ConnectionAuditUserSummary{
+			UserID: userID, Username: username, Nickname: nickname,
+			SourceIPCount: int(aggregate.sourceIPs), ServerCount: int(aggregate.servers),
+			ConnectionCount: aggregate.connections, ActivePeak: aggregate.activePeak,
+			ReportCount: aggregate.reports, DeviceLimit: deviceLimit, RegisteredDeviceCount: registered,
+		}
+		if aggregate.lastSeen.Valid {
+			item.LastSeenAt = parseTime(aggregate.lastSeen.String)
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
 // evaluateConnectionAuditUser computes every derived risk field for one user
 // from its already-loaded inputs. It is the single per-user evaluation shared
 // by the batched overview driver and the parity reference implementation, so
@@ -608,8 +688,11 @@ func (s *Store) connectionAuditUserDetailWithEvidence(ctx context.Context, userI
 	if err != nil {
 		return detail, err
 	}
-	detail.Servers, err = s.connectionAuditDimensions(ctx, `select cast(r.server_id as text),s.name,'',sum(r.connection_count),max(r.active_peak),max(r.ended_at) from connection_audit_reports r join servers s on s.id=r.server_id where r.user_id=? and r.ended_at>=? group by r.server_id,s.name order by sum(r.connection_count) desc limit 20`, userID, since)
+	detail.Servers, err = s.connectionAuditDimensions(ctx, `select cast(server_id as text),'','',sum(connection_count),max(active_peak),max(ended_at) from connection_audit_reports where user_id=? and ended_at>=? group by server_id order by sum(connection_count) desc limit 20`, userID, since)
 	if err != nil {
+		return detail, err
+	}
+	if err := s.fillAuditServerNames(ctx, detail.Servers); err != nil {
 		return detail, err
 	}
 	detail.Recent, err = s.listRecentConnectionAudits(ctx, userID, since, 100)
@@ -665,30 +748,26 @@ func (s *Store) ConnectionAuditUserRisk(ctx context.Context, userID int64, windo
 	sinceText := since.UTC().Format(time.RFC3339Nano)
 	var item model.ConnectionAuditUserSummary
 	var lastSeen sql.NullString
-	// count(r.ended_at) rather than count(r.report_id): in this left join both
-	// count exactly the matched rows, because the join condition already
-	// requires a non-null ended_at. report_id is the one column here that
-	// idx_connection_audit_user_window does not carry, so asking for it cost a
-	// seek into the report table per row - 57,641 of them for the busiest user
-	// on a production Controller, every time this user was evaluated. Naming
-	// ended_at instead keeps the whole aggregate inside the index.
 	err := s.db.QueryRowContext(ctx, `select u.id,u.username,u.nickname,
-		coalesce(count(distinct case when r.source_ip<>'' then r.source_ip end),0),
-		coalesce(count(distinct r.server_id),0),
-		coalesce(sum(r.connection_count),0),
-		coalesce(max(r.active_peak),0),
-		coalesce(count(r.ended_at),0),
-		max(r.ended_at),
-		coalesce(u.device_limit,0),
-		coalesce(user_device_counts.active_count,0)
-		from users u
-		left join connection_audit_reports r on r.user_id=u.id and r.ended_at>=?
-		left join (select user_id, count(*) as active_count from user_devices where status='active' group by user_id) user_device_counts on user_device_counts.user_id=u.id
-		where u.id=?
-		group by u.id,u.username,u.nickname`, sinceText, userID).Scan(&item.UserID, &item.Username, &item.Nickname, &item.SourceIPCount, &item.ServerCount, &item.ConnectionCount, &item.ActivePeak, &item.ReportCount, &lastSeen, &item.DeviceLimit, &item.RegisteredDeviceCount)
+			coalesce(u.device_limit,0),
+			coalesce(user_device_counts.active_count,0)
+			from users u
+			left join (select user_id, count(*) as active_count from user_devices where status='active' group by user_id) user_device_counts on user_device_counts.user_id=u.id
+			where u.id=?`, userID).Scan(&item.UserID, &item.Username, &item.Nickname, &item.DeviceLimit, &item.RegisteredDeviceCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, sql.ErrNoRows
 	}
+	if err != nil {
+		return nil, err
+	}
+	err = s.history.QueryRowContext(ctx, `select
+			coalesce(count(distinct case when source_ip<>'' then source_ip end),0),
+			coalesce(count(distinct server_id),0),
+			coalesce(sum(connection_count),0),
+			coalesce(max(active_peak),0),
+			coalesce(count(ended_at),0),
+			max(ended_at)
+			from connection_audit_reports where user_id=? and ended_at>=?`, userID, sinceText).Scan(&item.SourceIPCount, &item.ServerCount, &item.ConnectionCount, &item.ActivePeak, &item.ReportCount, &lastSeen)
 	if err != nil {
 		return nil, err
 	}
@@ -714,7 +793,7 @@ func (s *Store) ConnectionAuditUserRisk(ctx context.Context, userID int64, windo
 		}
 	}
 	item.SourceSubnetCount = len(subnets)
-	if err := s.db.QueryRowContext(ctx, `select count(*) from (
+	if err := s.history.QueryRowContext(ctx, `select count(*) from (
 		select r.source_ip from connection_audit_reports r
 		where r.user_id=? and r.ended_at>=? and exists(
 			select 1 from connection_audit_reports shared where shared.source_ip=r.source_ip and shared.user_id<>r.user_id and shared.ended_at>=?
@@ -773,7 +852,7 @@ func (s *Store) ConnectionAuditUserRisk(ctx context.Context, userID int64, windo
 }
 
 func (s *Store) connectionAuditDimensions(ctx context.Context, query string, args ...any) ([]model.ConnectionAuditDimension, error) {
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.history.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -791,12 +870,47 @@ func (s *Store) connectionAuditDimensions(ctx context.Context, query string, arg
 	return out, rows.Err()
 }
 
+func (s *Store) fillAuditServerNames(ctx context.Context, items []model.ConnectionAuditDimension) error {
+	if len(items) == 0 {
+		return nil
+	}
+	args := make([]any, 0, len(items))
+	placeholders := make([]string, 0, len(items))
+	for _, item := range items {
+		args = append(args, item.Key)
+		placeholders = append(placeholders, "?")
+	}
+	rows, err := s.db.QueryContext(ctx, `select id,name from servers where id in (`+strings.Join(placeholders, ",")+`)`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	names := map[string]string{}
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return err
+		}
+		names[strconv.FormatInt(id, 10)] = name
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range items {
+		if name := names[items[i].Key]; name != "" {
+			items[i].Label = name
+		}
+	}
+	return nil
+}
+
 // listRecentConnectionAudits returns this user's reports whose ended_at is at or
 // after since, newest first. ended_at is the only time column this table is
 // indexed on; a started_at window is derived from this one by the caller that
 // needs it.
 func (s *Store) listRecentConnectionAudits(ctx context.Context, userID int64, since string, limit int) ([]model.ConnectionAuditReport, error) {
-	rows, err := s.db.QueryContext(ctx, `select
+	rows, err := s.history.QueryContext(ctx, `select
 		report_id,server_id,user_id,inbound_id,path_id,device_id_hash,credential_epoch,client_instance_id_hash,
 		source_ip,route_id,source_geo_code,source_country_code,source_country,source_province,source_city,source_isp,geo_database_revision,
 		network,connection_count,closed_count,duration_total_ms,duration_max_ms,
@@ -859,7 +973,7 @@ func scanConnectionAuditReportRow(rows *sql.Rows) (model.ConnectionAuditReport, 
 }
 
 func (s *Store) ConnectionAuditSourceIPsForGeoRevision(ctx context.Context, revision string) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `select distinct source_ip from connection_audit_reports where geo_database_revision<>? order by source_ip`, revision)
+	rows, err := s.history.QueryContext(ctx, `select distinct source_ip from connection_audit_reports where geo_database_revision<>? order by source_ip`, revision)
 	if err != nil {
 		return nil, err
 	}
@@ -876,7 +990,7 @@ func (s *Store) ConnectionAuditSourceIPsForGeoRevision(ctx context.Context, revi
 }
 
 func (s *Store) UpdateConnectionAuditSourceGeography(ctx context.Context, sourceIP string, geo model.IPGeography) error {
-	_, err := s.db.ExecContext(ctx, `update connection_audit_reports set source_country_code=?,source_country=?,source_province=?,source_city=?,source_isp=?,geo_database_revision=? where source_ip=?`, geo.CountryCode, geo.Country, geo.Province, geo.City, geo.ISP, geo.Revision, sourceIP)
+	_, err := s.history.ExecContext(ctx, `update connection_audit_reports set source_country_code=?,source_country=?,source_province=?,source_city=?,source_isp=?,geo_database_revision=? where source_ip=?`, geo.CountryCode, geo.Country, geo.Province, geo.City, geo.ISP, geo.Revision, sourceIP)
 	return err
 }
 
@@ -1341,7 +1455,7 @@ func (s *Store) listConnectionAuditReportsStartedSince(ctx context.Context, user
 }
 
 func (s *Store) connectionAuditSharedRouteUsers(ctx context.Context, since time.Time) (map[string]int, error) {
-	rows, err := s.db.QueryContext(ctx, `select route_id,count(distinct user_id) from connection_audit_reports where route_id!='' and ended_at>=? group by route_id`, since.UTC().Format(time.RFC3339Nano))
+	rows, err := s.history.QueryContext(ctx, `select route_id,count(distinct user_id) from connection_audit_reports where route_id!='' and ended_at>=? group by route_id`, since.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
@@ -1739,7 +1853,7 @@ func scanConnectionAuditEvaluationRow(rows *sql.Rows) (model.ConnectionAuditRepo
 // connectionAuditEvaluationReports loads one user's reports for risk
 // evaluation, newest first.
 func (s *Store) connectionAuditEvaluationReports(ctx context.Context, userID int64, since string, limit int) ([]model.ConnectionAuditReport, error) {
-	rows, err := s.db.QueryContext(ctx, `select `+connectionAuditEvaluationColumns+`
+	rows, err := s.history.QueryContext(ctx, `select `+connectionAuditEvaluationColumns+`
 		from connection_audit_reports
 		where user_id=? and ended_at>=?
 		order by ended_at desc
@@ -1805,7 +1919,7 @@ func (s *Store) batchConnectionAuditReportsForRisk(ctx context.Context, userIDs 
 			from connection_audit_reports r
 			where r.ended_at>=? and r.user_id in (` + inClause(len(userIDs)) + `)
 		) where _rn<=?` // #nosec G201 -- placeholders are generated as ?,? only.
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.history.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1937,7 +2051,7 @@ func (s *Store) batchConnectionAuditRobustZBucketsRaw(ctx context.Context, userI
 		from connection_audit_reports
 		where started_at>=? and started_at<? and internal_probe=0 and probe_state not in ('confirmed','candidate') and dropped_bucket_count=0 and user_id in (` + inClause(len(userIDs)) + `)
 		group by user_id,hour_bucket` // #nosec G201 -- placeholders are generated as ?,? only.
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.history.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -2048,6 +2162,15 @@ func (s *Store) refreshConnectionProbeEpisodes(ctx context.Context, userID int64
 		key := connectionAuditReportIdentity(report).key()
 		byIdentity[key] = append(byIdentity[key], report)
 	}
+	history, err := s.historyDB()
+	if err != nil {
+		return err
+	}
+	historyTx, err := history.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer historyTx.Rollback()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -2057,7 +2180,7 @@ func (s *Store) refreshConnectionProbeEpisodes(ctx context.Context, userID int64
 	if _, err := tx.ExecContext(ctx, `delete from connection_probe_episodes where user_id=? and ended_at>=?`, userID, cutoffRaw); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `update connection_audit_reports set probe_state='' where user_id=? and ended_at>=? and internal_probe=0`, userID, cutoffRaw); err != nil {
+	if _, err := historyTx.ExecContext(ctx, `update connection_audit_reports set probe_state='' where user_id=? and ended_at>=? and internal_probe=0`, userID, cutoffRaw); err != nil {
 		return err
 	}
 	// Per-state batched probe_state writes: one statement per distinct state
@@ -2106,7 +2229,7 @@ func (s *Store) refreshConnectionProbeEpisodes(ctx context.Context, userID int64
 			for _, id := range chunk {
 				args = append(args, id)
 			}
-			if _, err := tx.ExecContext(ctx, `update connection_audit_reports set probe_state=? where report_id in (`+inClause(len(chunk))+`)`, args...); err != nil {
+			if _, err := historyTx.ExecContext(ctx, `update connection_audit_reports set probe_state=? where report_id in (`+inClause(len(chunk))+`)`, args...); err != nil {
 				return err
 			}
 		}
@@ -2118,7 +2241,10 @@ func (s *Store) refreshConnectionProbeEpisodes(ctx context.Context, userID int64
 		}
 		dirtyHours[userID] = append(dirtyHours[userID], report.StartedAt)
 	}
-	if err := markConnectionAuditHoursDirtyTx(tx, ctx, dirtyHours); err != nil {
+	if err := markConnectionAuditHoursDirtyTx(historyTx, ctx, dirtyHours); err != nil {
+		return err
+	}
+	if err := historyTx.Commit(); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -2131,7 +2257,7 @@ func (s *Store) RefreshConnectionProbeEpisodes(ctx context.Context, userID int64
 }
 
 func (s *Store) connectionAuditAssignedNodes(ctx context.Context, userID int64, since time.Time) (map[string]map[string]struct{}, error) {
-	rows, err := s.db.QueryContext(ctx, `select distinct device_id_hash,source_ip,server_id,coalesce(inbound_id,0)
+	rows, err := s.history.QueryContext(ctx, `select distinct device_id_hash,source_ip,server_id,coalesce(inbound_id,0)
 		from connection_audit_reports where user_id=? and ended_at>=? and internal_probe=0`, userID, since.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err

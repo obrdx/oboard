@@ -461,7 +461,7 @@ func TestConnectionAuditMaintenancePrunesReportsOutsideRetention(t *testing.T) {
 	}
 	nowTime := time.Now().UTC()
 	reports := []model.ConnectionAuditReport{
-		{ReportID: "expired-audit", ServerID: server.ID, UserID: user.ID, SourceIP: "198.51.100.40", Network: "tcp", ConnectionCount: 1, ActivePeak: 1, StartedAt: nowTime.Add(-25*time.Hour - time.Minute), EndedAt: nowTime.Add(-25 * time.Hour)},
+		{ReportID: "expired-audit", ServerID: server.ID, UserID: user.ID, SourceIP: "198.51.100.40", Network: "tcp", ConnectionCount: 1, ActivePeak: 1, StartedAt: nowTime.Add(-time.Duration(DefaultConnectionAuditRetentionDays)*24*time.Hour - 2*time.Minute), EndedAt: nowTime.Add(-time.Duration(DefaultConnectionAuditRetentionDays)*24*time.Hour - time.Minute)},
 		{ReportID: "current-audit", ServerID: server.ID, UserID: user.ID, SourceIP: "198.51.100.41", Network: "tcp", ConnectionCount: 1, ActivePeak: 1, StartedAt: nowTime.Add(-time.Minute), EndedAt: nowTime},
 	}
 	if _, err := s.AddConnectionAuditReports(ctx, reports); err != nil {

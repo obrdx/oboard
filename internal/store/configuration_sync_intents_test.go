@@ -352,6 +352,9 @@ func TestConfigurationIntentMigrationFromPreviousTriggers(t *testing.T) {
 	if err := s.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := s.db.ExecContext(ctx, `alter table servers add column bbr_enabled integer not null default 0`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.db.ExecContext(ctx, previousConfigurationRevisionTriggers); err != nil {
 		t.Fatal(err)
 	}

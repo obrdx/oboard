@@ -128,8 +128,10 @@ func TestEncryptedBackupRestoresDataAndRewrapsSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	backupRoot := filepath.Join(root, "backups")
-	manager, err := New(Config{Root: backupRoot, DatabasePath: sourceDBPath, ACMEHome: acmeHome, MasterSecret: sourceSecret, SourceVersion: "1.2.3", Snapshot: func(ctx context.Context, dest string) error {
+	manager, err := New(Config{Root: backupRoot, DatabasePath: sourceDBPath, HistoryDatabasePath: source.HistoryPath(), ACMEHome: acmeHome, MasterSecret: sourceSecret, SourceVersion: "1.2.3", Snapshot: func(ctx context.Context, dest string) error {
 		return source.Backup(ctx, dest, store.BackupOptions{})
+	}, HistorySnapshot: func(ctx context.Context, dest string) error {
+		return source.BackupHistory(ctx, dest, store.BackupOptions{})
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -472,8 +474,10 @@ func TestPendingRestoreRollsBackDatabaseWhenACMESwitchFails(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sourceACME, "account.conf"), []byte("account"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	manager, err := New(Config{Root: backupRoot, DatabasePath: sourcePath, ACMEHome: sourceACME, MasterSecret: "source-secret-with-at-least-thirty-two-characters", SourceVersion: "1.2.3", Snapshot: func(ctx context.Context, dest string) error {
+	manager, err := New(Config{Root: backupRoot, DatabasePath: sourcePath, HistoryDatabasePath: source.HistoryPath(), ACMEHome: sourceACME, MasterSecret: "source-secret-with-at-least-thirty-two-characters", SourceVersion: "1.2.3", Snapshot: func(ctx context.Context, dest string) error {
 		return source.Backup(ctx, dest, store.BackupOptions{})
+	}, HistorySnapshot: func(ctx context.Context, dest string) error {
+		return source.BackupHistory(ctx, dest, store.BackupOptions{})
 	}})
 	if err != nil {
 		t.Fatal(err)

@@ -84,26 +84,48 @@ func (s *Store) PendingDeferredIndexes(ctx context.Context) ([]string, error) {
 }
 
 func (s *Store) deferredIndexApplied(ctx context.Context, item deferredIndex) (bool, error) {
-	present, err := s.indexExists(ctx, item.name)
+	db, err := s.deferredIndexDB(item)
+	if err != nil {
+		return false, err
+	}
+	present, err := s.indexExistsIn(ctx, db, item.name)
 	if err != nil || !present {
 		return false, err
 	}
 	if item.replaces == "" {
 		return true, nil
 	}
-	superseded, err := s.indexExists(ctx, item.replaces)
+	superseded, err := s.indexExistsIn(ctx, db, item.replaces)
 	if err != nil {
 		return false, err
 	}
 	return !superseded, nil
 }
 
-func (s *Store) indexExists(ctx context.Context, name string) (bool, error) {
+func (s *Store) indexExistsIn(ctx context.Context, db *countingDB, name string) (bool, error) {
 	var count int
-	if err := s.db.QueryRowContext(ctx, `select count(*) from sqlite_master where type='index' and name=?`, name).Scan(&count); err != nil {
+	if err := db.QueryRowContext(ctx, `select count(*) from sqlite_master where type='index' and name=?`, name).Scan(&count); err != nil {
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func (s *Store) indexExists(ctx context.Context, name string) (bool, error) {
+	if s.history != nil {
+		if present, err := s.indexExistsIn(ctx, s.history, name); err != nil || present {
+			return present, err
+		}
+	}
+	return s.indexExistsIn(ctx, s.db, name)
+}
+
+func (s *Store) deferredIndexDB(item deferredIndex) (*countingDB, error) {
+	for _, table := range historyTables {
+		if item.table == table {
+			return s.historyDB()
+		}
+	}
+	return s.db, nil
 }
 
 // MigrateDeferredIndexes brings the deferred indexes up to date. It is
@@ -122,20 +144,24 @@ func (s *Store) MigrateDeferredIndexes(ctx context.Context) error {
 		if done {
 			continue
 		}
-		present, err := s.indexExists(ctx, item.name)
+		db, err := s.deferredIndexDB(item)
+		if err != nil {
+			return err
+		}
+		present, err := s.indexExistsIn(ctx, db, item.name)
 		if err != nil {
 			return err
 		}
 		if !present {
 			startedAt := time.Now()
 			log.Printf("building deferred index %s on %s", item.name, item.table)
-			if _, err := s.db.ExecContext(ctx, item.create); err != nil {
+			if _, err := db.ExecContext(ctx, item.create); err != nil {
 				return fmt.Errorf("build deferred index %s: %w", item.name, err)
 			}
 			log.Printf("built deferred index %s in %s", item.name, time.Since(startedAt).Round(time.Millisecond))
 		}
 		if item.replaces != "" {
-			if _, err := s.db.ExecContext(ctx, `drop index if exists `+item.replaces); err != nil {
+			if _, err := db.ExecContext(ctx, `drop index if exists `+item.replaces); err != nil {
 				return fmt.Errorf("drop superseded index %s: %w", item.replaces, err)
 			}
 		}

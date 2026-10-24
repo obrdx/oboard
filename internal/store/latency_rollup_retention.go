@@ -2,11 +2,32 @@ package store
 
 import (
 	"context"
+	"strconv"
 	"time"
 )
 
+const (
+	LatencyRollupRetentionDaysSetting = "latency_rollup_retention_days"
+	DefaultLatencyRollupRetentionDays = 30
+	MinLatencyRollupRetentionDays     = 7
+	MaxLatencyRollupRetentionDays     = 365
+	LatencyHourlyRetention            = 365 * 24 * time.Hour
+)
+
+func LatencyRollupRetentionDays(settings map[string]string) int {
+	days, err := strconv.Atoi(settings[LatencyRollupRetentionDaysSetting])
+	if err != nil || days < MinLatencyRollupRetentionDays || days > MaxLatencyRollupRetentionDays {
+		return DefaultLatencyRollupRetentionDays
+	}
+	return days
+}
+
 func (s *Store) deleteLatencyRetentionBatch(ctx context.Context, query, cutoff string, limit int) (int64, []int64, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	history, err := s.historyDB()
+	if err != nil {
+		return 0, nil, err
+	}
+	tx, err := history.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -68,8 +89,9 @@ func (s *Store) latencyRollupRetention(ctx context.Context, cutoff time.Time) (i
 	if cutoff.Nanosecond() > 0 {
 		floor++
 	}
+	hourlyFloor := time.Now().UTC().Add(-LatencyHourlyRetention).Unix()
 	for i := 0; i < maintenanceMaxBatches; i++ {
-		count, err := s.deleteLatencySummaryBatch(ctx, floor)
+		count, err := s.deleteLatencySummaryBatch(ctx, floor, hourlyFloor)
 		if err != nil {
 			return deleted, deleted > 0, err
 		}
@@ -81,13 +103,20 @@ func (s *Store) latencyRollupRetention(ctx context.Context, cutoff time.Time) (i
 	return deleted, true, nil
 }
 
-func (s *Store) deleteLatencySummaryBatch(ctx context.Context, floor int64) (int64, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+func (s *Store) deleteLatencySummaryBatch(ctx context.Context, fiveMinuteFloor, hourlyFloor int64) (int64, error) {
+	history, err := s.historyDB()
+	if err != nil {
+		return 0, err
+	}
+	tx, err := history.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `delete from latency_rollup_buckets where rowid in (select rowid from latency_rollup_buckets where bucket_start<? order by bucket_start limit ?)`, floor, maintenanceBatchSize)
+	result, err := tx.ExecContext(ctx, `delete from latency_rollup_buckets where rowid in (
+		select rowid from latency_rollup_buckets
+		where (resolution_seconds=300 and bucket_start<?) or (resolution_seconds=3600 and bucket_start<?)
+		order by bucket_start limit ?)`, fiveMinuteFloor, hourlyFloor, maintenanceBatchSize)
 	if err != nil {
 		return 0, err
 	}
@@ -95,7 +124,7 @@ func (s *Store) deleteLatencySummaryBatch(ctx context.Context, floor int64) (int
 	if err != nil {
 		return 0, err
 	}
-	if _, err := tx.ExecContext(ctx, `update latency_rollup_state set generation=generation+1,retention_floor=max(retention_floor,?),updated_at=? where id=1`, floor, now()); err != nil {
+	if _, err := tx.ExecContext(ctx, `update latency_rollup_state set generation=generation+1,updated_at=? where id=1`, now()); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {

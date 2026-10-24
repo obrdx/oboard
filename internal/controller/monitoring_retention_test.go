@@ -31,6 +31,11 @@ func TestServerMonitoringRetentionSettingsAndAggregatedHistory(t *testing.T) {
 	if settings[store.ServerMonitoringRetentionDaysSetting] != float64(7) {
 		t.Fatalf("default monitoring retention = %#v", settings[store.ServerMonitoringRetentionDaysSetting])
 	}
+	if settings[store.MetricHourlyRetentionDaysSetting] != float64(store.DefaultMetricHourlyRetentionDays) ||
+		settings[store.MetricDailyRetentionDaysSetting] != float64(store.DefaultMetricDailyRetentionDays) ||
+		settings[store.LatencyRollupRetentionDaysSetting] != float64(store.DefaultLatencyRollupRetentionDays) {
+		t.Fatalf("database retention defaults = %#v", settings)
+	}
 	for _, days := range []int{0, store.MaxServerMonitoringRetentionDays + 1} {
 		request(t, handler, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{store.ServerMonitoringRetentionDaysSetting: days}, http.StatusBadRequest)
 	}
@@ -47,8 +52,11 @@ func TestServerMonitoringRetentionSettingsAndAggregatedHistory(t *testing.T) {
 	if _, err := app.settingsUpdateCandidate(ctx, json.RawMessage(`{"changes":{"server_monitoring_retention_days":31}}`), false); err == nil {
 		t.Fatal("MCP settings validation accepted retention above maximum")
 	}
+	if _, err := app.settingsUpdateCandidate(ctx, json.RawMessage(`{"changes":{"server_metric_hourly_retention_days":181,"server_metric_daily_retention_days":731,"latency_rollup_retention_days":366}}`), false); err == nil {
+		t.Fatal("MCP settings validation accepted database retention above maximum")
+	}
 
-	created := request(t, handler, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "retention-node"}, http.StatusCreated)
+	created := request(t, handler, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "retention-node", "renewal_cycle": "monthly"}, http.StatusCreated)
 	serverID := int64(created["server"].(map[string]any)["id"].(float64))
 	resourceResponse := request(t, handler, http.MethodGet, fmt.Sprintf("/api/v1/ui/servers/%d/resource-metrics?hours=24", serverID), token, nil, http.StatusOK)
 	if resourceResponse["retention_days"] != float64(15) {

@@ -29,7 +29,7 @@ func TestConnectionAuditOverviewIsIndexOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rows, err := db.db.QueryContext(ctx, `explain query plan `+connectionAuditOverviewUsersQuery(1), int64(1), "2026-09-13T00:00:00Z")
+	rows, err := db.db.QueryContext(ctx, `explain query plan select user_id,count(distinct source_ip),count(distinct server_id),coalesce(sum(connection_count),0),coalesce(max(active_peak),0),count(*),max(ended_at) from connection_audit_reports where user_id=? and ended_at>=? group by user_id`, int64(1), "2026-09-13T00:00:00Z")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,6 +125,7 @@ func TestSharedSourceIPCountIgnoresRepeatedRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	enableHistoricalAuditDetails(t, db)
 	server := &model.Server{Name: "shared-node", PublicIPv4: "203.0.113.7", Status: model.ServerOnline}
 	if err := db.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
@@ -262,6 +263,7 @@ func TestUserRiskAggregateIsIndexOnlyAndCountsMatchedRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	enableHistoricalAuditDetails(t, db)
 	if err := db.MigrateDeferredIndexes(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -311,16 +313,15 @@ func TestUserRiskAggregateIsIndexOnlyAndCountsMatchedRows(t *testing.T) {
 		t.Fatalf("SourceIPCount = %d, want 1", item.SourceIPCount)
 	}
 
-	plan := explainPlan(t, db, `select u.id,
-		coalesce(count(distinct case when r.source_ip<>'' then r.source_ip end),0),
-		coalesce(count(distinct r.server_id),0),
-		coalesce(sum(r.connection_count),0),
-		coalesce(max(r.active_peak),0),
-		coalesce(count(r.ended_at),0),
-		max(r.ended_at)
-		from users u
-		left join connection_audit_reports r on r.user_id=u.id and r.ended_at>=?
-		where u.id=? group by u.id`, "2026-09-13T00:00:00Z", reported.ID)
+	plan := explainPlan(t, db, `select
+			coalesce(count(distinct case when source_ip<>'' then source_ip end),0),
+			coalesce(count(distinct server_id),0),
+			coalesce(sum(connection_count),0),
+			coalesce(max(active_peak),0),
+			coalesce(count(ended_at),0),
+			max(ended_at)
+			from connection_audit_reports
+			where user_id=? and ended_at>=?`, reported.ID, "2026-09-13T00:00:00Z")
 	if !strings.Contains(plan, "COVERING INDEX idx_connection_audit_user_window") {
 		t.Fatalf("user risk aggregate seeks the report table:\n%s", plan)
 	}

@@ -358,8 +358,8 @@ func TestLatencyRollupSummaryRetentionPreservesExactBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n, _, err := db.latencyRollupRetention(ctx, at.Add(time.Nanosecond)); err != nil || n != 2 {
-		t.Fatalf("partial boundary not pruned: %d %v", n, err)
+	if n, _, err := db.latencyRollupRetention(ctx, at.Add(time.Nanosecond)); err != nil || n != 1 {
+		t.Fatalf("5-minute boundary not pruned: %d %v", n, err)
 	}
 	if err := db.commitLatencyRollupBatch(ctx, batch); !errors.Is(err, ErrLatencyRollupChanged) {
 		t.Fatalf("pruned summary recreated: %v", err)

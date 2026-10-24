@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"log"
 
 	"github.com/OboardProject/oboard/internal/model"
 )
@@ -13,9 +14,6 @@ func (s *Store) DeleteServer(ctx context.Context, serverID int64) error {
 		return err
 	}
 	defer tx.Rollback()
-	if err := bumpLatencyRollupGeneration(ctx, tx); err != nil {
-		return err
-	}
 	inboundIDs, err := queryInt64sTx(ctx, tx, `select id from inbounds where server_id=?`, serverID)
 	if err != nil {
 		return err
@@ -38,7 +36,6 @@ func (s *Store) DeleteServer(ctx context.Context, serverID int64) error {
 		query string
 		args  []any
 	}{
-		{`delete from server_metric_samples where server_id=?`, []any{serverID}},
 		{`delete from server_connectivity_events where server_id=?`, []any{serverID}},
 		{`delete from server_telemetry where server_id=?`, []any{serverID}},
 		// Incidents and their publication isolations carry server_id without a
@@ -69,6 +66,14 @@ func (s *Store) DeleteServer(ctx context.Context, serverID int64) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return err
+	}
+	if err := s.QueueHistoryCleanup(ctx, "server", serverID); err != nil {
+		log.Printf("queue history cleanup for deleted server %d: %v", serverID, err)
+	}
+	if s.HistoryAvailable() {
+		if err := s.bumpLatencyRollupGeneration(ctx); err != nil {
+			log.Printf("invalidate latency rollup after server %d deletion: %v", serverID, err)
+		}
 	}
 	s.invalidateLatencyHistory(serverID)
 	return nil

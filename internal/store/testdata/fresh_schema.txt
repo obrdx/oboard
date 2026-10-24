@@ -31,16 +31,6 @@ index idx_automation_external_actions_workflow on automation_external_actions
 index idx_certificates_google_eab_credential on certificates
 index idx_configuration_sync_intents_oldest on configuration_sync_intents
 index idx_configuration_sync_queue on configuration_sync_states
-index idx_connection_audit_hourly_dimensions_window on connection_audit_hourly_dimensions
-index idx_connection_audit_hourly_dirty_at on connection_audit_hourly_dirty
-index idx_connection_audit_hourly_hour on connection_audit_hourly
-index idx_connection_audit_inbound on connection_audit_reports
-index idx_connection_audit_path on connection_audit_reports
-index idx_connection_audit_route_time on connection_audit_reports
-index idx_connection_audit_server_time on connection_audit_reports
-index idx_connection_audit_source_window on connection_audit_reports
-index idx_connection_audit_time on connection_audit_reports
-index idx_connection_audit_user_window on connection_audit_reports
 index idx_connection_presence_events_time on connection_presence_events
 index idx_connection_presence_states_user on connection_presence_states
 index idx_connection_probe_episodes_time on connection_probe_episodes
@@ -48,6 +38,7 @@ index idx_connection_probe_user_time on connection_probe_episodes
 index idx_consumed_step_up_tokens_expiry on consumed_step_up_tokens
 index idx_controller_backups_created on controller_backups
 index idx_controller_update_runs_one_active on controller_update_runs
+index idx_database_diagnostics_samples_role_time on database_diagnostics_samples
 index idx_dns_bench_server on dns_benchmark_results
 index idx_dns_credential_zones_credential on dns_credential_zones
 index idx_dns_credential_zones_server on dns_credential_zones
@@ -63,8 +54,6 @@ index idx_inbound_probe_inbound on inbound_probe_results
 index idx_latency_legacy_server_time on latency_legacy_archive
 index idx_latency_probe_task_servers_server on latency_probe_task_servers
 index idx_latency_probe_tasks_name on latency_probe_tasks
-index idx_latency_rollup_bucket_time on latency_rollup_buckets
-index idx_latency_rollup_task on latency_rollup_buckets
 index idx_mcp_fast_path_metrics_created on mcp_fast_path_metrics
 index idx_mcp_fast_path_metrics_workflow on mcp_fast_path_metrics
 index idx_mcp_prepared_plans_expiry on mcp_prepared_plans
@@ -120,12 +109,6 @@ index idx_routing_rules_target_path on routing_rules
 index idx_server_connectivity_events_kind_time on server_connectivity_events
 index idx_server_connectivity_events_server_kind_time on server_connectivity_events
 index idx_server_connectivity_events_server_time on server_connectivity_events
-index idx_server_latency_probe_results_checked on server_latency_probe_results
-index idx_server_latency_probe_results_report_target on server_latency_probe_results
-index idx_server_latency_probe_results_server_checked on server_latency_probe_results
-index idx_server_latency_probe_results_server_kind_checked on server_latency_probe_results
-index idx_server_metric_samples_server_time on server_metric_samples
-index idx_server_metric_samples_time on server_metric_samples
 index idx_servers_agent_update_scan on servers
 index idx_sla_projection_time on sla_projection_buckets
 index idx_sla_projection_work on sla_projection_servers
@@ -567,13 +550,6 @@ table audit_logs
     detail TEXT notnull=1 default=- pk=0
     ip TEXT notnull=1 default=- pk=0
     created_at TEXT notnull=1 default=- pk=0
-table audit_rollup_state
-    id INTEGER notnull=0 default=- pk=1
-    backfill_cursor TEXT notnull=1 default='' pk=0
-    backfill_complete INTEGER notnull=1 default=0 pk=0
-    read_path TEXT notnull=1 default='raw' pk=0
-    algorithm_version INTEGER notnull=1 default=1 pk=0
-    updated_at TEXT notnull=1 default=- pk=0
 table auth_challenges
     token_hash TEXT notnull=0 default=- pk=1
     kind TEXT notnull=1 default=- pk=0
@@ -774,80 +750,6 @@ table configuration_sync_states
     changed_at TEXT notnull=1 default=- pk=0
     updated_at TEXT notnull=1 default=- pk=0
     problems_json TEXT notnull=1 default='[]' pk=0
-table connection_audit_hourly
-    user_id INTEGER notnull=1 default=- pk=1
-    utc_hour TEXT notnull=1 default=- pk=2
-    connection_count INTEGER notnull=1 default=0 pk=0
-    algorithm_version INTEGER notnull=1 default=1 pk=0
-    source_watermark TEXT notnull=1 default='' pk=0
-    updated_at TEXT notnull=1 default=- pk=0
-    report_count INTEGER notnull=1 default=0 pk=0
-    active_peak INTEGER notnull=1 default=0 pk=0
-    upload_bytes INTEGER notnull=1 default=0 pk=0
-    download_bytes INTEGER notnull=1 default=0 pk=0
-    last_ended_at TEXT notnull=1 default='' pk=0
-    collection_count INTEGER notnull=1 default=0 pk=0
-    dropped_bucket_count INTEGER notnull=1 default=0 pk=0
-    capacity_total INTEGER notnull=1 default=0 pk=0
-    dimensions_complete INTEGER notnull=1 default=1 pk=0
-    totals_version INTEGER notnull=1 default=0 pk=0
-table connection_audit_hourly_dimensions
-    user_id INTEGER notnull=1 default=- pk=1
-    utc_hour TEXT notnull=1 default=- pk=2
-    dimension TEXT notnull=1 default=- pk=3
-    value TEXT notnull=1 default=- pk=4
-table connection_audit_hourly_dirty
-    user_id INTEGER notnull=1 default=- pk=1
-    utc_hour TEXT notnull=1 default=- pk=2
-    dirty_at TEXT notnull=1 default=- pk=0
-table connection_audit_reports
-    report_id TEXT notnull=0 default=- pk=1
-    server_id INTEGER notnull=1 default=- pk=0
-    user_id INTEGER notnull=1 default=- pk=0
-    inbound_id INTEGER notnull=0 default=- pk=0
-    path_id INTEGER notnull=0 default=- pk=0
-    device_id_hash TEXT notnull=1 default='' pk=0
-    credential_epoch INTEGER notnull=1 default=0 pk=0
-    client_instance_id_hash TEXT notnull=1 default='' pk=0
-    source_ip TEXT notnull=1 default=- pk=0
-    route_id TEXT notnull=1 default='' pk=0
-    source_geo_code TEXT notnull=1 default='' pk=0
-    source_country_code TEXT notnull=1 default='' pk=0
-    source_country TEXT notnull=1 default='' pk=0
-    source_province TEXT notnull=1 default='' pk=0
-    source_city TEXT notnull=1 default='' pk=0
-    source_isp TEXT notnull=1 default='' pk=0
-    geo_database_revision TEXT notnull=1 default='' pk=0
-    network TEXT notnull=1 default=- pk=0
-    destination TEXT notnull=1 default='' pk=0
-    destination_port INTEGER notnull=1 default=0 pk=0
-    outbound_tag TEXT notnull=1 default='' pk=0
-    outbound_type TEXT notnull=1 default='' pk=0
-    connection_count INTEGER notnull=1 default=- pk=0
-    closed_count INTEGER notnull=1 default=0 pk=0
-    duration_total_ms INTEGER notnull=1 default=0 pk=0
-    duration_max_ms INTEGER notnull=1 default=0 pk=0
-    upload_bytes INTEGER notnull=1 default=0 pk=0
-    download_bytes INTEGER notnull=1 default=0 pk=0
-    payload_first_at TEXT notnull=0 default=- pk=0
-    payload_last_at TEXT notnull=0 default=- pk=0
-    duration_le_1s_count INTEGER notnull=1 default=0 pk=0
-    duration_le_5s_count INTEGER notnull=1 default=0 pk=0
-    duration_le_20s_count INTEGER notnull=1 default=0 pk=0
-    duration_gt_20s_count INTEGER notnull=1 default=0 pk=0
-    probe_state TEXT notnull=1 default='' pk=0
-    internal_probe INTEGER notnull=1 default=0 pk=0
-    presence_sequence INTEGER notnull=1 default=0 pk=0
-    active_peak INTEGER notnull=1 default=0 pk=0
-    active_at_end INTEGER notnull=1 default=0 pk=0
-    collection_generation INTEGER notnull=1 default=0 pk=0
-    bucket_capacity INTEGER notnull=1 default=1 pk=0
-    dropped_bucket_count INTEGER notnull=1 default=0 pk=0
-    collection_started_at TEXT notnull=1 default=- pk=0
-    collection_ended_at TEXT notnull=1 default=- pk=0
-    started_at TEXT notnull=1 default=- pk=0
-    ended_at TEXT notnull=1 default=- pk=0
-    created_at TEXT notnull=1 default=- pk=0
 table connection_presence_agents
     agent_id TEXT notnull=0 default=- pk=1
     server_id INTEGER notnull=1 default=- pk=0
@@ -941,6 +843,15 @@ table controller_update_runs
     restart_duration_ms INTEGER notnull=1 default=0 pk=0
     total_duration_ms INTEGER notnull=1 default=0 pk=0
     error TEXT notnull=1 default='' pk=0
+table database_diagnostics_samples
+    id INTEGER notnull=0 default=- pk=1
+    sampled_at TEXT notnull=1 default=- pk=0
+    role TEXT notnull=1 default=- pk=0
+    db_bytes INTEGER notnull=1 default=0 pk=0
+    wal_bytes INTEGER notnull=1 default=0 pk=0
+    page_count INTEGER notnull=1 default=0 pk=0
+    freelist_count INTEGER notnull=1 default=0 pk=0
+    table_stats_json TEXT notnull=1 default='' pk=0
 table deployment_failure_dismissals
     config_version INTEGER notnull=0 default=- pk=1
     actor_id INTEGER notnull=1 default=- pk=0
@@ -1093,6 +1004,12 @@ table google_eab_credentials
     hmac_key_encrypted TEXT notnull=1 default=- pk=0
     created_at TEXT notnull=1 default=- pk=0
     updated_at TEXT notnull=1 default=- pk=0
+table history_cleanup_queue
+    kind TEXT notnull=1 default=- pk=1
+    object_id INTEGER notnull=1 default=- pk=2
+    created_at TEXT notnull=1 default=- pk=0
+    attempts INTEGER notnull=1 default=0 pk=0
+    last_error TEXT notnull=1 default='' pk=0
 table imported_nodes
     id INTEGER notnull=0 default=- pk=1
     user_id INTEGER notnull=1 default=- pk=0
@@ -1184,51 +1101,6 @@ table latency_probe_tasks
     enabled INTEGER notnull=1 default=1 pk=0
     created_at TEXT notnull=1 default=- pk=0
     updated_at TEXT notnull=1 default=- pk=0
-table latency_rollup_buckets
-    server_id INTEGER notnull=1 default=- pk=1
-    series_key TEXT notnull=1 default=- pk=2
-    measurement_revision TEXT notnull=1 default=- pk=3
-    revision_basis TEXT notnull=1 default='reported_endpoint_v1' pk=0
-    resolution_seconds INTEGER notnull=1 default=- pk=4
-    bucket_start INTEGER notnull=1 default=- pk=5
-    kind TEXT notnull=1 default=- pk=0
-    task_id INTEGER notnull=1 default=- pk=0
-    probe_id TEXT notnull=1 default=- pk=0
-    mode TEXT notnull=1 default=- pk=0
-    task_name TEXT notnull=1 default=- pk=0
-    province TEXT notnull=1 default=- pk=0
-    carrier TEXT notnull=1 default=- pk=0
-    latency_sum INTEGER notnull=1 default=- pk=0
-    latency_value_count INTEGER notnull=1 default=- pk=0
-    latency_min INTEGER notnull=0 default=- pk=0
-    latency_max INTEGER notnull=0 default=- pk=0
-    latency_min_at INTEGER notnull=0 default=- pk=0
-    latency_max_at INTEGER notnull=0 default=- pk=0
-    curve_sum INTEGER notnull=1 default=- pk=0
-    curve_value_count INTEGER notnull=1 default=- pk=0
-    curve_min INTEGER notnull=0 default=- pk=0
-    curve_max INTEGER notnull=0 default=- pk=0
-    curve_min_at INTEGER notnull=0 default=- pk=0
-    curve_max_at INTEGER notnull=0 default=- pk=0
-    attempt_count INTEGER notnull=1 default=- pk=0
-    success_count INTEGER notnull=1 default=- pk=0
-    report_count INTEGER notnull=1 default=- pk=0
-    available_report_count INTEGER notnull=1 default=- pk=0
-    first_sample_at INTEGER notnull=1 default=- pk=0
-    last_sample_at INTEGER notnull=1 default=- pk=0
-    summary_schema_version INTEGER notnull=1 default=- pk=0
-    updated_at TEXT notnull=1 default=- pk=0
-table latency_rollup_state
-    id INTEGER notnull=0 default=- pk=1
-    schema_version INTEGER notnull=1 default=- pk=0
-    generation INTEGER notnull=1 default=1 pk=0
-    live_cursor INTEGER notnull=1 default=-1 pk=0
-    historical_boundary INTEGER notnull=1 default=-1 pk=0
-    backfill_cursor INTEGER notnull=1 default=-1 pk=0
-    expired_unprocessed INTEGER notnull=1 default=0 pk=0
-    retention_floor INTEGER notnull=1 default=0 pk=0
-    initialized_at TEXT notnull=1 default='' pk=0
-    updated_at TEXT notnull=1 default='' pk=0
 table mcp_fast_path_metrics
     id TEXT notnull=0 default=- pk=1
     principal_id TEXT notnull=1 default=- pk=0
@@ -1557,6 +1429,22 @@ table oauth_refresh_tokens
     revoked_at TEXT notnull=0 default=- pk=0
     reuse_detected_at TEXT notnull=0 default=- pk=0
     created_at TEXT notnull=1 default=- pk=0
+table oboard_history_migration
+    id INTEGER notnull=0 default=- pk=1
+    schema_version INTEGER notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    started_at TEXT notnull=1 default='' pk=0
+    completed_at TEXT notnull=1 default='' pk=0
+    last_error TEXT notnull=1 default='' pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table oboard_history_migration_tables
+    table_name TEXT notnull=0 default=- pk=1
+    cursor INTEGER notnull=1 default=0 pk=0
+    copied INTEGER notnull=1 default=0 pk=0
+    verified INTEGER notnull=1 default=0 pk=0
+    complete INTEGER notnull=1 default=0 pk=0
+    last_error TEXT notnull=1 default='' pk=0
+    updated_at TEXT notnull=1 default=- pk=0
 table operation_confirmations
     token_hash TEXT notnull=0 default=- pk=1
     capability TEXT notnull=1 default=- pk=0
@@ -2008,32 +1896,6 @@ table server_dns_policies
     needs_benchmark INTEGER notnull=1 default=1 pk=0
     created_at TEXT notnull=1 default=- pk=0
     updated_at TEXT notnull=1 default=- pk=0
-table server_latency_probe_results
-    id INTEGER notnull=0 default=- pk=1
-    server_id INTEGER notnull=1 default=- pk=0
-    report_id TEXT notnull=1 default='' pk=0
-    resource_version TEXT notnull=1 default=- pk=0
-    probe_id TEXT notnull=1 default=- pk=0
-    kind TEXT notnull=1 default='regional' pk=0
-    mode TEXT notnull=1 default='icmp' pk=0
-    province TEXT notnull=1 default=- pk=0
-    carrier TEXT notnull=1 default=- pk=0
-    host TEXT notnull=1 default='' pk=0
-    ip TEXT notnull=1 default=- pk=0
-    port INTEGER notnull=1 default=0 pk=0
-    available INTEGER notnull=1 default=0 pk=0
-    latency_ms INTEGER notnull=1 default=0 pk=0
-    min_latency_ms INTEGER notnull=1 default=0 pk=0
-    p95_latency_ms INTEGER notnull=1 default=0 pk=0
-    jitter_ms INTEGER notnull=1 default=0 pk=0
-    sample_count INTEGER notnull=1 default=0 pk=0
-    success_count INTEGER notnull=1 default=0 pk=0
-    error TEXT notnull=1 default='' pk=0
-    checked_at TEXT notnull=1 default=- pk=0
-    created_at TEXT notnull=1 default=- pk=0
-    task_id INTEGER notnull=1 default=0 pk=0
-    task_name TEXT notnull=1 default='' pk=0
-    measurement_revision TEXT notnull=1 default='' pk=0
 table server_latency_probe_settings
     server_id INTEGER notnull=0 default=- pk=1
     enabled INTEGER notnull=1 default=1 pk=0
@@ -2050,25 +1912,6 @@ table server_latency_probe_settings
     plan_version INTEGER notnull=1 default=0 pk=0
     plan_digest TEXT notnull=1 default='' pk=0
     updated_at TEXT notnull=1 default=- pk=0
-table server_metric_samples
-    id INTEGER notnull=0 default=- pk=1
-    server_id INTEGER notnull=1 default=- pk=0
-    cpu_usage_percent REAL notnull=1 default=0 pk=0
-    memory_used_bytes INTEGER notnull=1 default=0 pk=0
-    memory_total_bytes INTEGER notnull=1 default=0 pk=0
-    disk_used_bytes INTEGER notnull=1 default=0 pk=0
-    disk_total_bytes INTEGER notnull=1 default=0 pk=0
-    tcp_connection_count INTEGER notnull=1 default=0 pk=0
-    udp_connection_count INTEGER notnull=1 default=0 pk=0
-    process_count INTEGER notnull=1 default=0 pk=0
-    resource_recorded INTEGER notnull=1 default=1 pk=0
-    network_upload_bps INTEGER notnull=1 default=0 pk=0
-    network_download_bps INTEGER notnull=1 default=0 pk=0
-    traffic_upload_bytes INTEGER notnull=1 default=0 pk=0
-    traffic_download_bytes INTEGER notnull=1 default=0 pk=0
-    connectivity_available INTEGER notnull=1 default=-1 pk=0
-    connectivity_latency_ms INTEGER notnull=1 default=0 pk=0
-    sampled_at TEXT notnull=1 default=- pk=0
 table server_offline_notices
     server_id INTEGER notnull=0 default=- pk=1
     status TEXT notnull=1 default=- pk=0
@@ -2154,6 +1997,8 @@ table servers
     mtu_probe_port INTEGER notnull=1 default=443 pk=0
     mtu_overhead_bytes INTEGER notnull=1 default=0 pk=0
     stealth_enabled INTEGER notnull=1 default=0 pk=0
+    bbr_qdisc TEXT notnull=1 default='' pk=0
+    bbr_cake_bandwidth_mbit INTEGER notnull=1 default=0 pk=0
     port_range_start INTEGER notnull=1 default=10000 pk=0
     port_range_end INTEGER notnull=1 default=20000 pk=0
     internal_port_range_start INTEGER notnull=1 default=30000 pk=0

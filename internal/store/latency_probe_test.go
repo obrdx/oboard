@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,7 +107,7 @@ func TestRegionalLatencyPointsAggregateFullWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	from := time.Date(2026, time.August, 8, 0, 0, 0, 0, time.UTC)
-	tx, err := db.db.Begin()
+	tx, err := db.history.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,6 +275,9 @@ func TestLatencyProbeTablesMigrateFromPreviousSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacyCheckedAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+	if _, err := db.history.ExecContext(context.Background(), `pragma foreign_keys=off`); err != nil {
+		t.Fatal(err)
+	}
 	for _, statement := range []string{
 		`drop index idx_server_latency_probe_results_report_target`,
 		`drop index idx_server_latency_probe_results_server_checked`,
@@ -286,7 +290,11 @@ func TestLatencyProbeTablesMigrateFromPreviousSchema(t *testing.T) {
 		`insert into server_latency_probe_results(server_id,resource_version,probe_id,province,carrier,ip,available,latency_ms,min_latency_ms,p95_latency_ms,jitter_ms,sample_count,success_count,error,checked_at,created_at) values(` + fmt.Sprint(server.ID) + `,'legacy-v1','legacy-probe','广东','中国电信','192.0.2.10',1,20,18,22,2,3,3,'','` + legacyCheckedAt.Format(time.RFC3339Nano) + `','` + legacyCheckedAt.Format(time.RFC3339Nano) + `')`,
 		`drop table server_latency_probe_results_current`,
 	} {
-		if _, err := db.db.Exec(statement); err != nil {
+		exec := db.db
+		if strings.Contains(statement, "server_latency_probe_results") {
+			exec = db.history
+		}
+		if _, err := exec.Exec(statement); err != nil {
 			t.Fatalf("prepare legacy latency schema: %v", err)
 		}
 	}
@@ -304,7 +312,11 @@ func TestLatencyProbeTablesMigrateFromPreviousSchema(t *testing.T) {
 	defer db.Close()
 	for _, table := range []string{"server_latency_probe_settings", "server_latency_probe_results"} {
 		var name string
-		if err := db.db.QueryRowContext(ctx, `select name from sqlite_master where type='table' and name=?`, table).Scan(&name); err != nil {
+		checkDB := db.db
+		if table == "server_latency_probe_results" {
+			checkDB = db.history
+		}
+		if err := checkDB.QueryRowContext(ctx, `select name from sqlite_master where type='table' and name=?`, table).Scan(&name); err != nil {
 			if err == sql.ErrNoRows {
 				t.Fatalf("table %s was not migrated", table)
 			}

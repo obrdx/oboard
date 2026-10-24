@@ -23,20 +23,26 @@ func (s *Store) SaveMetricReport(ctx context.Context, serverID int64, report mod
 	// RFC3339's trailing Z would sort after the decimal point in those samples.
 	startKey := slotStart.Format("2006-01-02T15:04:05")
 	endKey := slotEnd.Format("2006-01-02T15:04:05")
-	result, err := s.db.ExecContext(ctx, `insert into server_metric_samples(server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at)
-select ?,
- case when t.resource_history_enabled=1 then ? else 0 end,
- case when t.resource_history_enabled=1 then ? else 0 end,
- case when t.resource_history_enabled=1 then ? else 0 end,
- case when t.resource_history_enabled=1 then ? else 0 end,
- case when t.resource_history_enabled=1 then ? else 0 end,
- case when t.resource_history_enabled=1 then ? else 0 end,
- case when t.resource_history_enabled=1 then ? else 0 end,
- case when t.resource_history_enabled=1 then ? else 0 end,
- t.resource_history_enabled,?,?,0,0,-1,0,?
-from server_telemetry t
-where t.server_id=? and not exists(select 1 from server_metric_samples where server_id=? and sampled_at>=? and sampled_at<?)`,
-		serverID, report.CPUUsagePercent, report.MemoryUsedBytes, report.MemoryTotalBytes, report.DiskUsedBytes, report.DiskTotalBytes, report.TCPConnectionCount, report.UDPConnectionCount, report.ProcessCount, report.NetworkUploadBPS, report.NetworkDownloadBPS, report.SampledAt.UTC().Format(time.RFC3339Nano), serverID, serverID, startKey, endKey)
+	var historyEnabled int
+	if err := s.db.QueryRowContext(ctx, `select resource_history_enabled from server_telemetry where server_id=?`, serverID).Scan(&historyEnabled); err != nil {
+		return false, err
+	}
+	cpu, memoryUsed, memoryTotal := report.CPUUsagePercent, report.MemoryUsedBytes, report.MemoryTotalBytes
+	diskUsed, diskTotal := report.DiskUsedBytes, report.DiskTotalBytes
+	tcpConnections, udpConnections, processes := report.TCPConnectionCount, report.UDPConnectionCount, report.ProcessCount
+	if historyEnabled == 0 {
+		cpu, memoryUsed, memoryTotal = 0, 0, 0
+		diskUsed, diskTotal = 0, 0
+		tcpConnections, udpConnections, processes = 0, 0, 0
+	}
+	history, err := s.historyDB()
+	if err != nil {
+		return false, err
+	}
+	result, err := history.ExecContext(ctx, `insert into server_metric_samples(server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at)
+select ?,?,?,?,?,?,?,?,?,?,?,?,0,0,-1,0,?
+where not exists(select 1 from server_metric_samples where server_id=? and sampled_at>=? and sampled_at<?)`,
+		serverID, cpu, memoryUsed, memoryTotal, diskUsed, diskTotal, tcpConnections, udpConnections, processes, historyEnabled, report.NetworkUploadBPS, report.NetworkDownloadBPS, report.SampledAt.UTC().Format(time.RFC3339Nano), serverID, startKey, endKey)
 	if err != nil {
 		return false, err
 	}
@@ -48,7 +54,7 @@ where t.server_id=? and not exists(select 1 from server_metric_samples where ser
 		return true, nil
 	}
 	var equivalent int
-	if err := s.db.QueryRowContext(ctx, `select exists(select 1 from server_metric_samples where server_id=? and sampled_at>=? and sampled_at<?)`, serverID, startKey, endKey).Scan(&equivalent); err != nil {
+	if err := history.QueryRowContext(ctx, `select exists(select 1 from server_metric_samples where server_id=? and sampled_at>=? and sampled_at<?)`, serverID, startKey, endKey).Scan(&equivalent); err != nil {
 		return false, err
 	}
 	if equivalent != 1 {

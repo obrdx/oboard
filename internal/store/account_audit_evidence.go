@@ -74,7 +74,7 @@ func (s *Store) AccountAuditEvidence(ctx context.Context, q AccountAuditEvidence
 	}
 	// Require the whole bucket inside the saved window; overlapping buckets cannot
 	// safely attribute their bytes to that window. The persisted as-of bounds late arrivals.
-	rows, err := tx.QueryContext(ctx, `SELECT user_id,server_id,ended_at,upload_bytes,download_bytes,connection_count FROM connection_audit_reports WHERE user_id=? AND julianday(started_at)>=julianday(?) AND julianday(ended_at)<julianday(?) AND julianday(created_at)<=julianday(?) ORDER BY ended_at DESC,report_id DESC LIMIT ? OFFSET ?`, userID, snapshot.WindowStart.UTC().Format(time.RFC3339Nano), snapshot.WindowEnd.UTC().Format(time.RFC3339Nano), snapshot.AsOf.UTC().Format(time.RFC3339Nano), out.Limit+1, q.Offset)
+	rows, err := s.history.QueryContext(ctx, `SELECT user_id,server_id,ended_at,upload_bytes,download_bytes,connection_count FROM connection_audit_reports WHERE user_id=? AND julianday(started_at)>=julianday(?) AND julianday(ended_at)<julianday(?) AND julianday(created_at)<=julianday(?) ORDER BY ended_at DESC,report_id DESC LIMIT ? OFFSET ?`, userID, snapshot.WindowStart.UTC().Format(time.RFC3339Nano), snapshot.WindowEnd.UTC().Format(time.RFC3339Nano), snapshot.AsOf.UTC().Format(time.RFC3339Nano), out.Limit+1, q.Offset)
 	if err != nil {
 		return out, err
 	}

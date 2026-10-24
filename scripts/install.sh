@@ -1139,7 +1139,7 @@ prepare_controller_updater_runtime() {
     return 1
   fi
   if [ ! -d "$CONTROLLER_DATA_DIR" ]; then
-    install -d -m 0750 -o oboard -g oboard "$CONTROLLER_DATA_DIR"
+    install -d -m 0700 -o oboard -g oboard "$CONTROLLER_DATA_DIR"
   fi
   install -d -m 0700 -o root -g root "$CONTROLLER_DATA_DIR/controller-update"
 }
@@ -1363,7 +1363,8 @@ install_component() {
       controller)
         create_system_user oboard "$CONTROLLER_DATA_DIR"
         install -d -m 0750 -o root -g root "$CONTROLLER_CONFIG_DIR"
-        install -d -m 0750 -o oboard -g oboard "$CONTROLLER_DATA_DIR" "$CONTROLLER_DATA_DIR/backups" "$CONTROLLER_DATA_DIR/logs" "$CONTROLLER_DATA_DIR/acme" "$CONTROLLER_WEB_DIR" "$CONTROLLER_DOWNLOADS_DIR"
+        install -d -m 0700 -o oboard -g oboard "$CONTROLLER_DATA_DIR" "$CONTROLLER_DATA_DIR/backups" "$CONTROLLER_DATA_DIR/logs" "$CONTROLLER_DATA_DIR/acme"
+        install -d -m 0750 -o oboard -g oboard "$CONTROLLER_WEB_DIR" "$CONTROLLER_DOWNLOADS_DIR"
         replace_tree_atomic "$work/web/dist" "$CONTROLLER_WEB_DIR/dist" oboard:oboard
         if [ -d "$work/downloads" ]; then
           replace_tree_atomic "$work/downloads" "$CONTROLLER_DOWNLOADS_DIR" oboard:oboard
@@ -1409,7 +1410,8 @@ install_component() {
       controller)
         create_system_user oboard "$CONTROLLER_DATA_DIR"
         install -d -m 0750 -o root -g root "$CONTROLLER_CONFIG_DIR"
-        install -d -m 0750 -o oboard -g oboard "$CONTROLLER_DATA_DIR" "$CONTROLLER_DATA_DIR/backups" "$CONTROLLER_DATA_DIR/logs" "$CONTROLLER_DATA_DIR/acme" "$CONTROLLER_WEB_DIR" "$CONTROLLER_DOWNLOADS_DIR"
+        install -d -m 0700 -o oboard -g oboard "$CONTROLLER_DATA_DIR" "$CONTROLLER_DATA_DIR/backups" "$CONTROLLER_DATA_DIR/logs" "$CONTROLLER_DATA_DIR/acme"
+        install -d -m 0750 -o oboard -g oboard "$CONTROLLER_WEB_DIR" "$CONTROLLER_DOWNLOADS_DIR"
         replace_tree_atomic "$work/web/dist" "$CONTROLLER_WEB_DIR/dist" oboard:oboard
         if [ -d "$work/downloads" ]; then
           replace_tree_atomic "$work/downloads" "$CONTROLLER_DOWNLOADS_DIR" oboard:oboard

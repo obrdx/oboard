@@ -285,6 +285,9 @@ var settingsAutomationFields = map[string]bool{
 	"server_default_mtu_mode": true, "server_default_bbr_qdisc": true, "server_default_bbr_cake_bandwidth_mbit": true, "server_default_tcp_tuning_enabled": true,
 	"server_default_time_correction_mode": true, "time_check_ntp_servers": true,
 	"server_monitoring_retention_days":          true,
+	"server_metric_hourly_retention_days":       true,
+	"server_metric_daily_retention_days":        true,
+	"latency_rollup_retention_days":             true,
 	"notification_server_offline_after_seconds": true,
 	"notification_server_online_after_seconds":  true,
 	"server_expiry_notify_lead_days":            true,
@@ -666,6 +669,27 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 			return nil, errors.New("server_monitoring_retention_days must be between 1 and 30")
 		}
 		updates["server_monitoring_retention_days"] = strconv.Itoa(days)
+	}
+	if value, ok := fields["server_metric_hourly_retention_days"]; ok {
+		var days int
+		if err := json.Unmarshal(value, &days); err != nil || days < store.MinMetricHourlyRetentionDays || days > store.MaxMetricHourlyRetentionDays {
+			return nil, fmt.Errorf("server_metric_hourly_retention_days must be between %d and %d", store.MinMetricHourlyRetentionDays, store.MaxMetricHourlyRetentionDays)
+		}
+		updates[store.MetricHourlyRetentionDaysSetting] = strconv.Itoa(days)
+	}
+	if value, ok := fields["server_metric_daily_retention_days"]; ok {
+		var days int
+		if err := json.Unmarshal(value, &days); err != nil || days < store.MinMetricDailyRetentionDays || days > store.MaxMetricDailyRetentionDays {
+			return nil, fmt.Errorf("server_metric_daily_retention_days must be between %d and %d", store.MinMetricDailyRetentionDays, store.MaxMetricDailyRetentionDays)
+		}
+		updates[store.MetricDailyRetentionDaysSetting] = strconv.Itoa(days)
+	}
+	if value, ok := fields["latency_rollup_retention_days"]; ok {
+		var days int
+		if err := json.Unmarshal(value, &days); err != nil || days < store.MinLatencyRollupRetentionDays || days > store.MaxLatencyRollupRetentionDays {
+			return nil, fmt.Errorf("latency_rollup_retention_days must be between %d and %d", store.MinLatencyRollupRetentionDays, store.MaxLatencyRollupRetentionDays)
+		}
+		updates[store.LatencyRollupRetentionDaysSetting] = strconv.Itoa(days)
 	}
 	if value, ok := fields["notification_server_offline_after_seconds"]; ok {
 		var seconds int

@@ -31,8 +31,8 @@ func TestGetStorageDiagnostics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if diag.ConnectionAuditRetentionHours != ConnectionAuditRetentionHours || ConnectionAuditRetentionHours != 30*24 {
-		t.Fatalf("retention hours = %d, want %d", diag.ConnectionAuditRetentionHours, 30*24)
+	if diag.ConnectionAuditRetentionHours != ConnectionAuditRetentionHours || ConnectionAuditRetentionHours != DefaultConnectionAuditRetentionDays*24 {
+		t.Fatalf("retention hours = %d, want %d", diag.ConnectionAuditRetentionHours, DefaultConnectionAuditRetentionDays*24)
 	}
 	if diag.DBBytes <= 0 {
 		info, _ := os.Stat(path)
@@ -46,5 +46,11 @@ func TestGetStorageDiagnostics(t *testing.T) {
 	}
 	if path := diag.AuditRollupState["read_path"]; path != "raw" && path != "hourly" && path != "" {
 		t.Fatalf("unexpected read_path %#v", diag.AuditRollupState)
+	}
+	if !diag.HistoryAvailable || diag.Core.Role != "core" || diag.History.Role != "history" || diag.History.DBBytes <= 0 {
+		t.Fatalf("database health = core:%#v history:%#v available=%v", diag.Core, diag.History, diag.HistoryAvailable)
+	}
+	if len(diag.Performance) != 2 || diag.Performance[0].Role != "core" || diag.Performance[1].Role != "history" {
+		t.Fatalf("database performance = %#v", diag.Performance)
 	}
 }

@@ -26,6 +26,8 @@ func TestDeferredIndexMigrationFromTheNarrowIndexes(t *testing.T) {
 	for _, stmt := range []string{
 		`drop index if exists idx_connection_audit_user_window`,
 		`drop index if exists idx_connection_audit_source_window`,
+		`drop index if exists idx_connection_audit_inbound`,
+		`drop index if exists idx_connection_audit_path`,
 		`create index if not exists idx_connection_audit_user_time on connection_audit_reports(user_id, ended_at desc)`,
 		`create index if not exists idx_connection_audit_source_time on connection_audit_reports(source_ip, ended_at desc)`,
 	} {
@@ -156,13 +158,25 @@ func TestDeletionIndexesMigrateHistoricalReferences(t *testing.T) {
 	if _, err := old.db.ExecContext(ctx, "update connection_audit_reports set inbound_id=?,path_id=?,upload_bytes=123,download_bytes=456", inbound.ID, path.ID); err != nil {
 		t.Fatal(err)
 	}
+	for _, statement := range []string{
+		"drop index if exists idx_connection_audit_inbound",
+		"drop index if exists idx_connection_audit_path",
+	} {
+		if _, err := old.history.ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
 	checks := []struct{ table, column string }{
 		{"traffic_stats", "inbound_id"}, {"traffic_reports", "inbound_id"}, {"traffic_reports", "path_id"},
 		{"connection_audit_reports", "inbound_id"}, {"connection_audit_reports", "path_id"},
 	}
 	plan := func(db *Store, table, column string) string {
 		t.Helper()
-		rows, err := db.db.QueryContext(ctx, "explain query plan select rowid from "+table+" where "+column+"=?", inbound.ID)
+		queryDB := db.db
+		if table == "connection_audit_reports" {
+			queryDB = db.history
+		}
+		rows, err := queryDB.WriteQueryContext(ctx, "explain query plan select rowid from "+table+" where "+column+"=?", inbound.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -183,7 +197,7 @@ func TestDeletionIndexesMigrateHistoricalReferences(t *testing.T) {
 	}
 	for _, check := range checks {
 		if !strings.Contains(plan(old, check.table, check.column), "SCAN ") {
-			t.Fatalf("previous schema unexpectedly indexes %s.%s", check.table, check.column)
+			t.Fatalf("previous schema unexpectedly indexes %s.%s: %s", check.table, check.column, plan(old, check.table, check.column))
 		}
 	}
 	dbPath := old.path

@@ -34,7 +34,7 @@ type VerifyRestoreOptions struct {
 
 // VerifyRestore only prepares an isolated copy. It never commits a restore or starts Controller workers.
 func VerifyRestore(ctx context.Context, options VerifyRestoreOptions) (report RestoreVerification, err error) {
-	for _, name := range []string{"archive_format", "decryption_and_files", "version_compatibility", "database_source", "database_migration", "database_integrity", "secret_reencryption", "plugin_authority_revocation", "final_integrity", "cleanup"} {
+	for _, name := range []string{"archive_format", "decryption_and_files", "version_compatibility", "database_source", "history_database_source", "database_migration", "database_integrity", "secret_reencryption", "plugin_authority_revocation", "final_integrity", "cleanup"} {
 		report.Checks = append(report.Checks, RestoreCheck{Name: name, Status: "not_run"})
 	}
 	report.Checks = append(report.Checks, RestoreCheck{Name: "offline_configuration_rebuild", Status: "unsupported"}, RestoreCheck{Name: "external_services_and_node_takeover", Status: "unsupported"})
@@ -116,6 +116,34 @@ func validateRestoreDatabase(ctx context.Context, path string) error {
 	return nil
 }
 
+func validateRestoreHistoryDatabase(ctx context.Context, path string) error {
+	invalid := errors.New("backup history database is invalid")
+	file, err := os.Open(path)
+	if err != nil {
+		return invalid
+	}
+	var header [16]byte
+	_, readErr := io.ReadFull(file, header[:])
+	closeErr := file.Close()
+	if readErr != nil || closeErr != nil || string(header[:]) != "SQLite format 3\x00" {
+		return invalid
+	}
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	if err != nil {
+		return invalid
+	}
+	defer db.Close()
+	var version int
+	if err := db.QueryRowContext(ctx, `select schema_version from oboard_history_meta where id=1`).Scan(&version); err != nil || version < 1 {
+		return invalid
+	}
+	var check string
+	if err := db.QueryRowContext(ctx, `pragma quick_check`).Scan(&check); err != nil || !strings.EqualFold(check, "ok") {
+		return invalid
+	}
+	return nil
+}
+
 func prepareRestore(ctx context.Context, archivePath, password, targetVersion, targetSecret, stage string, record func(string, error)) (Manifest, *store.Store, error) {
 	check := func(name string, err error) error {
 		if record != nil {
@@ -134,7 +162,16 @@ func prepareRestore(ctx context.Context, archivePath, password, targetVersion, t
 	if err = check("database_source", validateRestoreDatabase(ctx, database)); err != nil {
 		return Manifest{}, nil, err
 	}
-	restored, err := store.OpenForRestore(database)
+	historyDatabase := filepath.Join(stage, "history.sqlite")
+	restored := (*store.Store)(nil)
+	if pathExists(historyDatabase) {
+		if err = check("history_database_source", validateRestoreHistoryDatabase(ctx, historyDatabase)); err != nil {
+			return Manifest{}, nil, err
+		}
+		restored, err = store.OpenForRestorePair(database, historyDatabase)
+	} else {
+		restored, err = store.OpenForRestore(database)
+	}
 	if check("database_migration", err) != nil {
 		return Manifest{}, nil, err
 	}

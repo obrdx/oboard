@@ -103,7 +103,11 @@ func (s *Server) purgeServerHistory(ctx context.Context, serverID int64) error {
 	for {
 		removed, err := s.store.PurgeServerHistoryBatch(ctx, serverID, serverDeletionHistoryBatch)
 		if err != nil {
-			return err
+			log.Printf("server delete %d: history purge deferred: %v", serverID, err)
+			if queueErr := s.store.QueueHistoryCleanup(ctx, "server", serverID); queueErr != nil {
+				return queueErr
+			}
+			return nil
 		}
 		if removed == 0 {
 			return nil

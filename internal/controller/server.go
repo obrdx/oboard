@@ -55,6 +55,9 @@ const (
 	settingServerDefaultTCPTuningEnabled  = "server_default_tcp_tuning_enabled"
 	settingServerDefaultTimeCorrection    = "server_default_time_correction_mode"
 	settingServerMonitoringRetentionDays  = "server_monitoring_retention_days"
+	settingMetricHourlyRetentionDays      = store.MetricHourlyRetentionDaysSetting
+	settingMetricDailyRetentionDays       = store.MetricDailyRetentionDaysSetting
+	settingLatencyRollupRetentionDays     = store.LatencyRollupRetentionDaysSetting
 	settingConnectionAuditRetentionDays   = "connection_audit_retention_days"
 	settingTimeCheckNTPServers            = "time_check_ntp_servers"
 	settingAuditEnabled                   = "audit_enabled"
@@ -1099,6 +1102,9 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			ServerDefaultTCPTuningEnabled             *bool              `json:"server_default_tcp_tuning_enabled"`
 			ServerDefaultTimeCorrection               *string            `json:"server_default_time_correction_mode"`
 			ServerMonitoringRetentionDays             *int               `json:"server_monitoring_retention_days"`
+			MetricHourlyRetentionDays                 *int               `json:"server_metric_hourly_retention_days"`
+			MetricDailyRetentionDays                  *int               `json:"server_metric_daily_retention_days"`
+			LatencyRollupRetentionDays                *int               `json:"latency_rollup_retention_days"`
 			ConnectionAuditRetentionDays              *int               `json:"connection_audit_retention_days"`
 			TimeCheckNTPServers                       []string           `json:"time_check_ntp_servers"`
 			TrustedProxyCIDRs                         *[]string          `json:"trusted_proxy_cidrs"`
@@ -1564,6 +1570,39 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 				fail(w, fmt.Errorf("server_monitoring_retention_days must be between %d and %d", store.MinServerMonitoringRetentionDays, store.MaxServerMonitoringRetentionDays), http.StatusBadRequest)
 				return
 			}
+			if req.MetricHourlyRetentionDays != nil {
+				if *req.MetricHourlyRetentionDays < store.MinMetricHourlyRetentionDays || *req.MetricHourlyRetentionDays > store.MaxMetricHourlyRetentionDays {
+					fail(w, fmt.Errorf("server_metric_hourly_retention_days must be between %d and %d", store.MinMetricHourlyRetentionDays, store.MaxMetricHourlyRetentionDays), http.StatusBadRequest)
+					return
+				}
+				if err := s.store.SetSetting(r.Context(), settingMetricHourlyRetentionDays, strconv.Itoa(*req.MetricHourlyRetentionDays)); err != nil {
+					fail(w, err, http.StatusInternalServerError)
+					return
+				}
+				changed = append(changed, settingMetricHourlyRetentionDays)
+			}
+			if req.MetricDailyRetentionDays != nil {
+				if *req.MetricDailyRetentionDays < store.MinMetricDailyRetentionDays || *req.MetricDailyRetentionDays > store.MaxMetricDailyRetentionDays {
+					fail(w, fmt.Errorf("server_metric_daily_retention_days must be between %d and %d", store.MinMetricDailyRetentionDays, store.MaxMetricDailyRetentionDays), http.StatusBadRequest)
+					return
+				}
+				if err := s.store.SetSetting(r.Context(), settingMetricDailyRetentionDays, strconv.Itoa(*req.MetricDailyRetentionDays)); err != nil {
+					fail(w, err, http.StatusInternalServerError)
+					return
+				}
+				changed = append(changed, settingMetricDailyRetentionDays)
+			}
+			if req.LatencyRollupRetentionDays != nil {
+				if *req.LatencyRollupRetentionDays < store.MinLatencyRollupRetentionDays || *req.LatencyRollupRetentionDays > store.MaxLatencyRollupRetentionDays {
+					fail(w, fmt.Errorf("latency_rollup_retention_days must be between %d and %d", store.MinLatencyRollupRetentionDays, store.MaxLatencyRollupRetentionDays), http.StatusBadRequest)
+					return
+				}
+				if err := s.store.SetSetting(r.Context(), settingLatencyRollupRetentionDays, strconv.Itoa(*req.LatencyRollupRetentionDays)); err != nil {
+					fail(w, err, http.StatusInternalServerError)
+					return
+				}
+				changed = append(changed, settingLatencyRollupRetentionDays)
+			}
 			if err := s.store.SetSetting(r.Context(), settingServerMonitoringRetentionDays, strconv.Itoa(*req.ServerMonitoringRetentionDays)); err != nil {
 				fail(w, err, http.StatusInternalServerError)
 				return
@@ -1750,7 +1789,7 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 }
 
 func (s *Server) publicSettingsValues(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingDNSAlwaysResolve: false, settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: false, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBRQdisc: agentInstallBBRDefaultQdisc, settingServerDefaultCakeBandwidth: 0, settingServerDefaultTCPTuningEnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), settingRemoteTerminalEnabled: true, settingRemoteTerminalPasswordConfirmationEnabled: true, settingMCPEnabled: false, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingDNSAlwaysResolve: false, settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: false, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBRQdisc: agentInstallBBRDefaultQdisc, settingServerDefaultCakeBandwidth: 0, settingServerDefaultTCPTuningEnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingMetricHourlyRetentionDays: store.DefaultMetricHourlyRetentionDays, settingMetricDailyRetentionDays: store.DefaultMetricDailyRetentionDays, settingLatencyRollupRetentionDays: store.DefaultLatencyRollupRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), settingRemoteTerminalEnabled: true, settingRemoteTerminalPasswordConfirmationEnabled: true, settingMCPEnabled: false, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	out[resourceDownloadSourceSetting] = "controller"
 	out[agentAutoUpdateSetting] = false
 	out[subscriptionRelayAutoUpdateSetting] = false
@@ -1760,7 +1799,7 @@ func (s *Server) publicSettingsValues(ctx context.Context, items map[string]stri
 	out[updateWindowStartHourSetting] = updateWindowDefaultStartHour
 	out[updateWindowEndHourSetting] = updateWindowDefaultEndHour
 	for key, value := range items {
-		if key == "traffic_enforcement_mode" || strings.HasPrefix(key, "controller_base_path") || strings.HasPrefix(key, "server_stealth_layout.") || strings.HasPrefix(key, "server_runtime_security.") || strings.HasPrefix(key, "server_proxy_dscp.") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == store.DatabaseLastMaintenanceAtSetting || key == store.DatabaseLastMaintenanceSummarySetting || key == settingStealthTransport || key == ipDataKeysSetting {
+		if key == "traffic_enforcement_mode" || strings.HasPrefix(key, "controller_base_path") || strings.HasPrefix(key, "server_stealth_layout.") || strings.HasPrefix(key, "server_runtime_security.") || strings.HasPrefix(key, "server_proxy_dscp.") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == store.DatabaseLastMaintenanceAtSetting || key == store.DatabaseLastMaintenanceSummarySetting || key == store.DatabaseHistoryLastMaintenanceAtSetting || key == store.DatabaseHistoryLastMaintenanceSummarySetting || key == settingStealthTransport || key == ipDataKeysSetting {
 			continue
 		}
 		out[key] = value

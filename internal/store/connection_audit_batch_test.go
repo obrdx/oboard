@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"reflect"
 	"sort"
@@ -137,13 +138,9 @@ func legacyConnectionAuditOverviewPerUser(ctx context.Context, t testing.TB, s *
 		windowHours = 24
 	}
 	nowTime := time.Now().UTC()
-	since := nowTime.Add(-time.Duration(windowHours) * time.Hour).Format(time.RFC3339Nano)
 	if ValidateAuditPolicy(policy) != nil {
 		policy = DefaultAuditPolicy()
 	}
-	// The reference mirrors the production shape: with raw retention covering
-	// the whole window, evidence covers it too and no totals come from the
-	// rollup.
 	overview := model.ConnectionAuditOverview{WindowHours: windowHours, EvidenceWindowHours: windowHours, RiskWindowMinutes: int(connectionAuditRiskWindow / time.Minute), GeneratedAt: nowTime, Policy: policy, Users: []model.ConnectionAuditUserSummary{}}
 	if err := s.db.QueryRowContext(ctx, `select count(*) from servers where connection_audit_enabled=1`).Scan(&overview.EnabledServerCount); err != nil {
 		t.Fatal(err)
@@ -151,147 +148,40 @@ func legacyConnectionAuditOverviewPerUser(ctx context.Context, t testing.TB, s *
 	if !connectionAuditEnabled {
 		overview.EnabledServerCount = 0
 	}
-	rows, err := s.db.QueryContext(ctx, `select r.user_id,u.username,u.nickname,count(distinct r.source_ip),count(distinct r.server_id),coalesce(sum(r.connection_count),0),coalesce(max(r.active_peak),0),count(*),max(r.ended_at),coalesce(u.device_limit,0),(select count(*) from user_devices d where d.user_id=u.id and d.status='active')
-		from connection_audit_reports r join users u on u.id=r.user_id where r.ended_at>=? group by r.user_id,u.username,u.nickname`, since)
+	rows, err := s.db.QueryContext(ctx, `select id from users order by id`)
 	if err != nil {
 		t.Fatal(err)
 	}
+	userIDs := []int64{}
 	for rows.Next() {
-		var item model.ConnectionAuditUserSummary
-		var lastSeen string
-		if err := rows.Scan(&item.UserID, &item.Username, &item.Nickname, &item.SourceIPCount, &item.ServerCount, &item.ConnectionCount, &item.ActivePeak, &item.ReportCount, &lastSeen, &item.DeviceLimit, &item.RegisteredDeviceCount); err != nil {
-			t.Fatal(errors.Join(err, rows.Close()))
+		var userID int64
+		if err := rows.Scan(&userID); err != nil {
+			t.Fatal(err)
 		}
-		item.LastSeenAt = parseTime(lastSeen)
-		overview.Users = append(overview.Users, item)
+		userIDs = append(userIDs, userID)
 	}
 	if err := rows.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	usersByID := make(map[int64]int, len(overview.Users))
-	for index := range overview.Users {
-		usersByID[overview.Users[index].UserID] = index
-	}
-	presenceByUser := map[int64][]model.ConnectionPresenceEvent{}
-	presenceRows, err := s.db.QueryContext(ctx, `select p.server_id,p.user_id,p.inbound_id,p.path_id,p.device_id_hash,p.credential_epoch,p.source_ip,p.route_id,p.network,p.active_connections,p.meaningful,p.payload_last_at,p.last_event_at,p.last_sequence,p.updated_at,u.username,u.nickname,coalesce(u.device_limit,0),(select count(*) from user_devices d where d.user_id=u.id and d.status='active') from connection_presence_states p join users u on u.id=p.user_id where p.last_event_at>=? order by p.user_id,p.device_id_hash,p.source_ip,p.network`, nowTime.Add(-connectionAuditPresenceTCP).Format(time.RFC3339Nano))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for presenceRows.Next() {
-		var event model.ConnectionPresenceEvent
-		var meaningful int
-		var payloadLastAt *string
-		var at, updatedAt string
-		var username, nickname string
-		var deviceLimit, registeredDevices int
-		if err := presenceRows.Scan(&event.ServerID, &event.UserID, &event.InboundID, &event.PathID, &event.DeviceIDHash, &event.CredentialEpoch, &event.SourceIP, &event.RouteID, &event.Network, &event.ActiveConnections, &meaningful, &payloadLastAt, &at, &event.Sequence, &updatedAt, &username, &nickname, &deviceLimit, &registeredDevices); err != nil {
-			t.Fatal(errors.Join(err, presenceRows.Close()))
-		}
-		event.Event = "current"
-		event.Meaningful = meaningful == 1
-		if event.ActiveConnections > 0 {
-			event.State = "active"
-		} else {
-			event.State = "inactive"
-		}
-		if payloadLastAt != nil {
-			event.PayloadLastAt = parseTime(*payloadLastAt)
-		}
-		event.At = parseTime(at)
-		event.CreatedAt = parseTime(updatedAt)
-		presenceByUser[event.UserID] = append(presenceByUser[event.UserID], event)
-		if _, exists := usersByID[event.UserID]; !exists {
-			usersByID[event.UserID] = len(overview.Users)
-			overview.Users = append(overview.Users, model.ConnectionAuditUserSummary{UserID: event.UserID, Username: username, Nickname: nickname, DeviceLimit: deviceLimit, RegisteredDeviceCount: registeredDevices, LastSeenAt: event.At})
-		}
-	}
-	if err := presenceRows.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := presenceRows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	usersByIP := map[string]map[int64]struct{}{}
-	sharedIPsByUser := map[int64]map[string]struct{}{}
-	subnetsByUser := map[int64]map[string]struct{}{}
-	ipRows, err := s.db.QueryContext(ctx, `select distinct user_id,source_ip from connection_audit_reports where ended_at>=?`, since)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for ipRows.Next() {
-		var userID int64
-		var sourceIP string
-		if err := ipRows.Scan(&userID, &sourceIP); err != nil {
-			t.Fatal(errors.Join(err, ipRows.Close()))
-		}
-		if usersByIP[sourceIP] == nil {
-			usersByIP[sourceIP] = map[int64]struct{}{}
-		}
-		usersByIP[sourceIP][userID] = struct{}{}
-		subnet := auditSubnet(sourceIP)
-		if subnet == "" {
+	for _, userID := range userIDs {
+		item, err := s.ConnectionAuditUserRisk(ctx, userID, windowHours, policy, nowTime)
+		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
-		if subnetsByUser[userID] == nil {
-			subnetsByUser[userID] = map[string]struct{}{}
+		if err != nil {
+			t.Fatal(err)
 		}
-		subnetsByUser[userID][subnet] = struct{}{}
-	}
-	if err := ipRows.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := ipRows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	for sourceIP, users := range usersByIP {
-		if len(users) < 2 {
-			continue
-		}
-		for userID := range users {
-			if sharedIPsByUser[userID] == nil {
-				sharedIPsByUser[userID] = map[string]struct{}{}
-			}
-			sharedIPsByUser[userID][sourceIP] = struct{}{}
-		}
-	}
-	sharedRoutes, err := s.connectionAuditSharedRouteUsers(ctx, nowTime.Add(-connectionAuditRiskWindow))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for index := range overview.Users {
-		item := &overview.Users[index]
-		presence := presenceByUser[item.UserID]
-		for _, event := range presence {
-			item.ActiveConnectionCount += event.ActiveConnections
-			if event.At.After(item.LastSeenAt) {
-				item.LastSeenAt = event.At
-			}
-		}
-		item.SourceSubnetCount = len(subnetsByUser[item.UserID])
-		item.SharedSourceIPCount = len(sharedIPsByUser[item.UserID])
-		selectedReports, loadErr := s.listConnectionAuditReportsForRisk(ctx, item.UserID, nowTime.Add(-time.Duration(windowHours)*time.Hour), 50000)
-		if loadErr != nil {
-			t.Fatal(loadErr)
-		}
-		episodes, loadErr := s.listConnectionProbeEpisodes(ctx, item.UserID, nowTime.Add(-time.Duration(windowHours)*time.Hour), 200)
-		if loadErr != nil {
-			t.Fatal(loadErr)
-		}
-		robustZ, loadErr := s.connectionAuditRobustZ(ctx, item.UserID, nowTime)
-		if loadErr != nil {
-			t.Fatal(loadErr)
-		}
-		evaluateConnectionAuditUser(item, selectedReports, episodes, robustZ, presence, policy, sharedRoutes, nowTime, false)
+		overview.Users = append(overview.Users, *item)
 		overview.TotalConnections += item.ConnectionCount
 		if item.RiskScore >= 55 {
 			overview.ElevatedRiskCount++
 		}
 	}
+	since := nowTime.Add(-time.Duration(windowHours) * time.Hour).Format(time.RFC3339Nano)
+	if err := s.history.QueryRowContext(ctx, `select count(distinct source_ip) from connection_audit_reports where ended_at>=?`, since).Scan(&overview.UniqueSourceIPs); err != nil {
+		t.Fatal(err)
+	}
 	overview.ReportingUserCount = len(overview.Users)
-	overview.UniqueSourceIPs = len(usersByIP)
 	sort.SliceStable(overview.Users, func(i, j int) bool {
 		if overview.Users[i].RiskScore != overview.Users[j].RiskScore {
 			return overview.Users[i].RiskScore > overview.Users[j].RiskScore

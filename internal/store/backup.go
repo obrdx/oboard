@@ -53,6 +53,18 @@ type sqliteBackuper interface {
 // Backup writes a transactionally consistent standalone SQLite snapshot using
 // the Online Backup API. It copies pages in batches and never VACUUMs.
 func (s *Store) Backup(ctx context.Context, destination string, options BackupOptions) error {
+	return backupDatabase(ctx, s.db, destination, options)
+}
+
+func (s *Store) BackupHistory(ctx context.Context, destination string, options BackupOptions) error {
+	history, err := s.historyDB()
+	if err != nil {
+		return err
+	}
+	return backupDatabase(ctx, history, destination, options)
+}
+
+func backupDatabase(ctx context.Context, database *countingDB, destination string, options BackupOptions) error {
 	destination = strings.TrimSpace(destination)
 	if destination == "" {
 		return errors.New("backup destination is required")
@@ -74,7 +86,7 @@ func (s *Store) Backup(ctx context.Context, destination string, options BackupOp
 	if pagesPerStep <= 0 {
 		pagesPerStep = defaultBackupPagesPerStep
 	}
-	conn, err := s.db.ReadConn(ctx)
+	conn, err := database.ReadConn(ctx)
 	if err != nil {
 		return fmt.Errorf("reserve SQLite backup connection: %w", err)
 	}

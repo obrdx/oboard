@@ -582,19 +582,24 @@ func (s *Store) SaveLatencyProbeResults(ctx context.Context, serverID int64, rep
 	if checkedAt.IsZero() {
 		checkedAt = time.Now().UTC()
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	history, err := s.historyDB()
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	historyTx, err := history.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer historyTx.Rollback()
 	insertedAny := false
+	publicItems := []model.LatencyProbeResult{}
 	for _, item := range report.Items {
 		if strings.TrimSpace(item.ProbeID) == "" {
 			continue
 		}
 		if item.TaskID > 0 {
 			var exists bool
-			if err := tx.QueryRowContext(ctx, `select exists(select 1 from latency_probe_tasks where id=?)`, item.TaskID).Scan(&exists); err != nil {
+			if err := s.db.QueryRowContext(ctx, `select exists(select 1 from latency_probe_tasks where id=?)`, item.TaskID).Scan(&exists); err != nil {
 				return err
 			}
 			if !exists {
@@ -607,7 +612,7 @@ func (s *Store) SaveLatencyProbeResults(ctx context.Context, serverID int64, rep
 		if len(item.Error) > 240 {
 			item.Error = item.Error[:240]
 		}
-		result, err := tx.ExecContext(ctx, `insert or ignore into server_latency_probe_results(server_id,report_id,resource_version,probe_id,kind,task_id,task_name,mode,province,carrier,host,ip,port,available,latency_ms,min_latency_ms,p95_latency_ms,jitter_ms,sample_count,success_count,error,checked_at,created_at,measurement_revision) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, serverID, report.ReportID, report.ResourceVersion, item.ProbeID, item.Kind, item.TaskID, item.TaskName, item.Mode, item.Province, item.Carrier, item.Host, item.IP, item.Port, boolInt(item.Available), item.LatencyMS, item.MinLatencyMS, item.P95LatencyMS, item.JitterMS, item.SampleCount, item.SuccessCount, item.Error, checkedAt.Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano), item.MeasurementRevision)
+		result, err := historyTx.ExecContext(ctx, `insert or ignore into server_latency_probe_results(server_id,report_id,resource_version,probe_id,kind,task_id,task_name,mode,province,carrier,host,ip,port,available,latency_ms,min_latency_ms,p95_latency_ms,jitter_ms,sample_count,success_count,error,checked_at,created_at,measurement_revision) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, serverID, report.ReportID, report.ResourceVersion, item.ProbeID, item.Kind, item.TaskID, item.TaskName, item.Mode, item.Province, item.Carrier, item.Host, item.IP, item.Port, boolInt(item.Available), item.LatencyMS, item.MinLatencyMS, item.P95LatencyMS, item.JitterMS, item.SampleCount, item.SuccessCount, item.Error, checkedAt.Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano), item.MeasurementRevision)
 		if err != nil {
 			return err
 		}
@@ -615,7 +620,20 @@ func (s *Store) SaveLatencyProbeResults(ctx context.Context, serverID int64, rep
 		if inserted > 0 {
 			insertedAny = true
 		}
-		if inserted == 1 && item.Kind == "public" {
+		if item.Kind == "public" {
+			publicItems = append(publicItems, item)
+		}
+	}
+	if err := historyTx.Commit(); err != nil {
+		return err
+	}
+	if len(publicItems) > 0 {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		for _, item := range publicItems {
 			available := item.Available
 			if _, err := insertConnectivityEvent(ctx, tx, model.ServerConnectivityEvent{
 				ServerID:    serverID,
@@ -656,9 +674,9 @@ func (s *Store) SaveLatencyProbeResults(ctx context.Context, serverID int64, rep
 				}
 			}
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return err
+		if err := tx.Commit(); err != nil {
+			return err
+		}
 	}
 	if insertedAny {
 		s.invalidateLateLatency(serverID, checkedAt)
@@ -667,12 +685,16 @@ func (s *Store) SaveLatencyProbeResults(ctx context.Context, serverID int64, rep
 }
 
 func (s *Store) DeleteLatencyProbeResults(ctx context.Context, serverID int64) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	history, err := s.historyDB()
+	if err != nil {
+		return err
+	}
+	tx, err := history.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if err := bumpLatencyRollupGeneration(ctx, tx); err != nil {
+	if _, err := tx.ExecContext(ctx, `update latency_rollup_state set generation=generation+1,updated_at=? where id=1`, now()); err != nil {
 		return err
 	}
 	for _, query := range []string{`delete from server_latency_probe_results where server_id=?`, `delete from latency_rollup_buckets where server_id=?`} {

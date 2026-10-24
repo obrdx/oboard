@@ -81,10 +81,14 @@ func TestAuditCollectionDetailBudget(t *testing.T) {
 	s, node, user := newMaintenanceTestStore(t)
 	ctx := context.Background()
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := s.SetAuditCollection(ctx, model.AuditCollectionConfig{Mode: "standard"}, at); err != nil {
+	current, err := s.AuditCollection(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	if _, err := s.SetAuditCollection(ctx, model.AuditCollectionConfig{Mode: "standard", Revision: current.Revision}, at); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := s.history.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +96,11 @@ func TestAuditCollectionDetailBudget(t *testing.T) {
 	if _, err := tx.ExecContext(ctx, `with recursive n(x) as (select 1 union all select x+1 from n where x<2000) insert into connection_audit_reports(report_id,server_id,user_id,source_ip,network,connection_count,collection_started_at,collection_ended_at,started_at,ended_at,created_at) select 'budget-'||x,?,?,'203.0.113.1','tcp',1,?,?,?,?,? from n`, node.ID, user.ID, at, at, at, at, at); err != nil {
 		t.Fatal(err)
 	}
-	allowed, err := AuditDetailAllowedTx(ctx, tx, node.ID, user.ID, at)
+	budget, err := newAuditDetailBudgetFromRaw(`{"mode":"standard"}`, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed, err := budget.allowed(ctx, tx, node.ID, user.ID)
 	if err != nil || allowed {
 		t.Fatalf("capacity allowed=%v err=%v", allowed, err)
 	}
@@ -102,10 +110,14 @@ func TestAuditDetailBatchBudget(t *testing.T) {
 	s, node, user := newMaintenanceTestStore(t)
 	ctx := context.Background()
 	at := time.Now().UTC()
-	if _, err := s.SetAuditCollection(ctx, model.AuditCollectionConfig{Mode: "standard"}, at); err != nil {
+	current, err := s.AuditCollection(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	if _, err := s.SetAuditCollection(ctx, model.AuditCollectionConfig{Mode: "standard", Revision: current.Revision}, at); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := s.history.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +125,7 @@ func TestAuditDetailBatchBudget(t *testing.T) {
 	if _, err := tx.ExecContext(ctx, `with recursive n(x) as (select 1 union all select x+1 from n where x<1999) insert into connection_audit_reports(report_id,server_id,user_id,source_ip,network,connection_count,collection_started_at,collection_ended_at,started_at,ended_at,created_at) select 'batch-'||x,?,?,'203.0.113.1','tcp',1,?,?,?,?,? from n`, node.ID, user.ID, at, at, at, at, at); err != nil {
 		t.Fatal(err)
 	}
-	b, err := newAuditDetailBudget(ctx, tx, at)
+	b, err := newAuditDetailBudgetFromRaw(`{"mode":"standard"}`, at)
 	if err != nil {
 		t.Fatal(err)
 	}

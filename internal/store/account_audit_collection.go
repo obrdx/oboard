@@ -122,6 +122,10 @@ func newAuditDetailBudget(ctx context.Context, tx *sql.Tx, at time.Time) (*audit
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
+	return newAuditDetailBudgetFromRaw(raw, at)
+}
+
+func newAuditDetailBudgetFromRaw(raw string, at time.Time) (*auditDetailBudget, error) {
 	c, err := decodeAuditCollection(raw)
 	if err != nil {
 		return nil, err

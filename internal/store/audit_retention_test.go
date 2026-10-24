@@ -36,6 +36,7 @@ func TestShortRawRetentionKeepsTheHourlyBaseline(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	enableHistoricalAuditDetails(t, db)
 	if err := db.SetSetting(ctx, ConnectionAuditRetentionDaysSetting, "1"); err != nil {
 		t.Fatal(err)
 	}
@@ -105,6 +106,7 @@ func TestNoIndexIsKeptForDeviceHash(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	enableHistoricalAuditDetails(t, db)
 	// The two window indexes are built after the server is already serving.
 	if err := db.MigrateDeferredIndexes(context.Background()); err != nil {
 		t.Fatal(err)

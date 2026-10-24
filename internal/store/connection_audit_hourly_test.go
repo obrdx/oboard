@@ -177,6 +177,7 @@ func TestHourlyRecomputeKeepsAConnectionThatOutlivesItsHour(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
+	enableHistoricalAuditDetails(t, s)
 	user := &model.User{Username: "long-connection", PasswordHash: "h", Role: model.RoleViewer, Status: "active"}
 	if err := s.CreateUser(ctx, user); err != nil {
 		t.Fatal(err)
@@ -264,6 +265,7 @@ func TestDirtyHourIsRepairedWithoutRereadingTheWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
+	enableHistoricalAuditDetails(t, s)
 	user := &model.User{Username: "active-user", PasswordHash: "h", Role: model.RoleViewer, Status: "active"}
 	if err := s.CreateUser(ctx, user); err != nil {
 		t.Fatal(err)

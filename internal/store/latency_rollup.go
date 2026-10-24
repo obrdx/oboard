@@ -60,14 +60,22 @@ type latencyRollupBatch struct {
 
 func (s *Store) LatencyRollupState(ctx context.Context) (LatencyRollupState, error) {
 	var state LatencyRollupState
-	err := s.db.QueryRowContext(ctx, `select schema_version,generation,live_cursor,historical_boundary,backfill_cursor,expired_unprocessed,retention_floor from latency_rollup_state where id=1`).Scan(&state.SchemaVersion, &state.Generation, &state.LiveCursor, &state.HistoricalBoundary, &state.BackfillCursor, &state.ExpiredUnprocessed, &state.RetentionFloor)
+	history, err := s.historyDB()
+	if err != nil {
+		return state, err
+	}
+	err = history.QueryRowContext(ctx, `select schema_version,generation,live_cursor,historical_boundary,backfill_cursor,expired_unprocessed,retention_floor from latency_rollup_state where id=1`).Scan(&state.SchemaVersion, &state.Generation, &state.LiveCursor, &state.HistoricalBoundary, &state.BackfillCursor, &state.ExpiredUnprocessed, &state.RetentionFloor)
 	return state, err
 }
 
 // Initialize only records the ID boundary. Historical rows are neither scanned
 // nor replayed on startup; backfill has a separate, descending cursor.
 func (s *Store) initializeLatencyRollup(ctx context.Context) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	history, err := s.historyDB()
+	if err != nil {
+		return err
+	}
+	tx, err := history.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -136,7 +144,7 @@ func (s *Store) runLatencyRollupLane(ctx context.Context, at time.Time, limit in
 	}
 	result.Processed, result.Expired, result.Buckets, result.Cursor = batch.processed, batch.expired, len(batch.deltas), batch.through
 	var newest int64
-	if err := s.db.QueryRowContext(ctx, `select coalesce(max(id),0) from server_latency_probe_results`).Scan(&newest); err != nil {
+	if err := s.history.QueryRowContext(ctx, `select coalesce(max(id),0) from server_latency_probe_results`).Scan(&newest); err != nil {
 		return result, err
 	}
 	result.PendingIDSpan = max(0, newest-result.Cursor)
@@ -160,7 +168,11 @@ func (s *Store) readLatencyRollupBatchLane(ctx context.Context, state LatencyRol
 		query = `select id,server_id,kind,task_id,probe_id,mode,host,port,task_name,province,carrier,available,latency_ms,sample_count,success_count,checked_at,measurement_revision from server_latency_probe_results where id<=? and id<=? order by id desc limit ?`
 		args = []any{state.BackfillCursor, state.HistoricalBoundary, limit}
 	}
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	history, err := s.historyDB()
+	if err != nil {
+		return batch, err
+	}
+	rows, err := history.QueryContext(ctx, query, args...)
 	if err != nil {
 		return batch, err
 	}
@@ -280,14 +292,9 @@ func buildLatencyRollupUpsert() string {
 }
 
 func (s *Store) commitLatencyRollupBatch(ctx context.Context, batch latencyRollupBatch) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
 	if batch.retentionDays > 0 {
 		var value string
-		err := tx.QueryRowContext(ctx, `select value from app_settings where key=?`, ServerMonitoringRetentionDaysSetting).Scan(&value)
+		err := s.db.QueryRowContext(ctx, `select value from app_settings where key=?`, ServerMonitoringRetentionDaysSetting).Scan(&value)
 		if err != nil && err != sql.ErrNoRows {
 			return err
 		}
@@ -295,6 +302,15 @@ func (s *Store) commitLatencyRollupBatch(ctx context.Context, batch latencyRollu
 			return ErrLatencyRollupChanged
 		}
 	}
+	history, err := s.historyDB()
+	if err != nil {
+		return err
+	}
+	tx, err := history.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	cursorColumn := "live_cursor"
 	previous := batch.state.LiveCursor
 	if batch.historical {
@@ -336,7 +352,11 @@ func (s *Store) commitLatencyRollupBatch(ctx context.Context, batch latencyRollu
 	return tx.Commit()
 }
 
-func bumpLatencyRollupGeneration(ctx context.Context, tx *sql.Tx) error {
-	_, err := tx.ExecContext(ctx, `update latency_rollup_state set generation=generation+1,updated_at=? where id=1`, now())
+func (s *Store) bumpLatencyRollupGeneration(ctx context.Context) error {
+	history, err := s.historyDB()
+	if err != nil {
+		return err
+	}
+	_, err = history.ExecContext(ctx, `update latency_rollup_state set generation=generation+1,updated_at=? where id=1`, now())
 	return err
 }

@@ -22,6 +22,7 @@ func TestRollupWindowTotalsEqualTheRawAggregate(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	enableHistoricalAuditDetails(t, db)
 
 	servers := []*model.Server{}
 	for i := 0; i < 3; i++ {
@@ -142,6 +143,7 @@ func TestRollupTotalsSurviveRawPurge(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	enableHistoricalAuditDetails(t, db)
 	if err := db.SetSetting(ctx, ConnectionAuditRetentionDaysSetting, "1"); err != nil {
 		t.Fatal(err)
 	}
@@ -212,6 +214,7 @@ func TestLongWindowReportsRollupTotalsAndAShorterEvidenceWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	enableHistoricalAuditDetails(t, db)
 	if err := db.SetSetting(ctx, ConnectionAuditRetentionDaysSetting, "2"); err != nil {
 		t.Fatal(err)
 	}

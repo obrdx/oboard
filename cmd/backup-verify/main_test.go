@@ -26,9 +26,12 @@ func TestRunVerifiesSyntheticBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager, err := backup.New(backup.Config{
-		Root: filepath.Join(root, "backups"), DatabasePath: database,
+		Root: filepath.Join(root, "backups"), DatabasePath: database, HistoryDatabasePath: source.HistoryPath(),
 		ACMEHome: filepath.Join(root, "acme"), MasterSecret: "synthetic-source-secret-for-cli-verification", SourceVersion: "1.2.3",
 		Snapshot: func(ctx context.Context, dest string) error { return source.Backup(ctx, dest, store.BackupOptions{}) },
+		HistorySnapshot: func(ctx context.Context, dest string) error {
+			return source.BackupHistory(ctx, dest, store.BackupOptions{})
+		},
 	})
 	if err != nil {
 		t.Fatal(err)

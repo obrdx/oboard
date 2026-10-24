@@ -31,6 +31,7 @@ func TestSubscriptionOneTimeTokenConcurrentConsume(t *testing.T) {
 			ctx := context.Background()
 			user := createSubscriptionAuditUser(t, s, "one-time-race-"+name, "persistent-"+name, model.RoleViewer)
 			const oneTimeToken = "race-one-time-token"
+			s.AllowSubscriptionIngress("1.1.1.1", time.Now().Add(-2*time.Minute))
 			if err := s.CreateOneTimeSubscriptionToken(ctx, user.ID, oneTimeToken); err != nil {
 				t.Fatal(err)
 			}

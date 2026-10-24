@@ -122,7 +122,6 @@ func legacyConnectionAuditRobustZ(reports []model.ConnectionAuditReport, at time
 
 func TestConnectionAuditProbeRefreshNarrowQueryParity(t *testing.T) {
 	s, server, user := newMaintenanceTestStore(t)
-	enableHistoricalAuditDetails(t, s)
 	at := time.Now().UTC().Truncate(time.Second)
 	inboundIDs := make([]int64, 20)
 	for i := range inboundIDs {
@@ -232,7 +231,6 @@ func legacyProbeEpisodes(reports []model.ConnectionAuditReport, userID int64, at
 
 func TestConnectionAuditUserDetailUsesSingleUserRiskPath(t *testing.T) {
 	s, server, user := newMaintenanceTestStore(t)
-	enableHistoricalAuditDetails(t, s)
 	ctx := context.Background()
 	at := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
 	inboundIDs := make([]int64, 4)
@@ -289,7 +287,6 @@ func TestConnectionAuditUserDetailUsesSingleUserRiskPath(t *testing.T) {
 func TestConnectionAuditStartedSinceExcludesEarlierStarts(t *testing.T) {
 	ctx := context.Background()
 	s, server, user := newMaintenanceTestStore(t)
-	enableHistoricalAuditDetails(t, s)
 	at := time.Now().UTC().Truncate(time.Second)
 	cutoff := at.Add(-10 * time.Minute)
 

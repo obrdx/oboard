@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +27,7 @@ func newMaintenanceTestStore(t *testing.T) (*Store, *model.Server, *model.User) 
 	if err := s.CreateUser(ctx, user); err != nil {
 		t.Fatal(err)
 	}
+	enableHistoricalAuditDetails(t, s)
 	return s, server, user
 }
 
@@ -55,7 +57,7 @@ func TestMaintenancePrunesConnectionAudits(t *testing.T) {
 	s, server, user := newMaintenanceTestStore(t)
 	at := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
 	old := at.Add(-time.Duration(DefaultConnectionAuditRetentionDays)*24*time.Hour - time.Second)
-	tx, err := s.db.Begin()
+	tx, err := s.history.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +199,11 @@ func TestServerMonitoringMaintenanceIndexesMigrateFromPreviousSchema(t *testing.
 		}
 		for _, index := range []string{"idx_server_latency_probe_results_checked", "idx_server_latency_probe_results_server_kind_checked", "idx_server_connectivity_events_kind_time", "idx_agent_tasks_type_config_version"} {
 			var found string
-			if err := s.db.QueryRowContext(ctx, `select name from sqlite_master where type='index' and name=?`, index).Scan(&found); err != nil {
+			db := s.db
+			if strings.Contains(index, "server_latency_probe_results") {
+				db = s.history
+			}
+			if err := db.QueryRowContext(ctx, `select name from sqlite_master where type='index' and name=?`, index).Scan(&found); err != nil {
 				t.Fatalf("monitoring maintenance index %s missing after reopen %d: %v", index, reopen+1, err)
 			}
 		}

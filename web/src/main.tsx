@@ -3,6 +3,7 @@ import { SegmentedProgress } from './components/ui/segmented-progress'
 import './styles/resource-forms.css'
 import './styles/dashboard.css'
 import { ControllerBackupPanel } from './features/backups/Backups'
+import { DatabaseSettingsPanel } from './features/database/DatabaseSettings'
 import { UpdateVersionSummary, AgentUpdateSummary, agentUpdateCompletion, formatAgentUpdateError } from './features/backups/update-presentation'
 import { Tasks, taskServerLabel } from './features/tasks/Tasks'
 import { Panel } from './shared/Panel'
@@ -3280,7 +3281,7 @@ function SubscriptionRelayCommandDialog({ relay, enrollmentToken, controllerURL,
   </MotionDialogPanel>
 }
 
-type SettingsCategory = 'panel' | 'nodes' | 'subscriptions' | 'notifications'
+type SettingsCategory = 'panel' | 'nodes' | 'subscriptions' | 'notifications' | 'database'
 
 const settingsCategories: Array<{ key: SettingsCategory; label: string; icon: any; sections: Array<{ key: string; label: string }> }> = [
   { key: 'panel', label: '面板', icon: MonitorCog, sections: [
@@ -3298,6 +3299,10 @@ const settingsCategories: Array<{ key: SettingsCategory; label: string; icon: an
   ] },
   { key: 'subscriptions', label: '订阅', icon: Shield, sections: [] },
   { key: 'notifications', label: '通知', icon: Bell, sections: [] },
+  { key: 'database', label: '数据库', icon: Database, sections: [
+    { key: 'overview', label: '概览与诊断' },
+    { key: 'retention', label: '保留策略' },
+  ] },
 ]
 
 const SETTINGS_LOCATION_KEY = 'oboard.settings.location'
@@ -3685,6 +3690,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
         <StorageDiagnosticsCard settings={data.settings} />
       </>}
       {showing('panel', 'about') && <AboutSettingsPanel version={data.version} />}
+      {showing('database') && <DatabaseSettingsPanel client={client} notify={notify} data={data} />}
       {showing('nodes', 'general') && <>
         <AgentSettingsPanel data={data} client={client} load={load} notify={notify} confirm={dialogs.confirm} />
         <section id="settings-panel-node-network" className="settings-card">

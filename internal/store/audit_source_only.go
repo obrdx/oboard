@@ -5,6 +5,14 @@ import "context"
 // Keep retired columns empty for databases that can still be restored from an
 // older schema. No current report model reads or writes these columns.
 func (s *Store) retireAuditDestinations(ctx context.Context) error {
+	history, err := s.historyDB()
+	if err != nil {
+		return err
+	}
+	if _, err := history.ExecContext(ctx, `update connection_audit_reports set destination='',destination_port=0,outbound_tag='',outbound_type=''
+		 where destination<>'' or destination_port<>0 or outbound_tag<>'' or outbound_type<>''`); err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -18,8 +26,6 @@ func (s *Store) retireAuditDestinations(ctx context.Context) error {
 		 or coalesce(json_extract(features_json,'$.destination_port_count'),0)>0`,
 		`update audit_feature_snapshots set features_json=json_remove(features_json,'$.destination_count','$.destination_port_count')
 		 where json_type(features_json,'$.destination_count') is not null or json_type(features_json,'$.destination_port_count') is not null`,
-		`update connection_audit_reports set destination='',destination_port=0,outbound_tag='',outbound_type=''
-		 where destination<>'' or destination_port<>0 or outbound_tag<>'' or outbound_type<>''`,
 		// AI output may quote its input in free text, so remove the affected
 		// review together with its evidence and jobs instead of masking JSON keys.
 		`delete from ai_audit_reviews where id in (

@@ -196,7 +196,7 @@ func TestVerifyRestoreDatabaseFailuresAreRedacted(t *testing.T) {
 					t.Fatal(err)
 				}
 				output := filepath.Join(root, "backups", "broken.obk")
-				manifest, err := manager.writeStreamingArchive(ctx, output, database, "synthetic-password", Manifest{FormatVersion: FormatVersion, ID: id, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), SourceVersion: "1.2.3"})
+				manifest, err := manager.writeStreamingArchive(ctx, output, database, "", "synthetic-password", Manifest{FormatVersion: FormatVersion, ID: id, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), SourceVersion: "1.2.3"})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -239,7 +239,9 @@ func TestVerifyRestoreIsolated(t *testing.T) {
 	if err := db.SetSetting(ctx, "sentinel", "unchanged"); err != nil {
 		t.Fatal(err)
 	}
-	manager, err := New(Config{Root: filepath.Join(root, "backups"), DatabasePath: dbPath, MasterSecret: "synthetic-source-secret", SourceVersion: "1.2.3", Snapshot: func(ctx context.Context, dest string) error { return db.Backup(ctx, dest, store.BackupOptions{}) }})
+	manager, err := New(Config{Root: filepath.Join(root, "backups"), DatabasePath: dbPath, HistoryDatabasePath: db.HistoryPath(), MasterSecret: "synthetic-source-secret", SourceVersion: "1.2.3", Snapshot: func(ctx context.Context, dest string) error { return db.Backup(ctx, dest, store.BackupOptions{}) }, HistorySnapshot: func(ctx context.Context, dest string) error {
+		return db.BackupHistory(ctx, dest, store.BackupOptions{})
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +315,7 @@ func TestVerifyRestoreIsolated(t *testing.T) {
 		if err := restored.Close(); err != nil {
 			t.Fatal(err)
 		}
-		if got := strings.Join(checks, ","); got != "archive_format,decryption_and_files,version_compatibility,database_source,database_migration,database_integrity,secret_reencryption,plugin_authority_revocation,final_integrity" {
+		if got := strings.Join(checks, ","); got != "archive_format,decryption_and_files,version_compatibility,database_source,history_database_source,database_migration,database_integrity,secret_reencryption,plugin_authority_revocation,final_integrity" {
 			t.Fatalf("unexpected preparation checks: %s", got)
 		}
 	})

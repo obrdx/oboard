@@ -72,13 +72,13 @@ func main() {
 		log.Fatal(err)
 	}
 	if dbDir := filepath.Dir(*dbPath); dbDir != "." && dbDir != "" {
-		if err := os.MkdirAll(dbDir, 0o750); err != nil {
+		if err := os.MkdirAll(dbDir, 0o700); err != nil {
 			log.Fatal(err)
 		}
 	}
 	backupDir := env("OBOARD_BACKUP_DIR", filepath.Join(filepath.Dir(*dbPath), "backups"))
 	acmeHome := env("OBOARD_ACME_HOME", filepath.Join(filepath.Dir(*dbPath), "acme"))
-	if err := backup.ApplyPendingRestore(backup.Config{Root: backupDir, DatabasePath: *dbPath, ACMEHome: acmeHome, MasterSecret: *secret}); err != nil {
+	if err := backup.ApplyPendingRestore(backup.Config{Root: backupDir, DatabasePath: *dbPath, HistoryDatabasePath: store.HistoryPathFor(*dbPath), ACMEHome: acmeHome, MasterSecret: *secret}); err != nil {
 		log.Fatal(err)
 	}
 	sqliteOptions := store.DefaultSQLiteOptions()

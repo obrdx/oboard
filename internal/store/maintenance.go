@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -107,6 +108,15 @@ type MaintenanceResult struct {
 	WALBusyFrames                 int
 	WALLogFrames                  int
 	WALCheckpointedFrames         int
+	HistoryWALBusyFrames          int
+	HistoryWALLogFrames           int
+	HistoryWALCheckpointedFrames  int
+	HistoryFreePagesReclaimed     int64
+	HistoryCleanupProcessed       int
+	MetricHourlyBucketsBuilt      int64
+	MetricDailyBucketsBuilt       int64
+	MetricHourlyBucketsDeleted    int64
+	MetricDailyBucketsDeleted     int64
 	NeedsCatchUp                  bool
 }
 
@@ -119,18 +129,35 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 	}
 	monitoringRetention := time.Duration(ServerMonitoringRetentionDays(settings)) * 24 * time.Hour
 	auditRetention := time.Duration(ConnectionAuditRetentionDays(settings)) * 24 * time.Hour
+	metricAggregationOK := true
+	if built, err := s.BuildMetricHourly(ctx, at); err != nil {
+		metricAggregationOK = false
+		result.NeedsCatchUp = true
+		logHistoryMaintenanceError("resource hourly aggregation", err)
+	} else {
+		result.MetricHourlyBucketsBuilt = built
+	}
+	if built, err := s.BuildMetricDaily(ctx, at); err != nil {
+		metricAggregationOK = false
+		result.NeedsCatchUp = true
+		logHistoryMaintenanceError("resource daily aggregation", err)
+	} else {
+		result.MetricDailyBucketsBuilt = built
+	}
 	jobs := []struct {
-		name   string
-		query  string
-		custom func(context.Context, time.Time) (int64, bool, error)
-		cutoff time.Time
-		count  *int64
+		name    string
+		query   string
+		custom  func(context.Context, time.Time) (int64, bool, error)
+		cutoff  time.Time
+		count   *int64
+		history bool
 	}{
 		{
-			name:   "connection audit retention",
-			query:  `delete from connection_audit_reports where rowid in (select rowid from connection_audit_reports where ended_at < ? order by ended_at limit ?)`,
-			cutoff: at.Add(-24 * time.Hour),
-			count:  &result.ConnectionAuditsDeleted,
+			name:    "connection audit retention",
+			query:   `delete from connection_audit_reports where rowid in (select rowid from connection_audit_reports where ended_at < ? order by ended_at limit ?)`,
+			cutoff:  at.Add(-auditRetention),
+			count:   &result.ConnectionAuditsDeleted,
+			history: true,
 		},
 		{
 			name:   "subscription audit retention",
@@ -151,20 +178,27 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 			count:  &result.RateBucketsDeleted,
 		},
 		{
-			name:   "server metric sample retention",
-			query:  `delete from server_metric_samples where rowid in (select rowid from server_metric_samples where sampled_at < ? order by sampled_at limit ?)`,
-			cutoff: at.Add(-monitoringRetention),
-			count:  &result.ServerMetricSamplesDeleted,
+			name: "server metric sample retention",
+			custom: func(ctx context.Context, cutoff time.Time) (int64, bool, error) {
+				if !metricAggregationOK {
+					return 0, false, nil
+				}
+				return s.deleteMaintenanceBatches(ctx, `delete from server_metric_samples where rowid in (select rowid from server_metric_samples where sampled_at < ? order by sampled_at limit ?)`, cutoff)
+			},
+			cutoff:  at.Add(-monitoringRetention),
+			count:   &result.ServerMetricSamplesDeleted,
+			history: true,
 		},
 		{
 			name: "latency probe result retention",
 			custom: func(ctx context.Context, cutoff time.Time) (int64, bool, error) {
 				return s.deleteLatencyRetentionBatches(ctx, `delete from server_latency_probe_results where rowid in (select rowid from server_latency_probe_results where checked_at < ? order by checked_at limit ?)`, cutoff)
 			},
-			cutoff: at.Add(-monitoringRetention),
-			count:  &result.LatencyProbeResultsDeleted,
+			cutoff:  at.Add(-monitoringRetention),
+			count:   &result.LatencyProbeResultsDeleted,
+			history: true,
 		},
-		{name: "latency summary retention", custom: s.latencyRollupRetention, cutoff: at.Add(-monitoringRetention), count: &result.LatencySummaryBucketsDeleted},
+		{name: "latency summary retention", custom: s.latencyRollupRetention, cutoff: at.Add(-time.Duration(LatencyRollupRetentionDays(settings)) * 24 * time.Hour), count: &result.LatencySummaryBucketsDeleted, history: true},
 		{
 			name:   "connectivity event retention",
 			custom: s.pruneExpiredConnectivityEvents,
@@ -238,10 +272,24 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 			result.NeedsCatchUp = true
 		}
 		if jobErr != nil {
+			if job.history {
+				result.NeedsCatchUp = true
+				logHistoryMaintenanceError(job.name, jobErr)
+				continue
+			}
 			if ckErr := s.recordWALCheckpoint(ctx, &result); ckErr != nil && result.WALLogFrames == 0 {
 				return result, fmt.Errorf("%s: %w", job.name, jobErr)
 			}
 			return result, fmt.Errorf("%s: %w", job.name, jobErr)
+		}
+	}
+	if metricAggregationOK {
+		hourlyDeleted, dailyDeleted, purgeErr := s.PurgeMetricHistoryBefore(ctx, at.Add(-time.Duration(MetricHourlyRetentionDays(settings))*24*time.Hour), at.Add(-time.Duration(MetricDailyRetentionDays(settings))*24*time.Hour))
+		result.MetricHourlyBucketsDeleted = hourlyDeleted
+		result.MetricDailyBucketsDeleted = dailyDeleted
+		if purgeErr != nil {
+			result.NeedsCatchUp = true
+			logHistoryMaintenanceError("resource aggregate retention", purgeErr)
 		}
 	}
 	// The hourly rollup outlives the raw reports on purpose. It is one row per
@@ -250,20 +298,24 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 	// the long-term signal with it. Raw reports are still never purged early
 	// just because hourly rows exist.
 	if _, err := s.PurgeConnectionAuditHourlyBefore(ctx, at.Add(-connectionAuditHourlyRetention)); err != nil {
-		return result, fmt.Errorf("connection audit hourly retention: %w", err)
+		result.NeedsCatchUp = true
+		logHistoryMaintenanceError("connection audit hourly retention", err)
 	}
 	// Low-priority rollup work after accounting deletes. Cap wall time so a
 	// dirty backlog cannot monopolize the writer during maintenance.
 	rollupStarted := time.Now()
 	drained, err := s.DrainConnectionAuditHourlyDirty(ctx, maintenanceHourlyDirtyDrainLimit)
 	if err != nil {
-		return result, fmt.Errorf("connection audit hourly dirty drain: %w", err)
+		result.NeedsCatchUp = true
+		logHistoryMaintenanceError("connection audit hourly dirty drain", err)
 	}
 	result.HourlyDirtyDrained = drained
 	if time.Since(rollupStarted) < maintenanceRollupMaxWall {
 		advanced, complete, backfillErr := s.BackfillConnectionAuditHourlyPages(ctx, maintenanceHourlyBackfillPageLimit)
 		if backfillErr != nil {
-			return result, fmt.Errorf("connection audit hourly backfill: %w", backfillErr)
+			result.NeedsCatchUp = true
+			logHistoryMaintenanceError("connection audit hourly backfill", backfillErr)
+			advanced, complete = 0, false
 		}
 		result.HourlyBackfillAdvanced = advanced
 		if !complete && advanced >= maintenanceHourlyBackfillPageLimit {
@@ -288,8 +340,29 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 		return result, fmt.Errorf("reclaim free SQLite pages: %w", err)
 	}
 	result.FreePagesReclaimed = reclaimed
+	if s.HistoryAvailable() {
+		historyReclaimed, historyErr := s.reclaimHistoryFreePages(ctx, maintenanceReclaimPages)
+		if historyErr != nil {
+			result.NeedsCatchUp = true
+			logHistoryMaintenanceError("history free page reclaim", historyErr)
+		} else {
+			result.HistoryFreePagesReclaimed = historyReclaimed
+		}
+	}
 	if err := s.recordWALCheckpoint(ctx, &result); err != nil {
 		return result, err
+	}
+	if s.HistoryAvailable() {
+		if err := s.recordHistoryWALCheckpoint(ctx, &result); err != nil {
+			result.NeedsCatchUp = true
+			logHistoryMaintenanceError("history WAL checkpoint", err)
+		}
+		if processed, err := s.drainHistoryCleanupQueue(ctx, 8); err != nil {
+			result.NeedsCatchUp = true
+			logHistoryMaintenanceError("history cleanup queue", err)
+		} else {
+			result.HistoryCleanupProcessed = processed
+		}
 	}
 	if err := s.recordMaintenanceResult(ctx, at, result); err != nil {
 		return result, fmt.Errorf("record maintenance result: %w", err)
@@ -325,6 +398,28 @@ func (s *Store) recordWALCheckpoint(ctx context.Context, result *MaintenanceResu
 	var busy, log, checkpointed int
 	if err := s.db.WriteQueryRowContext(ctx, `pragma wal_checkpoint(truncate)`).Scan(&busy, &log, &checkpointed); err == nil && busy == 0 {
 		result.WALBusyFrames, result.WALLogFrames, result.WALCheckpointedFrames = busy, log, checkpointed
+	}
+	return nil
+}
+
+func (s *Store) recordHistoryWALCheckpoint(ctx context.Context, result *MaintenanceResult) error {
+	history, err := s.historyDB()
+	if err != nil {
+		return err
+	}
+	if err := history.WriteQueryRowContext(ctx, `pragma wal_checkpoint(passive)`).Scan(
+		&result.HistoryWALBusyFrames,
+		&result.HistoryWALLogFrames,
+		&result.HistoryWALCheckpointedFrames,
+	); err != nil {
+		return fmt.Errorf("passive history WAL checkpoint: %w", err)
+	}
+	if !shouldTruncateWAL(result.HistoryWALBusyFrames, result.HistoryWALLogFrames, result.HistoryWALCheckpointedFrames) {
+		return nil
+	}
+	var busy, log, checkpointed int
+	if err := history.WriteQueryRowContext(ctx, `pragma wal_checkpoint(truncate)`).Scan(&busy, &log, &checkpointed); err == nil && busy == 0 {
+		result.HistoryWALBusyFrames, result.HistoryWALLogFrames, result.HistoryWALCheckpointedFrames = busy, log, checkpointed
 	}
 	return nil
 }
@@ -374,6 +469,31 @@ func (s *Store) reclaimFreePages(ctx context.Context, maxPages int) (int64, erro
 	return before - after, nil
 }
 
+func (s *Store) reclaimHistoryFreePages(ctx context.Context, maxPages int) (int64, error) {
+	history, err := s.historyDB()
+	if err != nil {
+		return 0, err
+	}
+	var before int64
+	if err := history.QueryRowContext(ctx, `pragma freelist_count`).Scan(&before); err != nil {
+		return 0, err
+	}
+	if before == 0 {
+		return 0, nil
+	}
+	if _, err := history.ExecContext(ctx, fmt.Sprintf(`pragma incremental_vacuum(%d)`, maxPages)); err != nil {
+		return 0, err
+	}
+	var after int64
+	if err := history.QueryRowContext(ctx, `pragma freelist_count`).Scan(&after); err != nil {
+		return 0, err
+	}
+	if after >= before {
+		return 0, nil
+	}
+	return before - after, nil
+}
+
 // ConnectionAuditRetentionDays reports how long raw connection audit reports
 // are kept. The audit window a caller may ask for is clamped to this, so the
 // console cannot offer a range the database no longer holds.
@@ -405,6 +525,7 @@ func (s *Store) deleteLatencyRetentionBatches(ctx context.Context, query string,
 func (s *Store) deleteMaintenanceBatchesWithProjection(ctx context.Context, query string, cutoff time.Time, reportServers bool, projection string) (int64, bool, error) {
 	var deleted int64
 	cutoffText := cutoff.UTC().Format(time.RFC3339Nano)
+	db := s.maintenanceDB(query)
 	for batch := 0; batch < maintenanceMaxBatches; batch++ {
 		if err := ctx.Err(); err != nil {
 			return deleted, true, err
@@ -424,7 +545,7 @@ func (s *Store) deleteMaintenanceBatchesWithProjection(ctx context.Context, quer
 				s.invalidateLatencyHistory(ids...)
 			}
 		} else if reportServers {
-			resultRows, err := s.db.WriteQueryContext(ctx, query+" returning server_id", cutoffText, maintenanceBatchSize)
+			resultRows, err := db.WriteQueryContext(ctx, query+" returning server_id", cutoffText, maintenanceBatchSize)
 			if err != nil {
 				return deleted, deleted > 0, err
 			}
@@ -454,7 +575,7 @@ func (s *Store) deleteMaintenanceBatchesWithProjection(ctx context.Context, quer
 				return deleted, true, closeErr
 			}
 		} else {
-			res, err := s.db.ExecContext(ctx, query, cutoffText, maintenanceBatchSize)
+			res, err := db.ExecContext(ctx, query, cutoffText, maintenanceBatchSize)
 			if err != nil {
 				return deleted, deleted > 0, err
 			}
@@ -538,4 +659,10 @@ func formatInt64SQLList(ids []int64) string {
 		builder.WriteString(strconv.FormatInt(id, 10))
 	}
 	return builder.String()
+}
+
+func logHistoryMaintenanceError(operation string, err error) {
+	if err != nil {
+		log.Printf("%s skipped: %v", operation, err)
+	}
 }

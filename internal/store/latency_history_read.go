@@ -292,7 +292,11 @@ func (s *Store) QueryLatencySummaryChart(ctx context.Context, serverID int64, fr
 	if interval < time.Minute || from.Nanosecond() != 0 || to.Nanosecond() != 0 || !to.After(from) || (to.Sub(from)+interval-1)/interval > 360 {
 		return empty, coverage, errors.New("invalid summary chart window")
 	}
-	conn, err := s.db.ReadConn(ctx)
+	history, err := s.historyDB()
+	if err != nil {
+		return empty, coverage, err
+	}
+	conn, err := history.ReadConn(ctx)
 	if err != nil {
 		return empty, coverage, err
 	}
@@ -305,6 +309,13 @@ func (s *Store) QueryLatencySummaryChart(ctx context.Context, serverID int64, fr
 	var version int
 	if err := conn.QueryRowContext(ctx, `select live_cursor,backfill_cursor,retention_floor,schema_version from latency_rollup_state where id=1`).Scan(&live, &backfill, &floor, &version); err != nil {
 		return empty, coverage, err
+	}
+	summaryFloor := time.Now().UTC().Add(-LatencyHourlyRetention).Unix()
+	if floor < summaryFloor {
+		floor = summaryFloor
+	}
+	if from.Unix() < floor {
+		from = time.Unix(floor, 0).UTC()
 	}
 	a := newLatencyAccumulator(from, to, interval)
 	budget := 50000
@@ -405,13 +416,13 @@ func (s *Store) QueryLatencySummaryChart(ctx context.Context, serverID int64, fr
 			coverage.Source = "mixed"
 		}
 	}
-	legacy, err := s.queryLegacyLatencyBuckets(ctx, conn, serverID, from, to, interval, true)
+	legacy, err := s.queryLegacyLatencyBuckets(ctx, s.db, serverID, from, to, interval, true)
 	if err != nil {
 		return empty, coverage, err
 	}
 	coverage.Legacy = legacy
 	var legacyCursor int64
-	if err := conn.QueryRowContext(ctx, `select cursor from latency_legacy_progress where id=1`).Scan(&legacyCursor); err != nil {
+	if err := s.db.QueryRowContext(ctx, `select cursor from latency_legacy_progress where id=1`).Scan(&legacyCursor); err != nil {
 		return empty, coverage, err
 	}
 	if legacyCursor != 0 && !opts.ForceRaw && interval >= 5*time.Minute {

@@ -417,7 +417,7 @@ func (s *Store) AuditReviewEvidenceRefs(ctx context.Context, reviewID string) (m
 }
 
 func (s *Store) AuditReviewHistoricalPairs(ctx context.Context, start, end time.Time) (map[int64]map[int64]bool, error) {
-	rows, err := s.db.QueryContext(ctx, `select distinct user_id,server_id from connection_audit_reports where ended_at>=? and ended_at<=?`, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano))
+	rows, err := s.history.QueryContext(ctx, `select distinct user_id,server_id from connection_audit_reports where ended_at>=? and ended_at<=?`, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
@@ -495,7 +495,7 @@ func (s *Store) AuditReviewData(ctx context.Context, userIDs, serverIDs []int64,
 	}
 	if types[model.AuditReviewEvidenceConnection] {
 		where := `ended_at>=? and ended_at<=? and ` + userClause + ` and ` + serverClause
-		rows, err := s.db.QueryContext(ctx, `select user_id,coalesce(sum(connection_count),0),coalesce(sum(closed_count),0),coalesce(max(active_peak),0),coalesce(max(active_at_end),0),count(distinct source_ip),count(distinct server_id),coalesce(sum(dropped_bucket_count),0),max(ended_at) from connection_audit_reports where `+where+` group by user_id`, startText, endText) // #nosec G202 -- where is composed from fixed predicates and generated placeholders.
+		rows, err := s.history.QueryContext(ctx, `select user_id,coalesce(sum(connection_count),0),coalesce(sum(closed_count),0),coalesce(max(active_peak),0),coalesce(max(active_at_end),0),count(distinct source_ip),count(distinct server_id),coalesce(sum(dropped_bucket_count),0),max(ended_at) from connection_audit_reports where `+where+` group by user_id`, startText, endText) // #nosec G202 -- where is composed from fixed predicates and generated placeholders.
 		if err != nil {
 			return data, err
 		}
@@ -516,7 +516,7 @@ func (s *Store) AuditReviewData(ctx context.Context, userIDs, serverIDs []int64,
 		if err := rows.Close(); err != nil {
 			return data, err
 		}
-		breakdown, err := s.db.QueryContext(ctx, `select user_id,server_id,sum(connection_count),max(active_peak),max(ended_at) from connection_audit_reports where `+where+` group by user_id,server_id order by user_id,sum(connection_count) desc`, startText, endText) // #nosec G202 -- where is composed from fixed predicates and generated placeholders.
+		breakdown, err := s.history.QueryContext(ctx, `select user_id,server_id,sum(connection_count),max(active_peak),max(ended_at) from connection_audit_reports where `+where+` group by user_id,server_id order by user_id,sum(connection_count) desc`, startText, endText) // #nosec G202 -- where is composed from fixed predicates and generated placeholders.
 		if err != nil {
 			return data, err
 		}
@@ -536,7 +536,7 @@ func (s *Store) AuditReviewData(ctx context.Context, userIDs, serverIDs []int64,
 			return data, err
 		}
 		if types[model.AuditReviewEvidenceConnection] {
-			recent, err := s.db.QueryContext(ctx, `select report_id,server_id,user_id,inbound_id,path_id,source_ip,source_geo_code,source_country_code,source_country,source_province,source_city,source_isp,geo_database_revision,network,connection_count,closed_count,duration_total_ms,duration_max_ms,active_peak,active_at_end,collection_generation,bucket_capacity,dropped_bucket_count,collection_started_at,collection_ended_at,started_at,ended_at,created_at from (select a.*,row_number() over(partition by user_id order by ended_at desc,connection_count desc) rn from connection_audit_reports a where `+where+`) where rn<=10 order by user_id,ended_at desc`, startText, endText) // #nosec G202 -- where is composed from fixed predicates and generated placeholders.
+			recent, err := s.history.QueryContext(ctx, `select report_id,server_id,user_id,inbound_id,path_id,source_ip,source_geo_code,source_country_code,source_country,source_province,source_city,source_isp,geo_database_revision,network,connection_count,closed_count,duration_total_ms,duration_max_ms,active_peak,active_at_end,collection_generation,bucket_capacity,dropped_bucket_count,collection_started_at,collection_ended_at,started_at,ended_at,created_at from (select a.*,row_number() over(partition by user_id order by ended_at desc,connection_count desc) rn from connection_audit_reports a where `+where+`) where rn<=10 order by user_id,ended_at desc`, startText, endText) // #nosec G202 -- where is composed from fixed predicates and generated placeholders.
 			if err != nil {
 				return data, err
 			}

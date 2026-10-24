@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -28,9 +29,9 @@ import (
 )
 
 const (
-	FormatVersion    = 1
-	maxArchiveBytes  = int64(4 << 30)
-	maxPayloadBytes  = int64(3 << 30)
+	FormatVersion    = 2
+	maxArchiveBytes  = int64(8 << 30)
+	maxPayloadBytes  = int64(6 << 30)
 	maxArchiveFiles  = 10000
 	tarBlockSize     = 512
 	pendingFileName  = "pending-restore.json"
@@ -41,12 +42,14 @@ const (
 type SnapshotFunc func(context.Context, string) error
 
 type Config struct {
-	Root          string
-	DatabasePath  string
-	ACMEHome      string
-	MasterSecret  string
-	SourceVersion string
-	Snapshot      SnapshotFunc
+	Root                string
+	DatabasePath        string
+	HistoryDatabasePath string
+	ACMEHome            string
+	MasterSecret        string
+	SourceVersion       string
+	Snapshot            SnapshotFunc
+	HistorySnapshot     SnapshotFunc
 }
 
 type Manager struct {
@@ -54,12 +57,23 @@ type Manager struct {
 }
 
 type Manifest struct {
-	FormatVersion int    `json:"format_version"`
-	ID            string `json:"id"`
-	CreatedAt     string `json:"created_at"`
-	SourceVersion string `json:"source_version"`
-	PayloadSHA256 string `json:"payload_sha256"`
-	PayloadSize   int64  `json:"payload_size"`
+	FormatVersion int                `json:"format_version"`
+	ID            string             `json:"id"`
+	CreatedAt     string             `json:"created_at"`
+	SourceVersion string             `json:"source_version"`
+	PayloadSHA256 string             `json:"payload_sha256"`
+	PayloadSize   int64              `json:"payload_size"`
+	Databases     []DatabaseManifest `json:"databases,omitempty"`
+	Consistency   string             `json:"consistency,omitempty"`
+}
+
+type DatabaseManifest struct {
+	Role          string `json:"role"`
+	Filename      string `json:"filename"`
+	SnapshotAt    string `json:"snapshot_at"`
+	SchemaVersion int    `json:"schema_version"`
+	Size          int64  `json:"size"`
+	SHA256        string `json:"sha256"`
 }
 
 type Created struct {
@@ -109,15 +123,20 @@ type StagedRestore struct {
 }
 
 type pendingRestore struct {
-	ID        string `json:"id"`
-	StageRoot string `json:"stage_root"`
-	Database  string `json:"database"`
-	ACME      string `json:"acme"`
+	ID              string `json:"id"`
+	StageRoot       string `json:"stage_root"`
+	Database        string `json:"database"`
+	HistoryDatabase string `json:"history_database"`
+	ACME            string `json:"acme"`
 }
 
 func New(config Config) (*Manager, error) {
 	config.Root = strings.TrimSpace(config.Root)
 	config.DatabasePath = strings.TrimSpace(config.DatabasePath)
+	config.HistoryDatabasePath = strings.TrimSpace(config.HistoryDatabasePath)
+	if config.HistoryDatabasePath == "" {
+		config.HistoryDatabasePath = store.HistoryPathFor(config.DatabasePath)
+	}
 	if config.Root == "" || config.DatabasePath == "" || strings.TrimSpace(config.MasterSecret) == "" || config.Snapshot == nil {
 		return nil, errors.New("主控备份配置不完整")
 	}
@@ -279,19 +298,37 @@ func (m *Manager) CreateWithProgress(ctx context.Context, password, requestedID 
 	if err := m.config.Snapshot(ctx, database); err != nil {
 		return Created{}, fmt.Errorf("创建数据库快照失败：%w", err)
 	}
+	historyDatabase := ""
+	if m.config.HistorySnapshot != nil {
+		historyDatabase = filepath.Join(work, "history.sqlite")
+		if err := m.config.HistorySnapshot(ctx, historyDatabase); err != nil {
+			return Created{}, fmt.Errorf("创建历史数据库快照失败：%w", err)
+		}
+	}
 	ReportProgress(ctx, "compact", 0)
 	if err := store.ShrinkBackupSnapshot(ctx, database); err != nil {
 		return Created{}, fmt.Errorf("整理数据库快照失败：%w", err)
+	}
+	if historyDatabase != "" {
+		if err := store.ShrinkBackupSnapshot(ctx, historyDatabase); err != nil {
+			return Created{}, fmt.Errorf("整理历史数据库快照失败：%w", err)
+		}
 	}
 	ReportProgress(ctx, "archive", 0)
 	createdAt := time.Now().UTC()
 	name := "oboard-backup-" + createdAt.Format("20060102T150405Z") + "-" + id + ".obk"
 	output := filepath.Join(m.config.Root, name)
-	manifest, err := m.writeStreamingArchive(ctx, output, database, password, Manifest{
+	databases, err := buildDatabaseManifests(database, historyDatabase)
+	if err != nil {
+		return Created{}, err
+	}
+	manifest, err := m.writeStreamingArchive(ctx, output, database, historyDatabase, password, Manifest{
 		FormatVersion: FormatVersion,
 		ID:            id,
 		CreatedAt:     createdAt.Format(time.RFC3339Nano),
 		SourceVersion: m.config.SourceVersion,
+		Databases:     databases,
+		Consistency:   "core_and_history_are_independent_sqlite_snapshots",
 	})
 	if err != nil {
 		return Created{}, err
@@ -316,6 +353,12 @@ func (m *Manager) ensureFreeSpace() error {
 	if info, err := os.Stat(m.config.DatabasePath + "-wal"); err == nil {
 		bytes += info.Size()
 	}
+	if info, err := os.Stat(m.config.HistoryDatabasePath); err == nil {
+		bytes += info.Size()
+	}
+	if info, err := os.Stat(m.config.HistoryDatabasePath + "-wal"); err == nil {
+		bytes += info.Size()
+	}
 	bytes += directorySize(m.config.ACMEHome)
 	free, err := store.DiskFreeBytes(m.config.Root)
 	if err != nil {
@@ -326,6 +369,60 @@ func (m *Manager) ensureFreeSpace() error {
 		return fmt.Errorf("磁盘空间不足：创建备份至少需要 %d 字节，当前可用 %d 字节", need, free)
 	}
 	return nil
+}
+
+func buildDatabaseManifests(corePath, historyPath string) ([]DatabaseManifest, error) {
+	out := []DatabaseManifest{}
+	for _, item := range []struct {
+		role string
+		path string
+	}{
+		{role: "core", path: corePath},
+		{role: "history", path: historyPath},
+	} {
+		if strings.TrimSpace(item.path) == "" {
+			continue
+		}
+		info, err := os.Stat(item.path)
+		if err != nil {
+			return nil, err
+		}
+		digest, size, err := fileSHA256(item.path)
+		if err != nil {
+			return nil, err
+		}
+		if size != info.Size() {
+			return nil, errors.New("数据库快照大小校验失败")
+		}
+		out = append(out, DatabaseManifest{
+			Role:          item.role,
+			Filename:      filepath.Base(item.path),
+			SnapshotAt:    time.Now().UTC().Format(time.RFC3339Nano),
+			SchemaVersion: databaseSchemaVersion(item.path, item.role),
+			Size:          size,
+			SHA256:        digest,
+		})
+	}
+	return out, nil
+}
+
+func databaseSchemaVersion(path, role string) int {
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	if err != nil {
+		return 0
+	}
+	defer db.Close()
+	var version int
+	if role == "history" {
+		if err := db.QueryRow(`select schema_version from oboard_history_meta where id=1`).Scan(&version); err != nil {
+			return 0
+		}
+		return version
+	}
+	if err := db.QueryRow(`pragma user_version`).Scan(&version); err != nil {
+		return 0
+	}
+	return version
 }
 
 func directorySize(root string) int64 {
@@ -425,7 +522,11 @@ func (m *Manager) StageRestore(ctx context.Context, archivePath, password, targe
 		_ = os.RemoveAll(stage)
 		return StagedRestore{}, err
 	}
-	pending := pendingRestore{ID: manifest.ID, StageRoot: stage, Database: database, ACME: filepath.Join(stage, "acme")}
+	historyDatabase := filepath.Join(stage, "history.sqlite")
+	if !pathExists(historyDatabase) {
+		historyDatabase = store.HistoryPathFor(database)
+	}
+	pending := pendingRestore{ID: manifest.ID, StageRoot: stage, Database: database, HistoryDatabase: historyDatabase, ACME: filepath.Join(stage, "acme")}
 	data, err := json.Marshal(pending)
 	if err != nil {
 		_ = os.RemoveAll(stage)
@@ -451,17 +552,35 @@ func ApplyPendingRestore(config Config) error {
 		return fmt.Errorf("读取待恢复状态失败：%w", err)
 	}
 	restoreRoot := filepath.Join(config.Root, ".restore")
-	if !validBackupID(pending.ID) || !within(restoreRoot, pending.StageRoot) || filepath.Clean(pending.Database) != filepath.Join(filepath.Clean(pending.StageRoot), "database.sqlite") || filepath.Clean(pending.ACME) != filepath.Join(filepath.Clean(pending.StageRoot), "acme") {
+	stageRoot := filepath.Clean(pending.StageRoot)
+	historyBase := filepath.Base(pending.HistoryDatabase)
+	if !validBackupID(pending.ID) || !within(restoreRoot, pending.StageRoot) || filepath.Clean(pending.Database) != filepath.Join(stageRoot, "database.sqlite") || (filepath.Clean(pending.HistoryDatabase) != filepath.Join(stageRoot, "history.sqlite") && filepath.Clean(pending.HistoryDatabase) != filepath.Join(stageRoot, "database-history.sqlite")) || historyBase == "" || filepath.Clean(pending.ACME) != filepath.Join(stageRoot, "acme") {
 		return errors.New("待恢复状态包含无效路径")
+	}
+	targetHistory := strings.TrimSpace(config.HistoryDatabasePath)
+	if targetHistory == "" {
+		targetHistory = store.HistoryPathFor(config.DatabasePath)
 	}
 	databaseExisted := pathExists(config.DatabasePath)
 	databaseRollback := config.DatabasePath + ".restore-rollback-" + pending.ID
 	if err := replaceFile(pending.Database, config.DatabasePath, pending.ID); err != nil {
 		return err
 	}
-	if err := replaceTree(pending.ACME, config.ACMEHome, pending.ID); err != nil {
+	historyExisted := pathExists(targetHistory)
+	historyRollback := targetHistory + ".restore-rollback-" + pending.ID
+	if err := replaceFile(pending.HistoryDatabase, targetHistory, pending.ID); err != nil {
 		if rollbackErr := rollbackPath(config.DatabasePath, databaseRollback, databaseExisted); rollbackErr != nil {
-			return errors.Join(err, fmt.Errorf("恢复数据库回滚失败：%w", rollbackErr))
+			return errors.Join(err, fmt.Errorf("恢复核心数据库回滚失败：%w", rollbackErr))
+		}
+		return err
+	}
+	if err := replaceTree(pending.ACME, config.ACMEHome, pending.ID); err != nil {
+		historyRollbackErr := rollbackPath(targetHistory, historyRollback, historyExisted)
+		if rollbackErr := rollbackPath(config.DatabasePath, databaseRollback, databaseExisted); rollbackErr != nil {
+			return errors.Join(err, historyRollbackErr, fmt.Errorf("恢复数据库回滚失败：%w", rollbackErr))
+		}
+		if historyRollbackErr != nil {
+			return errors.Join(err, fmt.Errorf("恢复历史数据库回滚失败：%w", historyRollbackErr))
 		}
 		return err
 	}
@@ -469,11 +588,12 @@ func ApplyPendingRestore(config Config) error {
 		return err
 	}
 	_ = os.Remove(databaseRollback)
+	_ = os.Remove(historyRollback)
 	_ = os.RemoveAll(config.ACMEHome + ".restore-rollback-" + pending.ID)
 	return os.RemoveAll(pending.StageRoot)
 }
 
-func (m *Manager) writeStreamingArchive(ctx context.Context, destination, database, password string, manifest Manifest) (Manifest, error) {
+func (m *Manager) writeStreamingArchive(ctx context.Context, destination, database, historyDatabase, password string, manifest Manifest) (Manifest, error) {
 	temp, err := os.CreateTemp(filepath.Dir(destination), ".backup-envelope-")
 	if err != nil {
 		return Manifest{}, err
@@ -496,7 +616,7 @@ func (m *Manager) writeStreamingArchive(ctx context.Context, destination, databa
 	}
 	hash := sha256.New()
 	limited := &limitedWriter{w: io.MultiWriter(temp, hash), limit: maxPayloadBytes}
-	err = m.writePayload(ctx, limited, database, password)
+	err = m.writePayload(ctx, limited, database, historyDatabase, password)
 	payloadSize := limited.n
 	if err == nil && payloadSize > maxPayloadBytes {
 		err = fmt.Errorf("备份数据超过 %d GiB 限制", maxPayloadBytes>>30)
@@ -544,7 +664,7 @@ func (m *Manager) writeStreamingArchive(ctx context.Context, destination, databa
 	return manifest, nil
 }
 
-func (m *Manager) writePayload(ctx context.Context, output io.Writer, database, password string) error {
+func (m *Manager) writePayload(ctx context.Context, output io.Writer, database, historyDatabase, password string) error {
 	recipient, err := age.NewScryptRecipient(password)
 	if err != nil {
 		return err
@@ -570,6 +690,9 @@ func (m *Manager) writePayload(ctx context.Context, output io.Writer, database, 
 		}
 		ReportProgress(ctx, "archive", float64(written)/float64(total)*100)
 	})
+	if err == nil && strings.TrimSpace(historyDatabase) != "" {
+		err = addPayloadFileProgress(ctx, tarWriter, historyDatabase, "history.sqlite", nil)
+	}
 	if err == nil {
 		secret, marshalErr := json.Marshal(map[string]string{"master_secret": m.config.MasterSecret})
 		if marshalErr != nil {
@@ -746,7 +869,7 @@ func readEnvelope(archivePath, payloadDestination string) (Manifest, int64, erro
 			return Manifest{}, 0, errors.New("备份文件包含未知内容")
 		}
 	}
-	if !gotManifest || !gotPayload || manifest.FormatVersion != FormatVersion || !validBackupID(manifest.ID) || len(manifest.PayloadSHA256) != sha256.Size*2 || manifest.PayloadSize != payloadSize {
+	if !gotManifest || !gotPayload || (manifest.FormatVersion != 1 && manifest.FormatVersion != FormatVersion) || !validBackupID(manifest.ID) || len(manifest.PayloadSHA256) != sha256.Size*2 || manifest.PayloadSize != payloadSize {
 		return Manifest{}, 0, errors.New("备份文件不完整或格式不受支持")
 	}
 	if payloadDestination != "" {
@@ -797,7 +920,7 @@ func extractArchiveWithReport(archivePath, password, stage string, record func(s
 	}
 	defer gzipReader.Close()
 	reader := tar.NewReader(gzipReader)
-	var gotDatabase, gotSecrets bool
+	var gotDatabase, gotHistory, gotSecrets bool
 	var secretData []byte
 	var total int64
 	for entries := 0; ; entries++ {
@@ -844,6 +967,14 @@ func extractArchiveWithReport(archivePath, password, stage string, record func(s
 				return Manifest{}, "", err
 			}
 			gotDatabase = true
+		case name == "history.sqlite" || name == "database-history.sqlite":
+			if gotHistory {
+				return Manifest{}, "", errors.New("备份历史数据库重复")
+			}
+			if err := writeTarFile(reader, filepath.Join(stage, "history.sqlite"), header.Size); err != nil {
+				return Manifest{}, "", err
+			}
+			gotHistory = true
 		case name == "secrets.json":
 			if gotSecrets || header.Size > 1<<20 {
 				return Manifest{}, "", errors.New("备份恢复信息无效")
@@ -863,6 +994,23 @@ func extractArchiveWithReport(archivePath, password, stage string, record func(s
 	}
 	if !gotDatabase || !gotSecrets {
 		return Manifest{}, "", errors.New("备份内容不完整")
+	}
+	expectedHistory := false
+	for _, database := range manifest.Databases {
+		if database.Filename != "database.sqlite" && database.Filename != "history.sqlite" {
+			return Manifest{}, "", errors.New("备份数据库清单包含未知文件")
+		}
+		path := filepath.Join(stage, database.Filename)
+		if database.Role == "history" {
+			expectedHistory = true
+		}
+		digest, size, hashErr := fileSHA256(path)
+		if hashErr != nil || size != database.Size || !strings.EqualFold(digest, database.SHA256) {
+			return Manifest{}, "", errors.New("备份数据库快照校验失败")
+		}
+	}
+	if expectedHistory && !gotHistory {
+		return Manifest{}, "", errors.New("备份缺少历史数据库")
 	}
 	var secrets map[string]string
 	if err := json.Unmarshal(secretData, &secrets); err != nil || strings.TrimSpace(secrets["master_secret"]) == "" {

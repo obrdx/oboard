@@ -69,48 +69,12 @@ func (s *Store) ensureConnectionAuditHourlySchema(ctx context.Context) error {
 		)`,
 	}
 	for _, stmt := range stmts {
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
-			return err
-		}
-	}
-	// Columns the console's window totals are served from once the window
-	// reaches past raw retention. Every one of these merges exactly across
-	// hours, so a total read from here equals the same total computed from the
-	// raw reports it was built from.
-	//
-	// dimensions_complete is 0 when an hour had more distinct values than
-	// connectionAuditHourlyDimensionCap, so a count derived from that hour is a
-	// lower bound rather than an exact number and is reported as one.
-	for _, column := range []struct {
-		name string
-		sql  string
-	}{
-		{"report_count", `alter table connection_audit_hourly add column report_count integer not null default 0`},
-		{"active_peak", `alter table connection_audit_hourly add column active_peak integer not null default 0`},
-		{"upload_bytes", `alter table connection_audit_hourly add column upload_bytes integer not null default 0`},
-		{"download_bytes", `alter table connection_audit_hourly add column download_bytes integer not null default 0`},
-		{"last_ended_at", `alter table connection_audit_hourly add column last_ended_at text not null default ''`},
-		{"collection_count", `alter table connection_audit_hourly add column collection_count integer not null default 0`},
-		{"dropped_bucket_count", `alter table connection_audit_hourly add column dropped_bucket_count integer not null default 0`},
-		{"capacity_total", `alter table connection_audit_hourly add column capacity_total integer not null default 0`},
-		{"dimensions_complete", `alter table connection_audit_hourly add column dimensions_complete integer not null default 1`},
-		// totals_version marks an hour whose extended columns were actually
-		// computed. Rows written before those columns existed keep 0 and are
-		// excluded from window totals, because their zeros are "not measured",
-		// not "nothing happened" - reading them as totals would make a month
-		// look empty.
-		//
-		// This is deliberately separate from algorithm_version, which the
-		// 28-day robust-Z baseline filters on: bumping that would have hidden
-		// every legacy hour from the baseline as well.
-		{"totals_version", `alter table connection_audit_hourly add column totals_version integer not null default 0`},
-	} {
-		if err := s.ensureColumn(ctx, "connection_audit_hourly", column.name, column.sql); err != nil {
+		if _, err := s.history.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
 	}
 	ts := now()
-	_, err := s.db.ExecContext(ctx, `insert into audit_rollup_state(id,backfill_cursor,backfill_complete,read_path,algorithm_version,updated_at)
+	_, err := s.history.ExecContext(ctx, `insert into audit_rollup_state(id,backfill_cursor,backfill_complete,read_path,algorithm_version,updated_at)
 		values(1,'',0,'raw',?,?) on conflict(id) do nothing`, connectionAuditHourlyAlgorithm, ts)
 	return err
 }
@@ -121,7 +85,7 @@ func (s *Store) MarkConnectionAuditHoursDirty(ctx context.Context, marks map[int
 	if len(marks) == 0 {
 		return nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.history.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -162,7 +126,7 @@ func (s *Store) ListConnectionAuditHourlyDirty(ctx context.Context, limit int) (
 	if limit < 1 {
 		limit = 32
 	}
-	rows, err := s.db.QueryContext(ctx, `select user_id,utc_hour,dirty_at from connection_audit_hourly_dirty order by dirty_at,user_id,utc_hour limit ?`, limit)
+	rows, err := s.history.QueryContext(ctx, `select user_id,utc_hour,dirty_at from connection_audit_hourly_dirty order by dirty_at,user_id,utc_hour limit ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +190,7 @@ func (s *Store) RecomputeConnectionAuditHour(ctx context.Context, userID int64, 
 	// always satisfies started_at <= ended_at, so this cannot drop a row the
 	// bucket wants. Without it the plan had no time bound at all and summing
 	// one hour scanned every report the user had ever filed.
-	err := s.db.QueryRowContext(ctx, `select
+	err := s.history.QueryRowContext(ctx, `select
 			coalesce(sum(connection_count),0),
 			count(*),
 			coalesce(max(active_peak),0),
@@ -251,7 +215,7 @@ func (s *Store) RecomputeConnectionAuditHour(ctx context.Context, userID int64, 
 	}
 
 	ts := now()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.history.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -329,7 +293,7 @@ func (s *Store) connectionAuditHourDimensions(ctx context.Context, userID int64,
 		auditDimensionServer:   {},
 		auditDimensionCountry:  {},
 	}
-	rows, err := s.db.QueryContext(ctx, `select distinct source_ip,server_id,source_country_code
+	rows, err := s.history.QueryContext(ctx, `select distinct source_ip,server_id,source_country_code
 		from connection_audit_reports
 		where user_id=? and ended_at>=? and started_at>=? and started_at<? and internal_probe=0
 			and probe_state not in ('confirmed','candidate') and dropped_bucket_count=0`,
@@ -405,7 +369,7 @@ func (s *Store) BackfillConnectionAuditHourlyPages(ctx context.Context, pageSize
 		fmt.Sscanf(parts[0], "%d", &cursorUser)
 		cursorHour = parts[1]
 	}
-	rows, err := s.db.QueryContext(ctx, `select user_id,strftime('%Y-%m-%dT%H:00:00Z',started_at) as hour_bucket,coalesce(sum(connection_count),0)
+	rows, err := s.history.QueryContext(ctx, `select user_id,strftime('%Y-%m-%dT%H:00:00Z',started_at) as hour_bucket,coalesce(sum(connection_count),0)
 		from connection_audit_reports
 		where started_at>=? and internal_probe=0 and probe_state not in ('confirmed','candidate') and dropped_bucket_count=0
 			and (user_id>? or (user_id=? and strftime('%Y-%m-%dT%H:00:00Z',started_at)>?))
@@ -445,7 +409,7 @@ func (s *Store) BackfillConnectionAuditHourlyPages(ctx context.Context, pageSize
 		return 0, true, nil
 	}
 	ts := now()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.history.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, false, err
 	}
@@ -491,7 +455,7 @@ type AuditRollupState struct {
 func (s *Store) GetAuditRollupState(ctx context.Context) (AuditRollupState, error) {
 	var state AuditRollupState
 	var updated string
-	err := s.db.QueryRowContext(ctx, `select backfill_cursor,backfill_complete,read_path,algorithm_version,updated_at from audit_rollup_state where id=1`).
+	err := s.history.QueryRowContext(ctx, `select backfill_cursor,backfill_complete,read_path,algorithm_version,updated_at from audit_rollup_state where id=1`).
 		Scan(&state.BackfillCursor, &state.BackfillComplete, &state.ReadPath, &state.AlgorithmVersion, &updated)
 	if err != nil {
 		return state, err
@@ -502,7 +466,7 @@ func (s *Store) GetAuditRollupState(ctx context.Context) (AuditRollupState, erro
 
 func (s *Store) SetAuditRollupState(ctx context.Context, state AuditRollupState) error {
 	ts := now()
-	_, err := s.db.ExecContext(ctx, `update audit_rollup_state set backfill_cursor=?,backfill_complete=?,read_path=?,algorithm_version=?,updated_at=? where id=1`,
+	_, err := s.history.ExecContext(ctx, `update audit_rollup_state set backfill_cursor=?,backfill_complete=?,read_path=?,algorithm_version=?,updated_at=? where id=1`,
 		state.BackfillCursor, boolInt(state.BackfillComplete), state.ReadPath, state.AlgorithmVersion, ts)
 	return err
 }
@@ -516,7 +480,7 @@ func (s *Store) loadConnectionAuditHourlyBuckets(ctx context.Context, userIDs []
 	for _, id := range userIDs {
 		args = append(args, id)
 	}
-	rows, err := s.db.QueryContext(ctx, `select user_id,utc_hour,connection_count
+	rows, err := s.history.QueryContext(ctx, `select user_id,utc_hour,connection_count
 		from connection_audit_hourly
 		where utc_hour>=? and utc_hour<? and algorithm_version=? and user_id in (`+inClause(len(userIDs))+`)`, args...)
 	if err != nil {
@@ -539,12 +503,12 @@ func (s *Store) loadConnectionAuditHourlyBuckets(ctx context.Context, userIDs []
 // retention window. It never shortens raw report retention.
 func (s *Store) PurgeConnectionAuditHourlyBefore(ctx context.Context, cutoff time.Time) (int64, error) {
 	key := ConnectionAuditHourKey(cutoff)
-	res, err := s.db.ExecContext(ctx, `delete from connection_audit_hourly where utc_hour<?`, key)
+	res, err := s.history.ExecContext(ctx, `delete from connection_audit_hourly where utc_hour<?`, key)
 	if err != nil {
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
-	if _, err := s.db.ExecContext(ctx, `delete from connection_audit_hourly_dirty where utc_hour<?`, key); err != nil {
+	if _, err := s.history.ExecContext(ctx, `delete from connection_audit_hourly_dirty where utc_hour<?`, key); err != nil {
 		return n, err
 	}
 	return n, nil
@@ -570,7 +534,7 @@ func (s *Store) connectionAuditHourlyDirtyHours(ctx context.Context, userIDs []i
 	for _, id := range userIDs {
 		args = append(args, id)
 	}
-	rows, err := s.db.QueryContext(ctx, `select user_id,utc_hour from connection_audit_hourly_dirty
+	rows, err := s.history.QueryContext(ctx, `select user_id,utc_hour from connection_audit_hourly_dirty
 		where utc_hour>=? and utc_hour<? and user_id in (`+inClause(len(userIDs))+`)`, args...)
 	if err != nil {
 		return nil, err
@@ -601,7 +565,7 @@ func (s *Store) connectionAuditRawHourBuckets(ctx context.Context, userID int64,
 		var total float64
 		// ended_at bounds the scan; started_at remains the exact filter. See
 		// RecomputeConnectionAuditHour for why that narrowing is lossless.
-		if err := s.db.QueryRowContext(ctx, `select coalesce(sum(connection_count),0)
+		if err := s.history.QueryRowContext(ctx, `select coalesce(sum(connection_count),0)
 			from connection_audit_reports
 			where user_id=? and ended_at>=? and started_at>=? and started_at<? and internal_probe=0
 				and probe_state not in ('confirmed','candidate') and dropped_bucket_count=0`,
@@ -682,7 +646,7 @@ func (s *Store) ConnectionAuditWindowTotalsFromRollup(ctx context.Context, userI
 	for _, id := range userIDs {
 		args = append(args, id)
 	}
-	rows, err := s.db.QueryContext(ctx, `select user_id,
+	rows, err := s.history.QueryContext(ctx, `select user_id,
 			coalesce(sum(connection_count),0),
 			coalesce(sum(report_count),0),
 			coalesce(max(active_peak),0),
@@ -737,7 +701,7 @@ func (s *Store) attachConnectionAuditWindowDimensions(ctx context.Context, total
 		userIDs = append(userIDs, userID)
 	}
 	args := append([]any{fromHour, toHour}, userIDs...)
-	rows, err := s.db.QueryContext(ctx, `select user_id,dimension,value
+	rows, err := s.history.QueryContext(ctx, `select user_id,dimension,value
 		from connection_audit_hourly_dimensions
 		where utc_hour>=? and utc_hour<=? and user_id in (`+inClause(len(userIDs))+`)`, args...)
 	if err != nil {

@@ -295,14 +295,26 @@ func (s *Store) DeleteLatencyProbeTask(ctx context.Context, id int64) error {
 		return err
 	}
 	defer tx.Rollback()
-	serverIDs, err := queryInt64sTx(ctx, tx, `select server_id from server_latency_probe_results where task_id=? union select server_id from latency_rollup_buckets where task_id=?`, id, id)
+	history, err := s.historyDB()
 	if err != nil {
 		return err
 	}
-	if err := bumpLatencyRollupGeneration(ctx, tx); err != nil {
+	serverIDs, err := queryInt64sDB(ctx, history, `select server_id from server_latency_probe_results where task_id=? union select server_id from latency_rollup_buckets where task_id=?`, id, id)
+	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `delete from latency_rollup_buckets where task_id=?`, id); err != nil {
+	historyTx, err := history.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer historyTx.Rollback()
+	if _, err := historyTx.ExecContext(ctx, `update latency_rollup_state set generation=generation+1,updated_at=? where id=1`, now()); err != nil {
+		return err
+	}
+	if _, err := historyTx.ExecContext(ctx, `delete from latency_rollup_buckets where task_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := historyTx.ExecContext(ctx, `delete from server_latency_probe_results where task_id=?`, id); err != nil {
 		return err
 	}
 	result, err := tx.ExecContext(ctx, `delete from latency_probe_tasks where id=?`, id)
@@ -316,7 +328,7 @@ func (s *Store) DeleteLatencyProbeTask(ctx context.Context, id int64) error {
 	if affected == 0 {
 		return sql.ErrNoRows
 	}
-	if _, err := tx.ExecContext(ctx, `delete from server_latency_probe_results where task_id=?`, id); err != nil {
+	if err := historyTx.Commit(); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

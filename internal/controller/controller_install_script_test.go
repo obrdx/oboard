@@ -784,7 +784,7 @@ func TestControllerUpdaterRuntimePreparationPreservesDataRoot(t *testing.T) {
 				if err := run(t, rewrite(runtimeRoot), dataRoot); err != nil {
 					t.Fatal(err)
 				}
-				assertPathMode(t, dataRoot, 0o750)
+				assertPathMode(t, dataRoot, 0o700)
 				assertPathMode(t, filepath.Join(dataRoot, "controller-update"), 0o700)
 			})
 

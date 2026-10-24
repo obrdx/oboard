@@ -12,33 +12,41 @@ import (
 )
 
 const (
-	DatabaseLastMaintenanceAtSetting      = "database_last_maintenance_at"
-	DatabaseLastMaintenanceSummarySetting = "database_last_maintenance_summary"
-	// ConnectionAuditRetentionHours is the raw connection-audit retention
-	// window in hours. Do not shorten this while hourly rollups are unverified.
-	ConnectionAuditRetentionHours = 30 * 24
+	DatabaseLastMaintenanceAtSetting             = "database_last_maintenance_at"
+	DatabaseLastMaintenanceSummarySetting        = "database_last_maintenance_summary"
+	DatabaseHistoryLastMaintenanceAtSetting      = "database_history_last_maintenance_at"
+	DatabaseHistoryLastMaintenanceSummarySetting = "database_history_last_maintenance_summary"
+	// ConnectionAuditRetentionHours is the default raw connection-audit
+	// retention window in hours. The effective value follows the operator setting.
+	ConnectionAuditRetentionHours = DefaultConnectionAuditRetentionDays * 24
 )
 
 // StorageDiagnostics is a lightweight snapshot for the settings UI. It only
 // stats database files and reads small control rows — never a heavy ANALYZE or
 // full-table scan on every refresh.
 type StorageDiagnostics struct {
-	DBBytes                         int64          `json:"db_bytes"`
-	WALBytes                        int64          `json:"wal_bytes"`
-	SHMBytes                        int64          `json:"shm_bytes"`
-	PageCount                       int64          `json:"page_count,omitempty"`
-	PageSize                        int64          `json:"page_size,omitempty"`
-	FreelistCount                   int64          `json:"freelist_count,omitempty"`
-	MaintenanceHint                 string         `json:"maintenance_hint,omitempty"`
-	IncrementalVacuumPending        bool           `json:"incremental_vacuum_pending"`
-	AuditRollupState                map[string]any `json:"audit_rollup_state"`
-	DirtyHourlyCount                int64          `json:"dirty_hourly_count"`
-	ConnectionAuditRetentionHours   int            `json:"connection_audit_retention_hours"`
-	SubscriptionAuditRetentionHours int            `json:"subscription_audit_retention_hours"`
-	ServerMonitoringRetentionDays   int            `json:"server_monitoring_retention_days"`
-	LastMaintenanceAt               string         `json:"last_maintenance_at,omitempty"`
-	LastMaintenanceSummary          map[string]any `json:"last_maintenance_summary,omitempty"`
-	AnalyzedAt                      time.Time      `json:"analyzed_at"`
+	DBBytes                         int64                 `json:"db_bytes"`
+	WALBytes                        int64                 `json:"wal_bytes"`
+	SHMBytes                        int64                 `json:"shm_bytes"`
+	PageCount                       int64                 `json:"page_count,omitempty"`
+	PageSize                        int64                 `json:"page_size,omitempty"`
+	FreelistCount                   int64                 `json:"freelist_count,omitempty"`
+	MaintenanceHint                 string                `json:"maintenance_hint,omitempty"`
+	IncrementalVacuumPending        bool                  `json:"incremental_vacuum_pending"`
+	AuditRollupState                map[string]any        `json:"audit_rollup_state"`
+	DirtyHourlyCount                int64                 `json:"dirty_hourly_count"`
+	ConnectionAuditRetentionHours   int                   `json:"connection_audit_retention_hours"`
+	SubscriptionAuditRetentionHours int                   `json:"subscription_audit_retention_hours"`
+	ServerMonitoringRetentionDays   int                   `json:"server_monitoring_retention_days"`
+	LastMaintenanceAt               string                `json:"last_maintenance_at,omitempty"`
+	LastMaintenanceSummary          map[string]any        `json:"last_maintenance_summary,omitempty"`
+	AnalyzedAt                      time.Time             `json:"analyzed_at"`
+	HistoryAvailable                bool                  `json:"history_available"`
+	TableSpaceAvailable             bool                  `json:"table_space_available"`
+	Core                            DatabaseHealth        `json:"core"`
+	History                         DatabaseHealth        `json:"history"`
+	Tables                          []HistoryTableSpace   `json:"tables"`
+	Performance                     []DatabasePerformance `json:"performance"`
 }
 
 // GetStorageDiagnostics returns recent storage analysis without heavy scans.
@@ -60,6 +68,8 @@ func (s *Store) GetStorageDiagnostics(ctx context.Context) (StorageDiagnostics, 
 		return out, err
 	}
 	out.ServerMonitoringRetentionDays = ServerMonitoringRetentionDays(settings)
+	out.ConnectionAuditRetentionHours = ConnectionAuditRetentionDays(settings) * 24
+	out.SubscriptionAuditRetentionHours = int(subscriptionAuditRetention / time.Hour)
 	out.LastMaintenanceAt = strings.TrimSpace(settings[DatabaseLastMaintenanceAtSetting])
 	if raw := strings.TrimSpace(settings[DatabaseLastMaintenanceSummarySetting]); raw != "" {
 		var summary map[string]any
@@ -104,6 +114,19 @@ func (s *Store) GetStorageDiagnostics(ctx context.Context) (StorageDiagnostics, 
 			out.MaintenanceHint = "增量 vacuum 转换待显式维护"
 		}
 	}
+	out.HistoryAvailable = s.HistoryAvailable()
+	out.Core = s.databaseHealth(ctx, "core", s.path, s.db, 0, out.LastMaintenanceAt, out.LastMaintenanceSummary)
+	out.Core.Checkpoint = databaseCheckpointSummary(settings)
+	historyMaintenanceAt := strings.TrimSpace(settings[DatabaseHistoryLastMaintenanceAtSetting])
+	historyMaintenance := maintenanceSnapshot(settings[DatabaseHistoryLastMaintenanceSummarySetting])
+	out.History = s.databaseHealth(ctx, "history", s.historyPath, s.history, s.historySchemaVersion, historyMaintenanceAt, historyMaintenance)
+	out.History.Checkpoint = databaseCheckpointSummary(settings)
+	out.History.OpenedAt = ""
+	if !s.historyOpenedAt.IsZero() {
+		out.History.OpenedAt = s.historyOpenedAt.Format(time.RFC3339Nano)
+	}
+	out.Tables, out.TableSpaceAvailable = s.collectTableSpace(ctx)
+	out.Performance = []DatabasePerformance{s.databasePerformance("core", s.db), s.databasePerformance("history", s.history)}
 	return out, nil
 }
 
@@ -123,6 +146,9 @@ func (s *Store) incrementalVacuumPending(ctx context.Context) (bool, error) {
 }
 
 func (s *Store) readAuditRollupStateForDiagnostics(ctx context.Context) (map[string]any, bool, error) {
+	if !s.HistoryAvailable() {
+		return nil, false, nil
+	}
 	var cursor, readPath, updated string
 	var complete, algorithm int
 	err := s.db.QueryRowContext(ctx, `select backfill_cursor,backfill_complete,read_path,algorithm_version,updated_at from audit_rollup_state where id=1`).
@@ -147,6 +173,9 @@ func (s *Store) readAuditRollupStateForDiagnostics(ctx context.Context) (map[str
 }
 
 func (s *Store) countConnectionAuditHourlyDirty(ctx context.Context) (int64, error) {
+	if !s.HistoryAvailable() {
+		return 0, nil
+	}
 	var count int64
 	err := s.db.QueryRowContext(ctx, `select count(*) from connection_audit_hourly_dirty`).Scan(&count)
 	if err != nil {
@@ -165,6 +194,10 @@ func (s *Store) recordMaintenanceResult(ctx context.Context, at time.Time, resul
 		"probe_episodes_deleted":      result.ProbeEpisodesDeleted,
 		"rate_buckets_deleted":        result.RateBucketsDeleted,
 		"server_metrics_deleted":      result.ServerMetricSamplesDeleted,
+		"metric_hourly_built":         result.MetricHourlyBucketsBuilt,
+		"metric_daily_built":          result.MetricDailyBucketsBuilt,
+		"metric_hourly_deleted":       result.MetricHourlyBucketsDeleted,
+		"metric_daily_deleted":        result.MetricDailyBucketsDeleted,
 		"pages_reclaimed":             result.FreePagesReclaimed,
 		"hourly_dirty_drained":        result.HourlyDirtyDrained,
 		"hourly_backfill_advanced":    result.HourlyBackfillAdvanced,
@@ -172,14 +205,21 @@ func (s *Store) recordMaintenanceResult(ctx context.Context, at time.Time, resul
 		"wal_busy":                    result.WALBusyFrames,
 		"wal_log":                     result.WALLogFrames,
 		"wal_checkpointed":            result.WALCheckpointedFrames,
+		"history_wal_busy":            result.HistoryWALBusyFrames,
+		"history_wal_log":             result.HistoryWALLogFrames,
+		"history_wal_checkpointed":    result.HistoryWALCheckpointedFrames,
+		"history_pages_reclaimed":     result.HistoryFreePagesReclaimed,
+		"history_cleanup_processed":   result.HistoryCleanupProcessed,
 		"needs_catch_up":              result.NeedsCatchUp,
 	})
 	if err != nil {
 		return err
 	}
 	return s.SetSettings(ctx, map[string]string{
-		DatabaseLastMaintenanceAtSetting:      at.UTC().Format(time.RFC3339Nano),
-		DatabaseLastMaintenanceSummarySetting: string(summary),
+		DatabaseLastMaintenanceAtSetting:             at.UTC().Format(time.RFC3339Nano),
+		DatabaseLastMaintenanceSummarySetting:        string(summary),
+		DatabaseHistoryLastMaintenanceAtSetting:      at.UTC().Format(time.RFC3339Nano),
+		DatabaseHistoryLastMaintenanceSummarySetting: string(summary),
 	})
 }
 

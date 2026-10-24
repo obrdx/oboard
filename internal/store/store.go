@@ -30,7 +30,23 @@ type Store struct {
 	subscriptionActivitySchemaOnce sync.Once
 	subscriptionActivitySchemaErr  error
 	db                             *countingDB
+	history                        *countingDB
+	historyReady                   bool
+	legacyHistory                  bool
+	databaseMetrics                *databaseMetrics
 	path                           string
+	historyPath                    string
+	historySchemaVersion           int
+	historyLastErrorMu             sync.RWMutex
+	historyLastError               string
+	historyLastErrorAt             time.Time
+	historyOpenedAt                time.Time
+	historySpaceMu                 sync.Mutex
+	historySpaceAt                 time.Time
+	historySpace                   []HistoryTableSpace
+	coreSpaceAt                    time.Time
+	coreSpace                      []HistoryTableSpace
+	tableSpaceAvailable            bool
 	metricSamples                  metricSampleAdmission
 	latencyPlanVersionMu           sync.Mutex
 	latencyHistoryMu               sync.Mutex
@@ -120,7 +136,14 @@ func OpenForRestore(path string) (*Store, error) {
 	opts := DefaultSQLiteOptions()
 	opts.MaxOpenConns = 1
 	opts.MaxIdleConns = 1
-	return open(path, opts, true)
+	return openPairWithOptions(path, HistoryPathFor(path), opts, true, true)
+}
+
+func OpenForRestorePair(path, historyPath string) (*Store, error) {
+	opts := DefaultSQLiteOptions()
+	opts.MaxOpenConns = 1
+	opts.MaxIdleConns = 1
+	return openPair(path, historyPath, opts, true)
 }
 
 func OpenWithOptions(path string, opts SQLiteOptions) (*Store, error) {
@@ -128,6 +151,14 @@ func OpenWithOptions(path string, opts SQLiteOptions) (*Store, error) {
 }
 
 func open(path string, opts SQLiteOptions, restore bool) (*Store, error) {
+	return openPair(path, HistoryPathFor(path), opts, restore)
+}
+
+func openPair(path, historyPath string, opts SQLiteOptions, restore bool) (*Store, error) {
+	return openPairWithOptions(path, historyPath, opts, restore, false)
+}
+
+func openPairWithOptions(path, historyPath string, opts SQLiteOptions, restore, allowHistoryReset bool) (*Store, error) {
 	if opts.MaxOpenConns < 1 {
 		return nil, errors.New("SQLite MaxOpenConns must be positive")
 	}
@@ -177,12 +208,29 @@ func open(path string, opts SQLiteOptions, restore bool) (*Store, error) {
 			}
 		}
 	}
-	s := &Store{db: newCountingDB(db), path: strings.TrimSpace(path)}
+	s := &Store{db: newCountingDB(db), path: strings.TrimSpace(path), historyPath: strings.TrimSpace(historyPath)}
+	s.databaseMetrics = newDatabaseMetrics()
+	s.db.role = "core"
+	s.db.metrics = s.databaseMetrics
 	if opts.MetricSampleMinInterval < 0 {
 		opts.MetricSampleMinInterval = 0
 	}
 	s.metricSampleMinInterval = opts.MetricSampleMinInterval
+	legacyHistory, err := s.legacyHistoryTablesPresent(ctx)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	s.legacyHistory = legacyHistory
+	if err := s.ensureHistoryMetadata(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := s.migrate(ctx, restore); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := s.openHistory(ctx, opts, restore, allowHistoryReset); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -450,7 +498,13 @@ func (s *Store) DBStats() sql.DBStats { return s.db.Stats() }
 // Store databases in this process since it started. It is used by hot-path
 // tests to assert that per-report work stays constant as the managed fleet
 // grows.
-func (s *Store) SQLStatementCount() int64 { return s.db.stmts.Load() }
+func (s *Store) SQLStatementCount() int64 {
+	total := s.db.stmts.Load()
+	if s.history != nil {
+		total += s.history.stmts.Load()
+	}
+	return total
+}
 
 // SQLWriteTransactionCount returns the number of write transactions started
 // through Store databases in this process since it started.
@@ -501,13 +555,14 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists probe_ddns_records (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, name text not null, dns_credential_id integer references dns_credentials(id) on delete set null, domain text not null, record_types text not null default 'a', proxy_enabled integer not null default 0, interval_seconds integer not null default 300, enabled integer not null default 1, interface_name text not null default '', interface_address text not null default '', interface_prefix text not null default '', address_family text not null default '', exclude_private integer not null default 0, revision integer not null default 1, next_at integer not null default 0, status text not null default '', error text not null default '', current_address text not null default '', last_synced_at text, created_at text not null, updated_at text not null)`,
 		`drop index if exists idx_probe_ddns_server_domain`,
 		`create table if not exists app_settings (key text primary key, value text not null, updated_at text not null)`,
+		`create table if not exists database_diagnostics_samples (id integer primary key autoincrement, sampled_at text not null, role text not null, db_bytes integer not null default 0, wal_bytes integer not null default 0, page_count integer not null default 0, freelist_count integer not null default 0, table_stats_json text not null default '')`,
+		`create index if not exists idx_database_diagnostics_samples_role_time on database_diagnostics_samples(role,sampled_at desc)`,
+		`create table if not exists history_cleanup_queue (kind text not null, object_id integer not null, created_at text not null, attempts integer not null default 0, last_error text not null default '', primary key(kind,object_id))`,
 		`create table if not exists routing_cache_revision (id integer primary key check(id=1), revision integer not null default 0)`,
 		`create table if not exists configuration_revision (id integer primary key check(id=1), revision integer not null default 0)`,
 		`create table if not exists traffic_policy_revision (id integer primary key check(id=1), revision integer not null default 0)`,
 		`insert or ignore into traffic_policy_revision(id,revision) values(1,0)`,
 		`create table if not exists server_latency_probe_settings (server_id integer primary key references servers(id) on delete cascade, enabled integer not null default 1, mode text not null default 'tcp', public_target text not null default 'auto', monitoring_target_task_id integer not null default 0, interval_seconds integer not null default 120, sample_count integer not null default 3, regions_json text not null default '[]', provinces_json text not null default '[]', carriers_json text not null default '[]', max_targets integer not null default 64, resource_version text not null default '', plan_version integer not null default 0, plan_digest text not null default '', updated_at text not null)`,
-		`create table if not exists server_latency_probe_results (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, report_id text not null default '', resource_version text not null, probe_id text not null, kind text not null default 'regional', mode text not null default 'icmp', province text not null, carrier text not null, host text not null default '', ip text not null, port integer not null default 0, available integer not null default 0, latency_ms integer not null default 0, min_latency_ms integer not null default 0, p95_latency_ms integer not null default 0, jitter_ms integer not null default 0, sample_count integer not null default 0, success_count integer not null default 0, error text not null default '', checked_at text not null, created_at text not null, unique(server_id,resource_version,probe_id,checked_at))`,
-		`create index if not exists idx_server_latency_probe_results_server_checked on server_latency_probe_results(server_id,checked_at desc)`,
 		`create table if not exists latency_probe_tasks (id integer primary key autoincrement, name text not null, province text not null, carrier text not null, method text not null default 'tcp', address text not null default '', port integer not null default 80, interval_seconds integer not null default 60, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create unique index if not exists idx_latency_probe_tasks_name on latency_probe_tasks(name)`,
 		`create table if not exists latency_probe_task_servers (task_id integer not null references latency_probe_tasks(id) on delete cascade, server_id integer not null references servers(id) on delete cascade, primary key(task_id,server_id))`,
@@ -633,20 +688,13 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists traffic_periods (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, period_key text not null, started_at text not null, ends_at text not null, upload_bytes integer not null default 0, download_bytes integer not null default 0, traffic_limit_bytes integer not null default 0, state text not null default 'active', updated_at text not null, unique(user_id,period_key))`,
 		`create table if not exists traffic_period_transitions (user_id integer not null references users(id) on delete cascade, source_period_key text not null, target_period_key text not null, created_at text not null, primary key(user_id,source_period_key))`,
 		`create table if not exists traffic_reports (report_id text primary key, server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, inbound_id integer references inbounds(id) on delete set null, path_id integer references proxy_paths(id) on delete set null, period_key text not null, upload_bytes integer not null, download_bytes integer not null, started_at text not null, ended_at text not null, created_at text not null)`,
-		`create table if not exists connection_audit_reports (report_id text primary key, server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, inbound_id integer references inbounds(id) on delete set null, path_id integer references proxy_paths(id) on delete set null, device_id_hash text not null default '', credential_epoch integer not null default 0, client_instance_id_hash text not null default '', source_ip text not null, route_id text not null default '', source_geo_code text not null default '', source_country_code text not null default '', source_country text not null default '', source_province text not null default '', source_city text not null default '', source_isp text not null default '', geo_database_revision text not null default '', network text not null, destination text not null default '', destination_port integer not null default 0, outbound_tag text not null default '', outbound_type text not null default '', connection_count integer not null, closed_count integer not null default 0, duration_total_ms integer not null default 0, duration_max_ms integer not null default 0, upload_bytes integer not null default 0, download_bytes integer not null default 0, payload_first_at text, payload_last_at text, duration_le_1s_count integer not null default 0, duration_le_5s_count integer not null default 0, duration_le_20s_count integer not null default 0, duration_gt_20s_count integer not null default 0, probe_state text not null default '', internal_probe integer not null default 0, presence_sequence integer not null default 0, active_peak integer not null default 0, active_at_end integer not null default 0, collection_generation integer not null default 0, bucket_capacity integer not null default 1, dropped_bucket_count integer not null default 0, collection_started_at text not null, collection_ended_at text not null, started_at text not null, ended_at text not null, created_at text not null)`,
 		`create table if not exists connection_presence_events (agent_id text not null, sequence integer not null, server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, inbound_id integer not null default 0, path_id integer not null default 0, device_id_hash text not null default '', credential_epoch integer not null default 0, source_ip text not null, route_id text not null default '', network text not null, event text not null, state text not null, active_connections integer not null default 0, meaningful integer not null default 0, payload_last_at text, event_at text not null, created_at text not null, primary key(agent_id,sequence))`,
 		`create table if not exists connection_presence_states (server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, inbound_id integer not null default 0, path_id integer not null default 0, device_id_hash text not null default '', credential_epoch integer not null default 0, source_ip text not null, route_id text not null default '', network text not null, active_connections integer not null default 0, meaningful integer not null default 0, payload_last_at text, last_event_at text not null, last_sequence integer not null, updated_at text not null, primary key(server_id,user_id,inbound_id,path_id,device_id_hash,credential_epoch,source_ip,network))`,
 		`create table if not exists connection_presence_agents (agent_id text primary key, server_id integer not null references servers(id) on delete cascade, dropped_count integer not null default 0, updated_at text not null)`,
 		`create table if not exists connection_probe_episodes (id text primary key, user_id integer not null references users(id) on delete cascade, device_id_hash text not null default '', state text not null, score integer not null, node_count integer not null, connection_count integer not null, upload_bytes integer not null default 0, download_bytes integer not null default 0, started_at text not null, ended_at text not null, updated_at text not null)`,
 		`create index if not exists idx_connection_probe_user_time on connection_probe_episodes(user_id,ended_at desc)`,
-		`create table if not exists connection_audit_hourly (user_id integer not null references users(id) on delete cascade, utc_hour text not null, connection_count integer not null default 0, algorithm_version integer not null default 1, source_watermark text not null default '', updated_at text not null, primary key(user_id, utc_hour))`,
-		`create index if not exists idx_connection_audit_hourly_hour on connection_audit_hourly(utc_hour)`,
-		`create table if not exists connection_audit_hourly_dirty (user_id integer not null references users(id) on delete cascade, utc_hour text not null, dirty_at text not null, primary key(user_id, utc_hour))`,
-		`create index if not exists idx_connection_audit_hourly_dirty_at on connection_audit_hourly_dirty(dirty_at)`,
-		`create table if not exists audit_rollup_state (id integer primary key check(id=1), backfill_cursor text not null default '', backfill_complete integer not null default 0, read_path text not null default 'raw', algorithm_version integer not null default 1, updated_at text not null)`,
 		`create table if not exists traffic_leases (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, period_key text not null, lease_bytes integer not null default 0, consumed_bytes integer not null default 0, updated_at text not null, unique(server_id,user_id,period_key))`,
 		`create table if not exists server_telemetry (server_id integer primary key references servers(id) on delete cascade, monitoring_mode text not null default 'lightweight', resource_history_enabled integer not null default 1, traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, traffic_limit_bytes integer not null default 0, connectivity_probe_enabled integer not null default 0, connectivity_probe_target text not null default 'auto', time_correction_mode text not null default 'off', time_check_status text not null default 'unknown', time_offset_ms integer not null default 0, time_effective_offset_ms integer not null default 0, time_check_source text not null default '', time_check_error text not null default '', time_logical_active integer not null default 0, time_unsupported_paths_json text not null default '[]', time_checked_at text, period_key text not null default '', period_start text not null default '', period_end text not null default '', traffic_upload_bytes integer not null default 0, traffic_download_bytes integer not null default 0, raw_upload_bytes integer not null default 0, raw_download_bytes integer not null default 0, network_upload_bps integer not null default 0, network_download_bps integer not null default 0, last_reported_at text, connectivity_available integer not null default -1, connectivity_latency_ms integer not null default 0, connectivity_checked_at text, connectivity_error text not null default '', service_start_at text, expires_at text, renewal_cycle text not null default 'monthly', auto_renew_enabled integer not null default 0, expiry_notify_enabled integer not null default 1, last_auto_renewed_at text, updated_at text not null)`,
-		`create table if not exists server_metric_samples (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, cpu_usage_percent real not null default 0, memory_used_bytes integer not null default 0, memory_total_bytes integer not null default 0, disk_used_bytes integer not null default 0, disk_total_bytes integer not null default 0, tcp_connection_count integer not null default 0, udp_connection_count integer not null default 0, process_count integer not null default 0, resource_recorded integer not null default 1, network_upload_bps integer not null default 0, network_download_bps integer not null default 0, traffic_upload_bytes integer not null default 0, traffic_download_bytes integer not null default 0, connectivity_available integer not null default -1, connectivity_latency_ms integer not null default 0, sampled_at text not null)`,
 		`create table if not exists server_connectivity_events ` + serverConnectivityEventsColumnsSQL,
 		// No foreign key to servers: this row has to outlive the server it
 		// removes so external cleanup can still be resumed after the row is
@@ -720,18 +768,13 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		// window reads the ended_at superset and filters in memory instead of
 		// keeping a second B-tree over the same rows.
 		`drop index if exists idx_connection_audit_user_started`,
-		`create index if not exists idx_connection_audit_server_time on connection_audit_reports(server_id, ended_at desc)`,
 		// idx_connection_audit_source_window carries user_id so the
 		// shared-address probe is answered from the index. Deferred for the same
 		// reason as the user window index above.
-		`create index if not exists idx_connection_audit_time on connection_audit_reports(ended_at desc)`,
 		`create index if not exists idx_traffic_periods_user on traffic_periods(user_id, period_key)`,
 		`create index if not exists idx_traffic_periods_user_started on traffic_periods(user_id, started_at desc)`,
 		`create index if not exists idx_traffic_period_transitions_target on traffic_period_transitions(user_id,target_period_key)`,
 		`create index if not exists idx_traffic_leases_server on traffic_leases(server_id, period_key)`,
-		`create index if not exists idx_server_metric_samples_server_time on server_metric_samples(server_id, sampled_at desc)`,
-		`create index if not exists idx_server_metric_samples_time on server_metric_samples(sampled_at)`,
-		`create index if not exists idx_server_latency_probe_results_checked on server_latency_probe_results(checked_at)`,
 		`create index if not exists idx_agent_tasks_type_config_version on agent_tasks(type, config_version desc)`,
 		`create index if not exists idx_server_connectivity_events_server_time on server_connectivity_events(server_id,effective_at)`,
 		`create index if not exists idx_server_connectivity_events_server_kind_time on server_connectivity_events(server_id,kind,effective_at desc)`,
@@ -917,6 +960,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		{"servers", "tcp_fastopen_state", `alter table servers add column tcp_fastopen_state text not null default ''`},
 		{"servers", "tcp_fastopen_value", `alter table servers add column tcp_fastopen_value integer not null default 0`},
 	} {
+		if !s.legacyHistory && isHistoryTable(column.table) {
+			continue
+		}
 		if err := s.ensureColumn(ctx, column.table, column.name, column.statement); err != nil {
 			return err
 		}
@@ -933,11 +979,19 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.migrateLatencyProbeTasks(ctx); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_server_latency_probe_results_report_target on server_latency_probe_results(server_id,report_id,probe_id) where report_id<>''`); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, `create index if not exists idx_server_latency_probe_results_server_kind_checked on server_latency_probe_results(server_id,kind,checked_at)`); err != nil {
-		return err
+	if s.legacyHistory {
+		exists, err := s.tableExists(ctx, "server_latency_probe_results")
+		if err != nil {
+			return err
+		}
+		if exists {
+			if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_server_latency_probe_results_report_target on server_latency_probe_results(server_id,report_id,probe_id) where report_id<>''`); err != nil {
+				return err
+			}
+			if _, err := s.db.ExecContext(ctx, `create index if not exists idx_server_latency_probe_results_server_kind_checked on server_latency_probe_results(server_id,kind,checked_at)`); err != nil {
+				return err
+			}
+		}
 	}
 	if err := s.ensureConnectivityEventKinds(ctx); err != nil {
 		return err
@@ -1221,7 +1275,6 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		// cascade from servers needs it, and route_id keeps its own because the
 		// shared-route probe skip-scans it.
 		`drop index if exists idx_connection_audit_device_time`,
-		`create index if not exists idx_connection_audit_route_time on connection_audit_reports(route_id,ended_at desc)`,
 		`create index if not exists idx_subscription_pull_audits_device_time on subscription_pull_audits(device_id_hash,requested_at desc)`,
 		`create index if not exists idx_subscription_pull_audits_route_time on subscription_pull_audits(route_id,requested_at desc)`,
 	} {
@@ -1305,15 +1358,6 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.backfillServerDNSPolicies(ctx); err != nil {
-		return err
-	}
-	if err := s.ensureConnectionAuditHourlySchema(ctx); err != nil {
-		return err
-	}
-	if err := s.retireAuditDestinations(ctx); err != nil {
-		return err
-	}
-	if err := s.ensureLatencyRollupSchema(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureSLAProjectionSchema(ctx); err != nil {
@@ -1844,6 +1888,13 @@ func (s *Store) ensureProxyPathStepPositions(ctx context.Context) error {
 }
 
 func (s *Store) ensureColumn(ctx context.Context, table, column, alterSQL string) error {
+	var tableCount int
+	if err := s.db.QueryRowContext(ctx, `select count(*) from sqlite_master where type='table' and name=?`, table).Scan(&tableCount); err != nil {
+		return err
+	}
+	if tableCount == 0 {
+		return nil
+	}
 	var count int
 	if err := s.db.QueryRowContext(ctx, `select count(*) from pragma_table_info(?) where name=?`, table, column).Scan(&count); err != nil {
 		return err
@@ -2201,7 +2252,22 @@ func (s *Store) CheckIntegrity(ctx context.Context) error {
 	if rows.Next() {
 		return errors.New("SQLite foreign key check failed")
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if s.historyPath != "" && s.history == nil {
+		return s.lastHistoryError()
+	}
+	if s.history != nil {
+		var historyIntegrity string
+		if err := s.history.QueryRowContext(ctx, `pragma integrity_check`).Scan(&historyIntegrity); err != nil {
+			return err
+		}
+		if historyIntegrity != "ok" {
+			return fmt.Errorf("history SQLite integrity check failed: %s", historyIntegrity)
+		}
+	}
+	return nil
 }
 
 func normalizeTrafficResetMode(mode string) string {
@@ -2670,6 +2736,40 @@ func (s *Store) Delete(ctx context.Context, table string, id int64) error {
 	if !ok {
 		return errors.New("invalid table")
 	}
+	if table == "users" {
+		if err := s.deleteUserAuditHistory(ctx, id); err != nil {
+			log.Printf("queue history cleanup for deleted user %d: %v", id, err)
+			if queueErr := s.QueueHistoryCleanup(ctx, "user", id); queueErr != nil {
+				return queueErr
+			}
+		}
+	}
+	if table == "inbounds" || table == "proxy_paths" {
+		history, err := s.historyDB()
+		if err != nil {
+			kind := "inbound"
+			if table == "proxy_paths" {
+				kind = "proxy_path"
+			}
+			if queueErr := s.QueueHistoryCleanup(ctx, kind, id); queueErr != nil {
+				return queueErr
+			}
+			history = nil
+		}
+		if history != nil {
+			column := "inbound_id"
+			kind := "inbound"
+			if table == "proxy_paths" {
+				column = "path_id"
+				kind = "proxy_path"
+			}
+			if _, err := history.ExecContext(ctx, `update connection_audit_reports set `+column+`=null where `+column+`=?`, id); err != nil {
+				if queueErr := s.QueueHistoryCleanup(ctx, kind, id); queueErr != nil {
+					return err
+				}
+			}
+		}
+	}
 	_, err := s.db.ExecContext(ctx, query, id)
 	return err
 }
@@ -3016,7 +3116,7 @@ func (s *Store) UpdateServerSettings(ctx context.Context, v *model.Server, optio
 	if err := tx.QueryRowContext(ctx, `select time_correction_mode from server_telemetry where server_id=?`, v.ID).Scan(&previousTimeMode); err != nil && err != sql.ErrNoRows {
 		return err
 	}
-	if err := updateServerTelemetrySettingsTx(ctx, tx, v); err != nil {
+	if err := s.updateServerTelemetrySettingsTx(ctx, tx, v); err != nil {
 		return err
 	}
 	if err := updateServerLatencyProbeSettingsTx(ctx, tx, v); err != nil {
@@ -3413,13 +3513,13 @@ func (s *Store) updateServerTelemetrySettingsWithTransition(ctx context.Context,
 		return err
 	}
 	defer tx.Rollback()
-	if err := updateServerTelemetrySettingsTx(ctx, tx, server); err != nil {
+	if err := s.updateServerTelemetrySettingsTx(ctx, tx, server); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func updateServerTelemetrySettingsTx(ctx context.Context, tx *sql.Tx, server *model.Server) error {
+func (s *Store) updateServerTelemetrySettingsTx(ctx context.Context, tx *sql.Tx, server *model.Server) error {
 	server.MonitoringMode = normalizeServerMonitoringMode(server.MonitoringMode)
 	server.TrafficResetMode = normalizeTrafficResetMode(server.TrafficResetMode)
 	server.TrafficResetDay = normalizeTrafficResetDay(server.TrafficResetDay)
@@ -3438,7 +3538,11 @@ func updateServerTelemetrySettingsTx(ctx context.Context, tx *sql.Tx, server *mo
 		return err
 	}
 	if previousErr == nil && previousResourceHistory != 0 && !server.ResourceHistoryEnabled {
-		if _, err := tx.ExecContext(ctx, `update server_metric_samples set cpu_usage_percent=0,memory_used_bytes=0,memory_total_bytes=0,disk_used_bytes=0,disk_total_bytes=0,tcp_connection_count=0,udp_connection_count=0,process_count=0,resource_recorded=0 where server_id=? and resource_recorded<>0`, server.ID); err != nil {
+		history, err := s.historyDB()
+		if err != nil {
+			return err
+		}
+		if _, err := history.ExecContext(ctx, `update server_metric_samples set cpu_usage_percent=0,memory_used_bytes=0,memory_total_bytes=0,disk_used_bytes=0,disk_total_bytes=0,tcp_connection_count=0,udp_connection_count=0,process_count=0,resource_recorded=0 where server_id=? and resource_recorded<>0`, server.ID); err != nil {
 			return err
 		}
 	}
@@ -3686,7 +3790,11 @@ func (s *Store) UpdateServerTelemetryReport(ctx context.Context, serverID int64,
 		interval = defaultMetricSampleMinInterval
 	}
 	var lastSample sql.NullString
-	if err := tx.QueryRowContext(ctx, `select max(sampled_at) from server_metric_samples where server_id=?`, serverID).Scan(&lastSample); err != nil {
+	history, err := s.historyDB()
+	if err != nil {
+		return err
+	}
+	if err := history.QueryRowContext(ctx, `select max(sampled_at) from server_metric_samples where server_id=?`, serverID).Scan(&lastSample); err != nil {
 		return err
 	}
 	rateLimited := false
@@ -3696,7 +3804,7 @@ func (s *Store) UpdateServerTelemetryReport(ctx context.Context, serverID int64,
 		}
 	}
 	if !rateLimited {
-		if _, err := tx.ExecContext(ctx, `insert into server_metric_samples(server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, serverID, cpuUsage, memoryUsed, memoryTotal, diskUsed, diskTotal, tcpConnections, udpConnections, processes, resourceHistoryEnabled, uploadBPS, downloadBPS, periodUp, periodDown, available, latency, nowText); err != nil {
+		if _, err := history.ExecContext(ctx, `insert into server_metric_samples(server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, serverID, cpuUsage, memoryUsed, memoryTotal, diskUsed, diskTotal, tcpConnections, udpConnections, processes, resourceHistoryEnabled, uploadBPS, downloadBPS, periodUp, periodDown, available, latency, nowText); err != nil {
 			return err
 		}
 	}
@@ -3724,21 +3832,48 @@ func (s *Store) ListServerMetricSamples(ctx context.Context, serverID int64, lim
 	columns := `id,server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at`
 	query := `select ` + columns + ` from server_metric_samples`
 	args := []any{}
+	history, err := s.historyDB()
+	if err != nil {
+		return nil, err
+	}
 	if serverID > 0 {
 		query += ` where server_id=?`
 		args = append(args, serverID)
 		query += ` order by sampled_at desc limit ?`
 		args = append(args, limit)
 	} else {
-		// Seek the latest samples through the per-server time index instead of
-		// ranking every retained historical row before applying the limit.
-		query = `with recent as (
-			select samples.* from servers cross join server_metric_samples as samples
-			on samples.id in (select id from server_metric_samples where server_id=servers.id order by sampled_at desc limit ?)
-		) select ` + columns + ` from recent order by server_id,sampled_at`
-		args = append(args, limit)
+		serverRows, err := s.db.QueryContext(ctx, `select id from servers order by id`)
+		if err != nil {
+			return nil, err
+		}
+		ids := []int64{}
+		for serverRows.Next() {
+			var id int64
+			if err := serverRows.Scan(&id); err != nil {
+				_ = serverRows.Close()
+				return nil, err
+			}
+			ids = append(ids, id)
+		}
+		if err := serverRows.Close(); err != nil {
+			return nil, err
+		}
+		if err := serverRows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return []model.ServerMetricSample{}, nil
+		}
+		parts := make([]string, 0, len(ids))
+		args = make([]any, 0, len(ids)*2)
+		for _, id := range ids {
+			parts = append(parts, `select * from (select `+columns+` from server_metric_samples where server_id=? order by sampled_at desc limit ?)`)
+			args = append(args, id)
+			args = append(args, limit)
+		}
+		query = `select ` + columns + ` from (` + strings.Join(parts, ` union all `) + `) order by server_id,sampled_at`
 	}
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := history.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -3777,7 +3912,44 @@ func (s *Store) ListServerResourceMetricPoints(ctx context.Context, serverID int
 	if serverID <= 0 || from.IsZero() || bucket <= 0 {
 		return nil, errors.New("invalid server resource metric query")
 	}
-	rows, err := s.db.QueryContext(ctx, `select cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,network_upload_bps,network_download_bps,sampled_at from server_metric_samples where server_id=? and resource_recorded=1 and sampled_at>=? order by sampled_at`, serverID, from.UTC().Format(time.RFC3339Nano))
+	history, err := s.historyDB()
+	if err != nil {
+		return nil, err
+	}
+	settings, err := s.ListSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	nowTime := time.Now().UTC()
+	rawFrom := nowTime.Add(-time.Duration(ServerMonitoringRetentionDays(settings)) * 24 * time.Hour)
+	hourlyFrom := nowTime.Add(-time.Duration(DefaultMetricHourlyRetentionDays) * 24 * time.Hour)
+	points := []model.ServerResourceMetricPoint{}
+	if from.Before(hourlyFrom) {
+		dailyEnd := hourlyFrom
+		if rawFrom.Before(dailyEnd) {
+			dailyEnd = rawFrom
+		}
+		items, err := queryAggregatedMetricPoints(ctx, history, `server_metric_daily`, serverID, from.UTC(), dailyEnd)
+		if err != nil {
+			return nil, err
+		}
+		points = append(points, items...)
+	}
+	if from.Before(rawFrom) {
+		start := from
+		if start.Before(hourlyFrom) {
+			start = hourlyFrom
+		}
+		items, err := queryAggregatedMetricPoints(ctx, history, `server_metric_hourly`, serverID, start.UTC(), rawFrom)
+		if err != nil {
+			return nil, err
+		}
+		points = append(points, items...)
+	}
+	if rawFrom.After(from) {
+		rawFrom = from
+	}
+	rows, err := history.QueryContext(ctx, `select cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,network_upload_bps,network_download_bps,sampled_at from server_metric_samples where server_id=? and resource_recorded=1 and sampled_at>=? order by sampled_at`, serverID, rawFrom.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
@@ -3829,13 +4001,13 @@ func (s *Store) ListServerResourceMetricPoints(ctx context.Context, serverID int
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	points := make([]model.ServerResourceMetricPoint, 0, len(order))
+	rawPoints := make([]model.ServerResourceMetricPoint, 0, len(order))
 	for _, key := range order {
 		group := groups[key]
 		if group == nil || group.count == 0 {
 			continue
 		}
-		points = append(points, model.ServerResourceMetricPoint{
+		rawPoints = append(rawPoints, model.ServerResourceMetricPoint{
 			SampledAt:          group.at,
 			CPUUsagePercent:    group.cpuTotal / float64(group.count),
 			MemoryUsedBytes:    group.memoryUsedTotal / group.count,
@@ -3849,18 +4021,52 @@ func (s *Store) ListServerResourceMetricPoints(ctx context.Context, serverID int
 			NetworkDownloadBPS: group.networkDownloadTotal / group.count,
 		})
 	}
+	if len(points) == 0 {
+		return rawPoints, nil
+	}
+	for _, point := range rawPoints {
+		if len(points) == 0 || point.SampledAt.After(points[len(points)-1].SampledAt) {
+			points = append(points, point)
+		}
+	}
 	return points, nil
 }
 
+func queryAggregatedMetricPoints(ctx context.Context, db *countingDB, table string, serverID int64, from, to time.Time) ([]model.ServerResourceMetricPoint, error) {
+	if !to.After(from) {
+		return []model.ServerResourceMetricPoint{}, nil
+	}
+	rows, err := db.QueryContext(ctx, `select cpu_avg,memory_used_avg,memory_total_avg,disk_used_avg,disk_total_avg,tcp_avg,udp_avg,process_avg,network_upload_avg,network_download_avg,bucket_start from `+table+` where server_id=? and bucket_start>=? and bucket_start<? order by bucket_start`, serverID, from.UTC().Format(time.RFC3339Nano), to.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.ServerResourceMetricPoint{}
+	for rows.Next() {
+		var point model.ServerResourceMetricPoint
+		var bucketStart string
+		if err := rows.Scan(&point.CPUUsagePercent, &point.MemoryUsedBytes, &point.MemoryTotalBytes, &point.DiskUsedBytes, &point.DiskTotalBytes, &point.TCPConnectionCount, &point.UDPConnectionCount, &point.ProcessCount, &point.NetworkUploadBPS, &point.NetworkDownloadBPS, &bucketStart); err != nil {
+			return nil, err
+		}
+		point.SampledAt = parseTime(bucketStart)
+		out = append(out, point)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) DeleteServerTelemetry(ctx context.Context, serverID int64) error {
+	history, err := s.historyDB()
+	if err != nil {
+		return err
+	}
+	if _, err := history.ExecContext(ctx, `delete from server_metric_samples where server_id=?`, serverID); err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `delete from server_metric_samples where server_id=?`, serverID); err != nil {
-		return err
-	}
 	if _, err := tx.ExecContext(ctx, `delete from server_connectivity_events where server_id=?`, serverID); err != nil {
 		return err
 	}
@@ -5193,6 +5399,23 @@ func truncateProxyPathStepsTx(ctx context.Context, tx *sql.Tx, matchQuery string
 }
 
 func (s *Store) DeleteProxyPathsForInbound(ctx context.Context, inboundID int64) error {
+	rootPathIDs, err := queryInt64sDB(ctx, s.db, `select id from proxy_paths where inbound_id=?`, inboundID)
+	if err != nil {
+		return err
+	}
+	if len(rootPathIDs) > 0 {
+		history, err := s.historyDB()
+		if err == nil {
+			_, err = history.ExecContext(ctx, `update connection_audit_reports set path_id=null where path_id in (`+inClause(len(rootPathIDs))+`)`, seenAny(rootPathIDs)...)
+		}
+		if err != nil {
+			for _, pathID := range rootPathIDs {
+				if queueErr := s.QueueHistoryCleanup(ctx, "proxy_path", pathID); queueErr != nil {
+					return err
+				}
+			}
+		}
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err

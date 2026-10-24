@@ -5,7 +5,8 @@ import "context"
 const latencyRollupSchemaVersion = 1
 
 func (s *Store) ensureLatencyRollupSchema(ctx context.Context) error {
-	if err := s.ensureColumn(ctx, "server_latency_probe_results", "measurement_revision", `alter table server_latency_probe_results add column measurement_revision text not null default ''`); err != nil {
+	history, err := s.historyDB()
+	if err != nil {
 		return err
 	}
 	statements := []string{
@@ -36,7 +37,7 @@ func (s *Store) ensureLatencyRollupSchema(ctx context.Context) error {
 		`create index if not exists idx_latency_rollup_task on latency_rollup_buckets(task_id,server_id)`,
 	}
 	for _, statement := range statements {
-		if _, err := s.db.ExecContext(ctx, statement); err != nil {
+		if _, err := history.ExecContext(ctx, statement); err != nil {
 			return err
 		}
 	}
