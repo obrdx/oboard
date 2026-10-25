@@ -136,6 +136,7 @@ import { Switch } from './components/ui/switch'
 import { NumericInput } from './components/ui/numeric-input'
 import { DateTimePicker } from './components/ui/datetime-picker'
 import logo from './assets/logo.png'
+import { OnboardingDashboardCard, OnboardingProvider, OnboardingTopbarButton } from './features/onboarding/OnboardingProvider'
 import { 
   LayoutDashboard, Server as ServerIcon, Workflow, Users as UsersIcon, Link as LinkIcon, 
   Bell, CheckSquare, ClipboardList, Settings as SettingsIcon, LogOut, Shield,
@@ -315,7 +316,6 @@ const NodeAssignmentsPage = lazySurface(() => import('./pages/NodeAssignmentsPag
 const NodeWorkspacePage = lazySurface(() => import('./pages/NodeWorkspacePage').then(module => ({ default: module.NodeWorkspacePage })))
 const SubscriptionPlansPage = lazySurface(() => import('./pages/SubscriptionPlansPage').then(module => ({ default: module.SubscriptionPlansPage })))
 const UserPlanDialog = lazyDialog(() => import('./pages/UserPlanDialog').then(module => ({ default: module.UserPlanDialog })), '用户套餐')
-const ProxyPathDemoDialog = lazyDialog(() => import('./features/onboarding/demo/ProxyPathDemoDialog').then(module => ({ default: module.ProxyPathDemoDialog })), '代理链路怎么用')
 import type { UserDashboardOverview } from './pages/UserDashboardPage'
 const UserDashboardPage = lazySurface(() => import('./pages/UserDashboardPage').then(module => ({ default: module.UserDashboardPage })))
 const AccountPage = lazySurface(() => import('./pages/AccountPage').then(module => ({ default: module.AccountPage })))
@@ -2287,6 +2287,7 @@ export function App() {
 
   return (
     <DialogContext.Provider value={dialogs}>
+      <OnboardingProvider client={client} isAdmin={sessionUser?.role === 'admin'} navigate={navigateTab} realtimeRevision={realtimeRevision}>
       <PageRefreshProvider register={registerPageRefresh} refresh={refreshCurrentPage} refreshing={pageRefreshing} refreshResources={refreshPageResources}>
       <LoadingContext.Provider value={loading}>
         <AnimatePresence>
@@ -2419,6 +2420,7 @@ export function App() {
                 </m.div>
               </div>
               <div className="topbar-actions">
+                <OnboardingTopbarButton />
                 <ConfigurationSyncStatus
                   rows={configurationSync}
                   saving={mutationSaving}
@@ -2446,6 +2448,7 @@ export function App() {
         </div>
       </LoadingContext.Provider>
       </PageRefreshProvider>
+      </OnboardingProvider>
     </DialogContext.Provider>
   )
 }
@@ -6154,6 +6157,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
 
   return (
     <div className="dashboard-page">
+      <OnboardingDashboardCard />
       <section className="dash-welcome">
         <div className="dash-welcome-copy">
           <div className="dash-welcome-kicker">
@@ -9451,7 +9455,6 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	const [configNode, setConfigNode] = useState<ExternalOutbound | null>(null)
 	const [namingPath, setNamingPath] = useState<ProxyPath | null>(null)
 	const [transportRequest, setTransportRequest] = useState<TransportDialogRequest | null>(null)
-	const [demoOpen, setDemoOpen] = useState(false)
 	const [familySplitEditor, setFamilySplitEditor] = useState<{ templateID?: number; select?: boolean } | null>(null)
 	const [sourceSelectionRequest, setSourceSelectionRequest] = useState<GraphSourceSelectionRequest | null>(null)
   const [graphMenu, setGraphMenu] = useState<GraphContextMenu | null>(null)
@@ -11770,7 +11773,6 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
             {transportRequest || sourceSelectionRequest ? '等待确认连接' : '正在保存连接…'}
           </span>}
           {!provisionalEdges.length && <span className="graph-workbench-hint">{coarseGraphPointer ? '长按空白处新建' : '右键空白处新建'}</span>}
-          <button type="button" className="ghost" onClick={() => setDemoOpen(true)} title="用动画演示如何搭建代理链路"><Play size={14} />观看演示</button>
           <button type="button" className="ghost" onClick={() => fitGraphToSafeArea()} disabled={!nodes.length} title="只调整视角，不改变节点位置"><Search size={14} />查看全图</button>
           <button type="button" className="ghost" onClick={autoArrangeGraph} disabled={!nodes.length || pendingGraphNodeIDs.length > 0} title="按链路拓扑重新排列全部节点，并清除手动摆放的位置"><Sliders size={14} />重置布局</button>
         </div>
@@ -11785,7 +11787,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
         </div>}
         {(connectionHint || connectingFrom) && <div className="graph-connection-hint" role="status">{connectionHint || '连接到目标节点上方的连接点；也可依次点击两个连接点。'}</div>}
         <ProxyGraphLegend />
-        {!nodes.length && <div className="graph-empty-state"><ServerIcon size={22} /><strong>还没有服务器</strong><span>添加服务器后即可创建入口和代理拓扑。</span><div className="graph-empty-actions"><button onClick={() => addServer()}>添加服务器</button><button type="button" className="ghost" onClick={() => setDemoOpen(true)}><Play size={14} />观看演示</button></div></div>}
+        {!nodes.length && <div className="graph-empty-state"><ServerIcon size={22} /><strong>还没有服务器</strong><span>添加服务器后即可创建入口和代理拓扑。</span><button onClick={() => addServer()}>添加服务器</button></div>}
         {canvasMenu && createPopoverPortal(
           <>
             {canvasMenu.sheet && <div className="graph-context-menu-overlay is-sheet" onPointerDown={() => setCanvasMenu(null)} />}
@@ -11888,7 +11890,6 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 		  onCancel={() => { sourceSelectionRequest.resolve(null); setSourceSelectionRequest(null) }}
 		  onSubmit={sources => { sourceSelectionRequest.resolve(sources); setSourceSelectionRequest(null) }}
 		/>}</AnimatePresence>
-		{demoOpen && <ProxyPathDemoDialog isOpen onClose={() => setDemoOpen(false)} />}
 	  </div>
 }
 

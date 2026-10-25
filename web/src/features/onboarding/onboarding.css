@@ -1,0 +1,126 @@
+/* Initialization guide: welcome screen, setup guide, dashboard card,
+   top-bar entry and resume prompt. Uses the shared neutral tokens. */
+
+.dialog.onboarding-welcome { width: min(560px, 100%); }
+.onboarding-welcome-body { display: grid; gap: 20px; padding: 28px 28px 22px; }
+.onboarding-welcome-body header { display: grid; justify-items: start; gap: 8px; }
+.onboarding-welcome-mark { width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid var(--border-color); border-radius: var(--radius-lg); background: var(--bg-card); box-shadow: var(--shadow-xs); }
+.onboarding-welcome-mark img { width: 30px; height: 30px; object-fit: contain; }
+.onboarding-welcome-body h2 { margin: 4px 0 0; color: var(--text-primary); font-size: 20px; font-weight: 600; letter-spacing: -0.015em; }
+.onboarding-welcome-body header p { margin: 0; color: var(--text-secondary); font-size: 14px; line-height: 1.6; }
+.onboarding-stages { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.onboarding-stages li { display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: start; gap: 12px; padding: 12px 14px; border: 1px solid var(--border-color); border-radius: var(--radius-lg); background: var(--bg-card); }
+.onboarding-stage-icon { width: 32px; height: 32px; display: grid; place-items: center; color: var(--text-primary); border-radius: var(--radius-sm); background: var(--bg-control); }
+.onboarding-stage-copy { display: grid; gap: 2px; }
+.onboarding-stage-copy strong { color: var(--text-primary); font-size: 14px; font-weight: 600; }
+.onboarding-stage-copy small { color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
+.onboarding-welcome-body footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.onboarding-welcome-later { margin-left: auto; }
+.onboarding-welcome-note { margin: -8px 0 0; color: var(--text-muted); font-size: 12px; }
+
+.dialog.onboarding-guide { width: min(980px, 100%); max-height: min(90vh, 820px); }
+.onboarding-guide-head p { margin: 4px 0 0; }
+.onboarding-tabs { display: flex; gap: 2px; width: fit-content; margin: 0 24px; padding: 3px; border-radius: var(--radius-sm); background: var(--bg-control); }
+.onboarding-tabs button { min-height: 30px; padding: 0 14px; color: var(--text-secondary); border: 0; background: transparent; font-size: 13px; font-weight: 600; }
+.onboarding-tabs button small { margin-left: 4px; color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.onboarding-tabs button.is-active { color: var(--text-primary); background: var(--bg-control-active); box-shadow: var(--shadow-xs); }
+.onboarding-guide-body { min-height: 0; flex: 1; overflow: auto; padding: 16px 24px 20px; }
+
+.onboarding-required { display: grid; grid-template-columns: 240px minmax(0, 1fr); align-items: start; gap: 20px; }
+.onboarding-steps { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.onboarding-step { width: 100%; min-height: 0; display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; justify-content: stretch; gap: 10px; padding: 9px 10px; color: var(--text-secondary); border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; font-weight: 400; text-align: left; }
+.onboarding-step:hover:not(:disabled) { color: var(--text-primary); background: var(--bg-card-hover); }
+.onboarding-step.is-active { color: var(--text-primary); border-color: var(--border-color); background: var(--bg-card); box-shadow: var(--shadow-xs); }
+.onboarding-step-index { width: 22px; height: 22px; display: grid; place-items: center; color: var(--text-secondary); border: 1px solid var(--border-strong); border-radius: var(--radius-full); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.onboarding-step.is-done .onboarding-step-index { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, var(--border-color)); background: var(--success-soft); }
+.onboarding-step.is-skipped .onboarding-step-index { color: var(--text-muted); border-style: dashed; }
+.onboarding-step-index svg { width: 12px; height: 12px; }
+.onboarding-step-copy { min-width: 0; display: grid; gap: 1px; }
+.onboarding-step-copy strong { font-size: 13px; font-weight: 600; }
+.onboarding-step-copy small { color: var(--text-muted); font-size: 12px; }
+
+.onboarding-detail { min-width: 0; display: grid; align-content: start; gap: 14px; padding: 18px 20px; border: 1px solid var(--border-color); border-radius: var(--radius-lg); background: var(--bg-card); }
+.onboarding-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.onboarding-detail-head h3 { margin: 0; color: var(--text-primary); font-size: 16px; font-weight: 600; }
+.onboarding-detail-text { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.7; }
+.onboarding-fact { margin: 0; padding: 10px 12px; color: var(--text-primary); border-radius: var(--radius-sm); background: var(--bg-control); font-size: 13px; }
+.onboarding-warning { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 10px 12px; color: var(--warning); border: 1px solid color-mix(in srgb, var(--warning) 24%, var(--border-color)); border-radius: var(--radius-sm); background: var(--warning-soft); font-size: 13px; line-height: 1.55; }
+.onboarding-warning svg { flex: none; margin-top: 2px; }
+.onboarding-error { margin: 0; color: var(--danger); font-size: 13px; }
+.onboarding-notice { display: grid; justify-items: start; gap: 6px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--success) 26%, var(--border-color)); border-radius: var(--radius-sm); background: var(--success-soft); font-size: 13px; }
+.onboarding-notice strong { color: var(--success); }
+.onboarding-notice span { color: var(--text-secondary); }
+.onboarding-notice button { margin-top: 4px; }
+.onboarding-form { display: grid; gap: 12px; }
+.onboarding-form label { display: grid; gap: 5px; color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+.onboarding-form input { max-width: 420px; }
+.onboarding-form .settings-row { padding-left: 0; padding-right: 0; }
+.onboarding-detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 4px; }
+.onboarding-detail-actions button svg { width: 14px; height: 14px; }
+.onboarding-skip { margin-left: auto; }
+
+.onboarding-status { height: 22px; display: inline-flex; align-items: center; padding: 0 8px; border-radius: var(--radius-full); font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--text-secondary); background: var(--bg-control); }
+.onboarding-status.is-done { color: var(--success); background: var(--success-soft); }
+.onboarding-status.is-skipped { color: var(--text-muted); }
+
+.onboarding-checklist { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.onboarding-checklist li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 4px 12px; padding: 12px 14px; border: 1px solid var(--border-color); border-radius: var(--radius-lg); background: var(--bg-card); }
+.onboarding-check-mark { width: 22px; height: 22px; display: grid; place-items: center; margin-top: 1px; border: 1px solid var(--border-strong); border-radius: var(--radius-full); }
+.onboarding-checklist li.is-done .onboarding-check-mark { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, var(--border-color)); background: var(--success-soft); }
+.onboarding-checklist li.is-skipped .onboarding-check-mark { color: var(--text-muted); border-style: dashed; }
+.onboarding-check-copy { min-width: 0; display: grid; gap: 3px; }
+.onboarding-check-copy strong { color: var(--text-primary); font-size: 14px; font-weight: 600; }
+.onboarding-check-copy small { color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.onboarding-check-actions { grid-column: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
+.onboarding-check-actions button { min-height: 30px; padding: 0 10px; font-size: 13px; }
+.onboarding-check-actions button svg { width: 14px; height: 14px; }
+
+.onboarding-tutorials { display: grid; gap: 8px; }
+.onboarding-tutorial { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid var(--border-color); border-radius: var(--radius-lg); background: var(--bg-card); }
+.onboarding-tutorial-icon { width: 40px; height: 40px; display: grid; place-items: center; color: var(--graph-entry); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--graph-entry) 10%, var(--bg-card)); }
+.onboarding-tutorial-copy { min-width: 0; display: grid; gap: 2px; }
+.onboarding-tutorial-copy strong { color: var(--text-primary); font-size: 14px; font-weight: 600; }
+.onboarding-tutorial-copy small { color: var(--text-secondary); font-size: 13px; }
+.onboarding-tutorial-copy small + small { color: var(--text-muted); font-size: 12px; }
+
+.onboarding-guide-foot { justify-content: space-between; gap: 12px; border-top: 1px solid var(--border-color); }
+.onboarding-guide-foot .muted { font-size: 13px; }
+
+.onboarding-card { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; padding: 16px 18px; border: 1px solid var(--border-color); border-radius: var(--radius-lg); background: var(--bg-card); box-shadow: var(--shadow-xs); }
+.onboarding-card-copy { min-width: 0; flex: 1 1 320px; display: grid; gap: 6px; }
+.onboarding-card-copy strong { color: var(--text-primary); font-size: 15px; font-weight: 600; }
+.onboarding-card-copy span { color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.onboarding-card-bar, .onboarding-resume-bar { position: relative; height: 4px; overflow: hidden; border-radius: var(--radius-full); background: var(--bg-control); }
+.onboarding-card-bar { max-width: 360px; margin-top: 4px; }
+.onboarding-card-bar i, .onboarding-resume-bar i { position: absolute; inset: 0; background: var(--color-primary); transform-origin: 0 50%; transition: transform var(--duration-panel) var(--ease-standard); }
+.onboarding-card-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.onboarding-topbar-button { position: relative; }
+.onboarding-topbar-dot { position: absolute; top: 7px; right: 7px; width: 7px; height: 7px; border: 2px solid var(--bg-card); border-radius: var(--radius-full); background: var(--color-processing); }
+
+.onboarding-resume { position: fixed; right: 20px; bottom: 20px; z-index: 60; display: flex; align-items: center; gap: 2px; padding: 4px; border: 1px solid var(--border-color); border-radius: var(--radius-lg); background: var(--bg-card); box-shadow: var(--shadow-lg); }
+.onboarding-resume-main { min-height: 44px; display: grid; grid-template-columns: 16px minmax(0, 1fr); grid-template-rows: auto auto; align-items: center; gap: 4px 10px; padding: 6px 12px; color: var(--text-primary); border: 0; background: transparent; font-weight: 400; text-align: left; }
+.onboarding-resume-main:hover:not(:disabled) { background: var(--bg-card-hover); }
+.onboarding-resume-main > span:first-of-type { display: grid; gap: 1px; }
+.onboarding-resume-main strong { font-size: 13px; font-weight: 600; }
+.onboarding-resume-main small { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.onboarding-resume-bar { grid-column: 2; width: 140px; height: 3px; }
+.onboarding-resume-close { width: 32px; min-width: 32px; height: 32px; min-height: 32px; }
+
+@media (max-width: 760px) {
+  .onboarding-welcome-body { padding: 22px 18px 18px; }
+  .onboarding-welcome-later { margin-left: 0; }
+  .onboarding-tabs { margin: 0 16px; }
+  .onboarding-guide-body { padding: 14px 16px 16px; }
+  .onboarding-required { grid-template-columns: minmax(0, 1fr); }
+  .onboarding-steps { grid-auto-flow: column; grid-auto-columns: minmax(150px, 1fr); overflow-x: auto; }
+  .onboarding-tutorial { grid-template-columns: 40px minmax(0, 1fr); }
+  .onboarding-tutorial button { grid-column: 1 / -1; }
+  .onboarding-resume { left: 16px; right: 16px; bottom: 16px; }
+  .onboarding-resume-main { flex: 1; }
+  .onboarding-resume-bar { width: 100%; }
+}
+
+@media (pointer: coarse) {
+  .onboarding-check-actions button { min-height: 44px; }
+}

@@ -11,18 +11,19 @@ import './demo.css'
 const CHAPTER_GAP_MS = 1200
 const SPEEDS = [1, 1.5] as const
 
-export function ProxyPathDemoDialog({ isOpen = true, onClose, onTry, chapters = proxyPathChapters }: {
+export function ProxyPathDemoDialog({ isOpen = true, onClose, onTry, onFinished, chapters = proxyPathChapters }: {
   isOpen?: boolean
   onClose: () => void
   onTry?: () => void
+  onFinished?: () => void
   chapters?: DemoChapter[]
 }) {
-  return <Dialog isOpen={isOpen} onClose={onClose} title="代理链路怎么用" size="xl" className="pd-dialog-host">
-    <div className="pd-host"><ProxyPathDemo chapters={chapters} onTry={() => { onClose(); onTry?.() }} /></div>
+  return <Dialog isOpen={isOpen} onClose={onClose} title="代理链路演示" size="xl" className="pd-dialog-host">
+    <div className="pd-host"><ProxyPathDemo chapters={chapters} onFinished={onFinished} onTry={() => { onClose(); onTry?.() }} /></div>
   </Dialog>
 }
 
-export function ProxyPathDemo({ chapters, onTry }: { chapters: DemoChapter[]; onTry: () => void }) {
+export function ProxyPathDemo({ chapters, onTry, onFinished }: { chapters: DemoChapter[]; onTry: () => void; onFinished?: () => void }) {
   const reducedMotion = Boolean(useReducedMotion())
   const [chapter, setChapter] = useState(0)
   const [run, setRun] = useState(0)
@@ -43,6 +44,8 @@ export function ProxyPathDemo({ chapters, onTry }: { chapters: DemoChapter[]; on
   const playingRef = useRef(playing)
   const speedRef = useRef(speed)
   const hiddenPausedRef = useRef(false)
+  const onFinishedRef = useRef(onFinished)
+  onFinishedRef.current = onFinished
   playingRef.current = playing
   speedRef.current = speed
 
@@ -87,7 +90,10 @@ export function ProxyPathDemo({ chapters, onTry }: { chapters: DemoChapter[]; on
         setDone(previous => new Set(previous).add(chapter))
         await timeline.wait(CHAPTER_GAP_MS)
         if (chapter < chapters.length - 1) setChapter(chapter + 1)
-        else setFinished(true)
+        else {
+          setFinished(true)
+          onFinishedRef.current?.()
+        }
       })
       .catch(error => {
         if (!(error instanceof DemoAborted)) throw error
@@ -185,11 +191,11 @@ export function ProxyPathDemo({ chapters, onTry }: { chapters: DemoChapter[]; on
           {finished && <m.div key="finished" className="pd-finished" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
             <m.div className="pd-finished-card" initial={reducedMotion ? false : { scale: 0.94, y: 8 }} animate={{ scale: 1, y: 0 }} transition={{ type: 'spring', stiffness: 420, damping: 30 }}>
               <span className="pd-finished-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><m.path d="M5 12.5l4.5 4.5L19 7.5" initial={reducedMotion ? false : { pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 0.45, delay: 0.12 }} /></svg></span>
-              <strong>看完了</strong>
-              <p>入口 → 中转 → 出口，保存后自动生效。现在去画布上试一次吧。</p>
+              <strong>演示结束</strong>
+              <p>入口、中转、出口与分流规则的配置方法已演示完毕，可前往「代理拓扑」进行实际配置。</p>
               <div className="pd-finished-actions">
                 <button type="button" className="ghost" onClick={restart}><RotateCcw size={15} />重新播放</button>
-                <button type="button" onClick={onTry}>去画布试试</button>
+                <button type="button" onClick={onTry}>前往代理拓扑</button>
               </div>
             </m.div>
           </m.div>}
@@ -216,7 +222,7 @@ export function ProxyPathDemo({ chapters, onTry }: { chapters: DemoChapter[]; on
         <div className="pd-speed" role="group" aria-label="播放速度">
           {SPEEDS.map(value => <button key={value} type="button" className={speed === value ? 'is-active' : ''} aria-pressed={speed === value} onClick={() => setSpeed(value)}>{value}×</button>)}
         </div>
-        {onTry && <button type="button" className="ghost pd-try" onClick={onTry}>自己试试</button>}
+        {onTry && <button type="button" className="ghost pd-try" onClick={onTry}>前往代理拓扑</button>}
       </div>
     </div>
   </div>

@@ -457,6 +457,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/auth/session", s.auth(s.restoreSession, model.RoleNone))
 	mux.HandleFunc("/api/v1/auth/logout", s.auth(s.logout, model.RoleNone))
 	mux.HandleFunc("/api/v1/auth/password", s.auth(s.changePassword, model.RoleNone))
+	mux.HandleFunc("/api/v1/onboarding", s.auth(s.onboarding, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/onboarding/tours", s.auth(s.onboardingTours, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/me", s.auth(s.me, model.RoleNone))
 	mux.HandleFunc("/api/v1/me/authentication", s.auth(s.authenticationStatus, model.RoleNone))
 	mux.HandleFunc("/api/v1/me/totp/setup/begin", s.auth(s.totpSetupBegin, model.RoleViewer))
@@ -3490,6 +3492,9 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.AddAudit(r.Context(), model.AuditLog{ActorID: &user.ID, Action: "change_password", Target: "user", Detail: user.Username, IP: clientIP(r)})
+	if err := s.recordOnboardingPasswordRotation(r.Context(), user.ID); err != nil {
+		log.Printf("onboarding: record password rotation for user %d: %v", user.ID, err)
+	}
 	write(w, 200, map[string]any{"ok": true, "session_revoked": true})
 }
 

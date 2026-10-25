@@ -204,11 +204,11 @@ async function updateDialog<T extends NonNullable<DemoScene['dialog']>>(runtime:
 export const proxyPathChapters: DemoChapter[] = [
   {
     id: 'concept',
-    title: '什么是代理链路',
-    summary: '设备连上入口，流量依次经过服务器，从最后一台出去。',
+    title: '代理链路的组成',
+    summary: '入口、服务器与出口之间的关系。',
     start: () => ({ ...emptyScene(), chrome: false, camera: fitCamera(40, 620, 20), nodes: [cards.device()] }),
     async run(runtime) {
-      runtime.caption('代理链路就是流量走的路线：设备连上入口，流量依次经过服务器，最后访问网站。')
+      runtime.caption('代理链路描述流量的转发路径：客户端连接入口，流量依次经过链路中的服务器，最终访问目标网站。')
       await runtime.timeline.wait(600)
       putNode(runtime, cards.entry(1, 120))
       await runtime.timeline.wait(240)
@@ -226,10 +226,10 @@ export const proxyPathChapters: DemoChapter[] = [
       await runtime.timeline.wait(240)
       putEdges(runtime, [edge('hk', 'site', 'direct', 'primary')])
       await runtime.timeline.wait(2000)
-      runtime.caption('入口建在服务器上，用户订阅里看到的就是这个入口。')
+      runtime.caption('入口部署在服务器上，用户订阅中提供的即为入口的连接信息。')
       patch(runtime, { emphasis: 'entry' })
       await runtime.timeline.wait(2200)
-      runtime.caption('链路最后一台服务器默认直接访问网站，它的 IP 就是用户看到的出口 IP。')
+      runtime.caption('未配置其他出口时，链路中的最后一台服务器直接访问目标网站，其公网 IP 即为出口 IP。')
       patch(runtime, { emphasis: 'hk' })
       await runtime.timeline.wait(2600)
       patch(runtime, { emphasis: null })
@@ -238,19 +238,19 @@ export const proxyPathChapters: DemoChapter[] = [
   },
   {
     id: 'entry',
-    title: '新建入口',
-    summary: '右键空白处，选择「入口节点」，选协议后创建。',
+    title: '创建入口',
+    summary: '在画布空白处右键，选择「入口节点」并选择协议。',
     start: () => ({ ...emptyScene(), cursorVisible: true, nodes: [cards.tokyo(false)] }),
     cursorStart: { x: 860, y: 560 },
     async run(runtime) {
-      runtime.caption('画布显示上方「入口服务器」选中的服务器。在空白处点右键（触屏长按）新建。')
+      runtime.caption('画布显示上方「入口服务器」所选服务器的拓扑。在画布空白处右键（触屏设备为长按）打开新建菜单。')
       await runtime.timeline.wait(900)
       await openMenu(runtime, { x: 590, y: 120 })
-      runtime.caption('选择「入口节点」，入口会建在这台服务器上。')
+      runtime.caption('选择「入口节点」，入口将创建在当前服务器上。')
       await runtime.timeline.wait(400)
       await chooseMenu(runtime, 'entry')
       patch(runtime, { dialog: { kind: 'entry', hover: null, pressed: false } })
-      runtime.caption('选择协议。VLESS Reality 借用目标站点的 TLS 握手，不需要域名和证书，适合第一个入口。')
+      runtime.caption('选择协议后创建。VLESS Reality 借用目标站点的 TLS 握手，无需域名与证书。')
       await runtime.timeline.wait(700)
       await moveTo(runtime, entryProtocolPoint(0))
       await updateDialog(runtime, 'entry', { hover: 'VLESS' })
@@ -264,7 +264,7 @@ export const proxyPathChapters: DemoChapter[] = [
       putNode(runtime, cards.tokyo(true))
       putEdges(runtime, [edge('entry', 'tokyo', 'belongs')])
       runtime.update(scene => ({ ...scene, entryServer: { ...scene.entryServer, entries: 1 } }))
-      runtime.caption('入口出现在服务器上方，虚线表示它属于东京-01。服务器底部多了这个入口的连接点。')
+      runtime.caption('入口卡片显示在服务器上方，虚线表示其归属关系；服务器底部同时出现该入口对应的连接点。')
       await moveTo(runtime, { x: 840, y: 470 })
       await saved(runtime, 1)
       await runtime.timeline.wait(1600)
@@ -272,17 +272,17 @@ export const proxyPathChapters: DemoChapter[] = [
   },
   {
     id: 'relay',
-    title: '放入中转服务器',
-    summary: '右键选择「其他服务器」，把中转放进画布。',
+    title: '添加中转服务器',
+    summary: '通过「其他服务器」将服务器放入画布。',
     start: () => ({ ...emptyScene(), cursorVisible: true, sync: 'synced', entryServer: { title: '东京-01', region: 'JP', entries: 1 }, nodes: [cards.entry(0), cards.tokyo()], edges: [edge('entry', 'tokyo', 'belongs')] }),
     cursorStart: { x: 840, y: 470 },
     async run(runtime) {
-      runtime.caption('需要中转时，右键空白处，选择「其他服务器」。')
+      runtime.caption('如需中转，在画布空白处右键并选择「其他服务器」。')
       await runtime.timeline.wait(400)
       await openMenu(runtime, { x: 780, y: 230 })
       await chooseMenu(runtime, 'server')
       patch(runtime, { drawer: { hover: -1, placed: false, pressed: false } })
-      runtime.caption('从服务器列表里点一台，它就会放进画布。同一台服务器可以多次放入。')
+      runtime.caption('在列表中选择服务器后点击「完成」。同一台服务器可多次放入画布。')
       await runtime.timeline.wait(700)
       await moveTo(runtime, drawerTilePoint(1))
       runtime.update(scene => scene.drawer ? { ...scene, drawer: { ...scene.drawer, hover: 1 } } : scene)
@@ -296,7 +296,7 @@ export const proxyPathChapters: DemoChapter[] = [
       patch(runtime, { drawer: null })
       await runtime.timeline.wait(160)
       putNode(runtime, cards.hkLoose())
-      runtime.caption('香港-02 还没有连线，现在只是「可控服务器」，不属于任何链路。')
+      runtime.caption('尚未连线的服务器显示为「可控服务器」，此时不属于任何链路。')
       await moveTo(runtime, { x: 300, y: 520 })
       await runtime.timeline.wait(1800)
     },
@@ -304,20 +304,20 @@ export const proxyPathChapters: DemoChapter[] = [
   {
     id: 'connect',
     title: '连接与传递方式',
-    summary: '从上一台的底部拖到下一台的顶部，再选传递方式。',
+    summary: '从上一节点底部连接至下一节点顶部，并选择传递方式。',
     start: () => ({ ...emptyScene(), cursorVisible: true, sync: 'synced', entryServer: { title: '东京-01', region: 'JP', entries: 1 }, nodes: [cards.entry(0), cards.tokyo(), cards.hkLoose()], edges: [edge('entry', 'tokyo', 'belongs')] }),
     cursorStart: { x: 300, y: 520 },
     async run(runtime) {
-      runtime.caption('按住东京-01 底部的连接点，拖到香港-02 顶部松开。')
+      runtime.caption('按住东京-01 底部的连接点，拖动至香港-02 顶部后释放。')
       await runtime.timeline.wait(500)
       await connect(runtime, 'tokyo', 'hk')
       patch(runtime, { dialog: { kind: 'transport', mode: 0, hover: -1, target: 0, pressed: false } })
-      runtime.caption('松开后选择这一跳的传递方式。')
+      runtime.caption('释放后需为该跳选择传递方式。')
       await runtime.timeline.wait(900)
       const notes = [
-        'sing-box 出站链：东京-01 用协议连到香港-02，最通用。',
-        '透明端口转发：原样传递客户端密文，只能用在链路开头。',
-        'SSH / WireGuard 隧道：通过服务器之间的专用隧道连接。',
+        'sing-box 出站链：由东京-01 通过代理协议连接香港-02，适用于大多数场景。',
+        '透明端口转发：原样传递客户端密文，仅可用于链路开头。',
+        'SSH / WireGuard 隧道：通过服务器之间的专用隧道传输。',
       ]
       for (let index = 0; index < notes.length; index++) {
         await moveTo(runtime, transportModePoint(index))
@@ -328,12 +328,12 @@ export const proxyPathChapters: DemoChapter[] = [
       await moveTo(runtime, transportModePoint(0))
       await click(runtime)
       await updateDialog(runtime, 'transport', { mode: 0, hover: -1 })
-      runtime.caption('下面选择香港-02 上用来接收的入口。系统会自动生成隐藏入口，不用另外创建。')
+      runtime.caption('在下方选择香港-02 上用于接收流量的入口。系统生成的入口为隐藏入口，无需另行创建。')
       await moveTo(runtime, transportTargetPoint(0))
       await click(runtime)
       await updateDialog(runtime, 'transport', { target: 0 })
       await runtime.timeline.wait(1400)
-      runtime.caption('底部是本次变更和拓扑检查结果，确认无误后点「确定」。')
+      runtime.caption('底部显示本次变更及拓扑检查结果，确认无误后点击「确定」。')
       await runtime.timeline.wait(900)
       await moveTo(runtime, TRANSPORT_CONFIRM)
       await updateDialog(runtime, 'transport', { pressed: true })
@@ -344,14 +344,14 @@ export const proxyPathChapters: DemoChapter[] = [
       putNode(runtime, cards.entry(1))
       putEdges(runtime, [edge('tokyo', 'hk', 'singbox')])
       await saved(runtime, 2)
-      runtime.caption('连好后点「重置布局」，画布会按链路自动排好。')
+      runtime.caption('连接完成后，可点击「重置布局」按链路自动排列节点。')
       await moveTo(runtime, WORKBENCH_RESET)
       patch(runtime, { workbenchPressed: 'reset' })
       await click(runtime)
       patch(runtime, { workbenchPressed: null })
       putNode(runtime, cards.hk(true))
       await runtime.timeline.wait(500)
-      runtime.caption('香港-02 现在是链路的最后一台，默认就从它直接访问网站。')
+      runtime.caption('香港-02 现为链路中的最后一台服务器，默认由其直接访问目标网站。')
       patch(runtime, { emphasis: 'hk' })
       await moveTo(runtime, { x: 820, y: 560 })
       await runtime.timeline.wait(2200)
@@ -361,16 +361,16 @@ export const proxyPathChapters: DemoChapter[] = [
   {
     id: 'exit',
     title: '更换出口',
-    summary: '在末端接上 WARP 等出口，换一个出口 IP。',
+    summary: '在链路末端连接 WARP 等出口。',
     start: () => ({ ...relayChain(), cursorVisible: true }),
     cursorStart: { x: 820, y: 560 },
     async run(runtime) {
-      runtime.caption('想换一个出口 IP，就在链路末端接上 WARP、VPNGate 或导入节点。')
+      runtime.caption('如需更换出口 IP，可在链路末端连接 WARP、VPNGate 或导入节点。')
       await moveCamera(runtime, fitCamera(Y.entry, Y.tail + 80))
       await openMenu(runtime, stagePoint(runtime, { x: 540, y: Y.tail + 30 }))
       await chooseMenu(runtime, 'warp')
       putNode(runtime, cards.warp(false))
-      runtime.caption('WARP 由前一台服务器自动申请，连上即可，不用选择传递方式。')
+      runtime.caption('WARP 由前一台服务器自动申请，连接后即可使用，无需选择传递方式。')
       await runtime.timeline.wait(1000)
       await connect(runtime, 'hk', 'warp')
       putNode(runtime, cards.warp(true))
@@ -380,27 +380,27 @@ export const proxyPathChapters: DemoChapter[] = [
       await moveTo(runtime, stagePoint(runtime, { x: 820, y: Y.tail + 40 }))
       patch(runtime, { cursorVisible: false })
       runtime.update(scene => ({ ...scene, edges: withPackets(scene.edges) }))
-      runtime.caption('现在流量从东京入口进来，经香港中转，最后从 WARP 出去。')
+      runtime.caption('流量经东京-01 的入口进入，由香港-02 中转，最终通过 WARP 访问目标网站。')
       await runtime.timeline.wait(3400)
     },
   },
   {
     id: 'routing',
     title: '按规则分流',
-    summary: '规则写在服务器上，没命中的继续走后面的节点。',
+    summary: '规则配置在服务器上，未命中的流量继续沿链路转发。',
     start: () => ({ ...warpChain(), cursorVisible: true }),
     cursorStart: { x: 860, y: 600 },
     async run(runtime) {
-      runtime.caption('想让一部分流量走别的路，就用「分流出口」。')
+      runtime.caption('如需对部分流量采用不同的处理方式，可使用「分流出口」。')
       await runtime.timeline.wait(400)
       await openMenu(runtime, stagePoint(runtime, { x: 760, y: 360 }))
       await chooseMenu(runtime, 'routing')
       putNode(runtime, cards.routing(false, 700, 420))
-      runtime.caption('从香港-02 底部拖到分流出口，开始编排规则。')
+      runtime.caption('从香港-02 底部连接至分流出口，打开规则编排。')
       await runtime.timeline.wait(900)
       await connect(runtime, 'hk', 'routing')
       patch(runtime, { dialog: { kind: 'routing', added: false, addPressed: false, donePressed: false } })
-      runtime.caption('规则写在香港-02 上：命中「国内网站」的流量直接从香港-02 出去。')
+      runtime.caption('规则配置在香港-02 上：命中「国内网站」规则的流量由香港-02 直接访问。')
       await runtime.timeline.wait(1200)
       await moveTo(runtime, routingActionPoint(0))
       await runtime.timeline.wait(1400)
@@ -408,7 +408,7 @@ export const proxyPathChapters: DemoChapter[] = [
       await updateDialog(runtime, 'routing', { addPressed: true })
       await click(runtime)
       await updateDialog(runtime, 'routing', { added: true, addPressed: false })
-      runtime.caption('没命中规则的流量，继续走后面连接的节点，也就是原来的 WARP。')
+      runtime.caption('未命中任何规则的流量，继续转发至其后连接的节点，即原有的 WARP。')
       await runtime.timeline.wait(2000)
       await moveTo(runtime, ROUTING_DONE)
       await updateDialog(runtime, 'routing', { donePressed: true })
@@ -421,26 +421,26 @@ export const proxyPathChapters: DemoChapter[] = [
       await moveCamera(runtime, fitCamera(Y.entry, Y.warpAfterRouting + 80))
       await saved(runtime, 2)
       patch(runtime, { ruleMatching: 'routing' })
-      runtime.caption('分流插在香港-02 和 WARP 之间：命中规则的流量直接从香港-02 出去，其余继续去 WARP。')
+      runtime.caption('分流出口位于香港-02 与 WARP 之间：命中规则的流量由香港-02 直接访问，其余流量经 WARP 转发。')
       await runtime.timeline.wait(3800)
     },
   },
   {
     id: 'sync',
-    title: '自动生效',
-    summary: '保存即下发，看右上角「配置已同步」。',
+    title: '配置下发',
+    summary: '保存后自动下发，以「配置已同步」为准。',
     start: () => ({ ...routedChain(), sync: 'none' }),
     async run(runtime) {
-      runtime.caption('每次保存都会自动下发到相关服务器，不需要手动操作。留意右上角的状态。')
+      runtime.caption('每次保存后，面板会自动将配置下发至相关服务器，无需手动操作。同步状态显示在页面右上角。')
       patch(runtime, { emphasis: 'sync', sync: 'saving' })
       await runtime.timeline.wait(1100)
       patch(runtime, { sync: 'syncing', syncCount: 2 })
       await runtime.timeline.wait(1900)
       patch(runtime, { sync: 'synced' })
-      runtime.caption('显示「配置已同步」就生效了。如果显示「需要处理」，点开能看到原因和处理方法。')
+      runtime.caption('显示「配置已同步」即表示配置已生效。如显示「需要处理」，可点击查看原因与处理方法。')
       await runtime.timeline.wait(3000)
       patch(runtime, { emphasis: 'entry' })
-      runtime.caption('已授权的用户更新订阅后，就能用上这个入口。')
+      runtime.caption('已获授权的用户更新订阅后，即可使用该入口。')
       await runtime.timeline.wait(2800)
       patch(runtime, { emphasis: null })
       await runtime.timeline.wait(500)

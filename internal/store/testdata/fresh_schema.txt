@@ -2585,6 +2585,11 @@ table user_node_exceptions
     created_at TEXT notnull=1 default=- pk=0
     expiry_synced_at TEXT notnull=0 default=- pk=0
     change_id INTEGER notnull=0 default=- pk=0
+table user_onboarding_tours
+    user_id INTEGER notnull=1 default=- pk=1
+    tour_key TEXT notnull=1 default=- pk=2
+    status TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
 table user_plan_bindings
     id INTEGER notnull=0 default=- pk=1
     user_id INTEGER notnull=1 default=- pk=0
