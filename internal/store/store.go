@@ -3962,10 +3962,7 @@ func (s *Store) ListServerResourceMetricPoints(ctx context.Context, serverID int
 		}
 		points = append(points, items...)
 	}
-	if rawFrom.After(from) {
-		rawFrom = from
-	}
-	rows, err := history.QueryContext(ctx, `select cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,network_upload_bps,network_download_bps,sampled_at from server_metric_samples where server_id=? and resource_recorded=1 and sampled_at>=? order by sampled_at`, serverID, rawFrom.UTC().Format(time.RFC3339Nano))
+	rows, err := history.QueryContext(ctx, `select cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,network_upload_bps,network_download_bps,sampled_at from server_metric_samples where server_id=? and resource_recorded=1 and sampled_at>=? order by sampled_at`, serverID, from.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}

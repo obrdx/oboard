@@ -80,3 +80,31 @@ func TestServerResourceHistoryCanBeDisabledWithoutStoppingNetworkSamples(t *test
 		t.Fatalf("live resource state unavailable while history disabled: %#v err=%v", live, err)
 	}
 }
+
+func TestServerResourceMetricPointsHonorShortWindowInsideRetention(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := &model.Server{Name: "window-node", AgentID: "window-agent", Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, at := range []time.Time{now.Add(-48 * time.Hour), now.Add(-10 * time.Minute)} {
+		report := model.HealthReport{AgentID: server.AgentID, Status: model.ServerOnline, CPUUsagePercent: 10, MemoryUsedBytes: 1, MemoryTotalBytes: 2, Timestamp: at}
+		if _, _, err := db.UpsertHealthTransition(ctx, report, resourceHistoryWindow(at)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	points, err := db.ListServerResourceMetricPoints(ctx, server.ID, now.Add(-4*time.Hour), time.Minute)
+	if err != nil || len(points) != 1 {
+		t.Fatalf("4-hour window returned %d points, err=%v", len(points), err)
+	}
+	points, err = db.ListServerResourceMetricPoints(ctx, server.ID, now.Add(-168*time.Hour), time.Minute)
+	if err != nil || len(points) != 2 {
+		t.Fatalf("7-day window returned %d points, err=%v", len(points), err)
+	}
+}

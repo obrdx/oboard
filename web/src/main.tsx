@@ -8721,7 +8721,6 @@ function ServerLoadPanel({ server, response, loading, error, windowHours, onWind
       <div className="server-monitor-window-toggle" role="radiogroup" aria-label="负载时间范围">
         {windowOptions.map((option, index) => <button id={`server-load-window-${option.hours}`} key={option.hours} type="button" role="radio" aria-checked={windowHours === option.hours} tabIndex={windowHours === option.hours ? 0 : -1} className={windowHours === option.hours ? 'active' : ''} onClick={() => onWindowChange(option.hours)} onKeyDown={event => handleWindowKeyDown(event, index)}>{option.label}</button>)}
       </div>
-      <span className="server-monitor-window-note">保留 {retentionDays} 天</span>
     </div>
     {error ? <div className="resource-history-state error"><AlertTriangle size={18} aria-hidden="true" /><span>{error}</span><button type="button" className="ghost" onClick={onRetry}>重试</button></div>
       : loading && !response ? <div className="resource-history-state"><Loader2 size={20} className="spin" aria-hidden="true" /><span>正在读取负载数据</span></div>
