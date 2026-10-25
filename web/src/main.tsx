@@ -11801,7 +11801,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
                 key={tool.id}
                 type="button"
                 role="menuitem"
-                disabled={tool.id !== 'server' && tool.id !== 'imported' && !selected?.id}
+                disabled={tool.id !== 'imported' && !selected?.id}
                 onClick={() => runCanvasMenuTool(tool.id)}
               ><ProxyToolIcon kind={tool.id} />{tool.label}</button>)}
               <button type="button" role="menuitem" onClick={() => openNodePickerAt(canvasMenuPosition(canvasMenu.position, 280, 140))}><ServerIcon size={14} />其他服务器</button>
@@ -12123,7 +12123,6 @@ function proxyPathNamePartKey(part: ProxyPathNamePart) {
 
 
 const proxyTools: Array<{ id: ProxyToolAction; label: string; desc: string }> = [
-  { id: 'server', label: '添加服务器', desc: '登记一台主机' },
   { id: 'entry', label: '入口节点', desc: '新建协议入口' },
   { id: 'imported', label: '导入节点', desc: 'SS / SOCKS / VLESS' },
   { id: 'direct', label: '直接出口', desc: '添加本机直出目标' },
