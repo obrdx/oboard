@@ -8,7 +8,7 @@ import { RegionFlag } from '../../../components/ui/RegionFlag'
 import {
   CHROME_HEIGHT, DRAWER_LEFT, DRAWER_SERVERS, DRAWER_TILE_WIDTH, DRAWER_WIDTH, ENTRY_DIALOG, ENTRY_PROTOCOLS, MENU_ITEMS,
   MENU_ITEM_HEIGHT, MENU_SEPARATOR_HEIGHT, MENU_WIDTH, ROUTING_ACTIONS, ROUTING_DIALOG, STAGE_HEIGHT, STAGE_WIDTH,
-  TRANSPORT_DIALOG, TRANSPORT_MODES, TRANSPORT_TARGETS, dragPath, edgePath, menuItemTop, nodeHeight, nodeWidth, ruleOffset,
+  TRANSPORT_DIALOG, TRANSPORT_MODES, TRANSPORT_TARGETS, dragPath, edgePath, menuItemTop, nodeHeight, nodeWidth,
   type DemoEdge, type DemoNode, type DemoScene, type MenuItemID,
 } from './scene'
 
@@ -81,7 +81,6 @@ export function DemoStage({ scene, cursorX, cursorY, camera, paused, speed, redu
 
   const byID = new Map(scene.nodes.map(node => [node.id, node]))
   const focusNode = scene.emphasis && scene.emphasis !== 'sync' ? scene.emphasis : null
-  const routing = scene.ruleStub ? byID.get(scene.ruleStub) : undefined
   const provisionalSource = scene.provisional ? byID.get(scene.provisional.from) : undefined
 
   return <div ref={frameRef} className={`pd-frame${paused ? ' is-paused' : ''}${reducedMotion ? ' is-reduced' : ''}`} style={{ ['--pd-speed' as string]: String(speed) }} aria-hidden="true">
@@ -105,7 +104,6 @@ export function DemoStage({ scene, cursorX, cursorY, camera, paused, speed, redu
           if (!from || !to) return null
           return <EdgePackets key={`packets-${item.id}`} edge={item} from={from} to={to} fromMotion={nodeMotion(from)} toMotion={nodeMotion(to)} />
         })}
-        {!reducedMotion && routing && <RuleStub node={routing} motion={nodeMotion(routing)} />}
 
         {scene.nodes.map(node => <DemoNodeCard
           key={node.id}
@@ -113,6 +111,7 @@ export function DemoStage({ scene, cursorX, cursorY, camera, paused, speed, redu
           motion={nodeMotion(node)}
           emphasis={focusNode === null ? null : focusNode === node.id}
           activeSide={scene.activeHandle?.node === node.id ? scene.activeHandle.side : null}
+          matching={scene.ruleMatching === node.id}
           edges={scene.edges}
           reducedMotion={reducedMotion}
         />)}
@@ -309,20 +308,12 @@ function EdgePackets({ edge, from, to, fromMotion, toMotion }: { edge: DemoEdge;
   />)}</>
 }
 
-// RuleStub shows traffic that matched a 直连 rule leaving the server sideways;
-// on the real canvas that branch has no edge, so only the packets are drawn.
-function RuleStub({ node, motion }: { node: DemoNode; motion: NodeMotion }) {
-  const width = nodeWidth(node)
-  const offset = ruleOffset(0)
-  const offsetPath = useTransform([motion.x, motion.y], ([x, y]: number[]) => `path("M ${x + width} ${y + offset} L ${x + width + 120} ${y + offset}")`)
-  return <>{[0, 1].map(index => <m.span key={index} className="pd-packet is-stub" style={{ offsetPath, animationDelay: `calc(${index * -0.9}s / var(--pd-speed))` } as any} />)}</>
-}
-
-function DemoNodeCard({ node, motion, emphasis, activeSide, edges, reducedMotion }: {
+function DemoNodeCard({ node, motion, emphasis, activeSide, matching, edges, reducedMotion }: {
   node: DemoNode
   motion: NodeMotion
   emphasis: boolean | null
   activeSide: 'in' | 'out' | null
+  matching: boolean
   edges: DemoEdge[]
   reducedMotion: boolean
 }) {
@@ -341,7 +332,7 @@ function DemoNodeCard({ node, motion, emphasis, activeSide, edges, reducedMotion
   const relay = node.kind === 'server' && node.role === '链路服务器'
   return <m.div className="pd-node-anchor" style={{ x: motion.x, y: motion.y, width }}>
     <m.div
-      className={`pd-node is-${node.kind}${relay ? ' is-relay' : ''}${node.connected ? ' is-connected' : ''}${emphasis === true ? ' is-emphasis' : ''}${emphasis === false ? ' is-dimmed' : ''}`}
+      className={`pd-node is-${node.kind}${relay ? ' is-relay' : ''}${node.connected ? ' is-connected' : ''}${matching ? ' is-matching' : ''}${emphasis === true ? ' is-emphasis' : ''}${emphasis === false ? ' is-dimmed' : ''}`}
       style={{ height: nodeHeight(node) }}
       initial={reducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.92, y: 6 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}

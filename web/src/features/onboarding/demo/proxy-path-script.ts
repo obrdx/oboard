@@ -88,7 +88,7 @@ const routedChain = (): DemoScene => ({
   camera: fitCamera(Y.entry, Y.warpAfterRouting + 80),
   nodes: [cards.entry(1), cards.tokyo(), cards.hk(false), cards.routing(true), cards.warp(true, column('warp'), Y.warpAfterRouting)],
   edges: withPackets([edge('entry', 'tokyo', 'belongs'), edge('tokyo', 'hk', 'singbox'), edge('hk', 'routing', 'routing'), edge('routing', 'warp', 'warp')]),
-  ruleStub: 'routing',
+  ruleMatching: 'routing',
 })
 
 function find(runtime: DemoRuntime, id: string) {
@@ -420,7 +420,7 @@ export const proxyPathChapters: DemoChapter[] = [
       putEdges(runtime, withPackets([edge('hk', 'routing', 'routing'), edge('routing', 'warp', 'warp')]), ['hk-warp'])
       await moveCamera(runtime, fitCamera(Y.entry, Y.warpAfterRouting + 80))
       await saved(runtime, 2)
-      patch(runtime, { ruleStub: 'routing' })
+      patch(runtime, { ruleMatching: 'routing' })
       runtime.caption('分流插在香港-02 和 WARP 之间：命中规则的流量直接从香港-02 出去，其余继续去 WARP。')
       await runtime.timeline.wait(3800)
     },

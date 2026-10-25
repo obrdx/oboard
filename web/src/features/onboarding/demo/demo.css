@@ -213,8 +213,7 @@
 .pd-packet.is-belongs, .pd-packet.is-device { --pd-dot: var(--graph-entry); }
 .pd-packet.is-warp { --pd-dot: var(--graph-wireguard); }
 .pd-packet.is-routing { --pd-dot: var(--graph-forward); }
-.pd-packet.is-direct, .pd-packet.is-stub { --pd-dot: var(--graph-direct); }
-.pd-packet.is-stub { animation-duration: calc(1.8s / var(--pd-speed, 1)); }
+.pd-packet.is-direct { --pd-dot: var(--graph-direct); }
 @keyframes pd-packet {
   0% { offset-distance: 0%; opacity: 0; }
   12% { opacity: 1; }
@@ -298,6 +297,39 @@
 .pd-node-rules { display: grid; gap: 0; padding: 3px 10px 3px; }
 .pd-node-rule { position: relative; height: 26px; margin: 2px 0; display: flex; align-items: center; justify-content: space-between; padding: 0 8px; color: var(--text-secondary); border-radius: var(--radius-xs); background: color-mix(in srgb, var(--bg-control) 88%, var(--graph-forward)); font-size: 11px; }
 .pd-node-rule small { color: var(--graph-direct); font-weight: 700; }
+
+/* A matched 直连 rule sends traffic out of the server itself, so there is no
+   edge to animate: the rule row breathes and its handle pulses instead. */
+.pd-node-rule::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--graph-direct) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--graph-direct) 45%, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+.pd-node-rule > span, .pd-node-rule > small { position: relative; }
+.pd-handle.is-rule::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border: 2px solid var(--graph-direct);
+  border-radius: var(--radius-full);
+  opacity: 0;
+  pointer-events: none;
+}
+.pd-node.is-matching .pd-node-rule::before { animation: pd-rule-glow calc(1.8s / var(--pd-speed, 1)) ease-in-out infinite; }
+.pd-node.is-matching .pd-handle.is-rule::after { animation: pd-rule-pulse calc(1.8s / var(--pd-speed, 1)) var(--ease-standard) infinite; }
+@keyframes pd-rule-glow {
+  0%, 100% { opacity: .25; }
+  50% { opacity: 1; }
+}
+@keyframes pd-rule-pulse {
+  0% { transform: scale(1); opacity: .7; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
 
 .pd-handle {
   position: absolute;
@@ -468,8 +500,12 @@
 @keyframes pd-spin { to { transform: rotate(360deg); } }
 
 .pd-frame.is-paused .pd-packet,
-.pd-frame.is-paused .pd-spinner { animation-play-state: paused; }
+.pd-frame.is-paused .pd-spinner,
+.pd-frame.is-paused .pd-node-rule::before,
+.pd-frame.is-paused .pd-handle.is-rule::after { animation-play-state: paused; }
 .pd-frame.is-reduced .pd-ripple { display: none; }
+.pd-frame.is-reduced .pd-node.is-matching .pd-node-rule::before { animation: none; opacity: 1; }
+.pd-frame.is-reduced .pd-node.is-matching .pd-handle.is-rule::after { animation: none; }
 
 .pd-finished {
   position: absolute;

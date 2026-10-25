@@ -67,7 +67,9 @@ export type DemoScene = {
   syncCount: number
   emphasis: string | null
   focus: string | null
-  ruleStub: string | null
+  // ruleMatching names the routing card whose rule rows glow while matched
+  // traffic leaves through them; a 直连 rule has no edge to animate.
+  ruleMatching: string | null
   workbenchPressed: 'reset' | null
 }
 
@@ -93,7 +95,7 @@ export const emptyScene = (): DemoScene => ({
   syncCount: 0,
   emphasis: null,
   focus: null,
-  ruleStub: null,
+  ruleMatching: null,
   workbenchPressed: null,
 })
 
@@ -162,11 +164,6 @@ export function edgePath(from: Point, to: Point) {
 export function dragPath(from: Point, to: Point) {
   const bend = Math.max(40, Math.abs(to.y - from.y) * 0.5)
   return `M ${from.x} ${from.y} C ${from.x} ${from.y + bend}, ${to.x} ${to.y - bend}, ${to.x} ${to.y}`
-}
-
-export function ruleStubPath(node: DemoNode) {
-  const start = ruleHandle(node, 0)
-  return `M ${start.x} ${start.y} L ${start.x + 120} ${start.y}`
 }
 
 export function sceneEdgePath(nodes: DemoNode[], edge: DemoEdge) {
