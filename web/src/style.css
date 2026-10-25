@@ -4999,6 +4999,8 @@ body:has(.dialog-layer) .main {
 .graph-empty-state strong { color: var(--text-strong); font-size: 14px; }
 .graph-empty-state span { font-size: 13px; }
 .graph-empty-state button { margin-top: 4px; pointer-events: auto; }
+.graph-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.graph-empty-state .graph-empty-actions svg { color: currentColor; }
 .compact-panel {
   box-shadow: 0 14px 34px rgba(15, 23, 42, 0.12);
   background: color-mix(in srgb, var(--surface-solid) 96%, transparent);
