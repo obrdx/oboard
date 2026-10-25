@@ -5,7 +5,7 @@ import { MotionDialogPanel } from '../../components/ui/motion'
 import logo from '../../assets/logo.png'
 
 const stages = [
-  { icon: KeyRound, title: '基础安全与访问', detail: '修改初始密码，设置面板公开地址，确认节点默认参数。' },
+  { icon: KeyRound, title: '基础安全与访问', detail: '修改初始密码，设置面板公开地址与 AgentLink，确认节点默认参数。' },
   { icon: Server, title: '接入服务器与入口', detail: '在服务器上安装 Agent，创建供客户端连接的入口。' },
   { icon: UsersRound, title: '分配与验证', detail: '创建套餐并分配用户，在客户端中导入订阅并验证连通。' },
 ]

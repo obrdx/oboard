@@ -28,10 +28,17 @@ export const onboardingContent: Record<OnboardingItemKey, OnboardingItemContent>
     target: { tab: 'settings', category: 'panel', section: 'access' },
     targetLabel: '打开访问设置',
   },
+  agent_link: {
+    title: '配置 AgentLink 传输',
+    summary: 'Agent 通过独立端口与证书指纹连接面板。',
+    description: 'AgentLink 是 Agent 与面板之间的专用连接，使用独立的 TCP 端口和证书指纹。所有服务器的 Agent 安装与更新均依赖该连接，未启用时无法生成安装命令。请填写服务器可以访问到的地址与端口（默认 24443），并在防火墙中放行该 TCP 端口；面板位于 NAT 之后时，需要配置相应的端口转发。',
+    target: { tab: 'settings', category: 'panel', section: 'access' },
+    targetLabel: '打开访问设置',
+  },
   node_defaults: {
     title: '确认节点默认参数',
     summary: '拥塞控制、TCP 调优与时间校正的默认值。',
-    description: '以下参数仅在服务器首次安装 Agent 时写入，已安装的服务器需重新执行安装命令才会生效。请在接入服务器之前确认；单台服务器可在其设置中另行覆盖。',
+    description: '以下参数仅在服务器首次安装 Agent 时写入，已安装的服务器需重新执行安装命令才会生效。请在接入服务器之前确认。TCP 调优默认开启，当前系统不支持的参数会自动跳过；拥塞控制可在单台服务器的设置中另行覆盖。',
     target: { tab: 'settings', category: 'nodes', section: 'general' },
     targetLabel: '打开节点设置',
     confirmLabel: '确认使用当前值',

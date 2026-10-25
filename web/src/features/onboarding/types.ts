@@ -3,7 +3,7 @@ export type OnboardingItemStatus = 'done' | 'pending' | 'skipped'
 export type OnboardingMode = 'fresh' | 'established' | 'tracked'
 
 export type OnboardingItemKey =
-  | 'password' | 'controller_url' | 'node_defaults' | 'server' | 'entry' | 'access' | 'subscription'
+  | 'password' | 'controller_url' | 'agent_link' | 'node_defaults' | 'server' | 'entry' | 'access' | 'subscription'
   | 'two_factor' | 'backup' | 'notifications' | 'dns_credentials' | 'updates' | 'audit' | 'security' | 'retention'
 
 export type OnboardingItem = {

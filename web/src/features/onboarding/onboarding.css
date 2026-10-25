@@ -124,3 +124,6 @@
 @media (pointer: coarse) {
   .onboarding-check-actions button { min-height: 44px; }
 }
+
+/* Embedded settings forms keep the settings page look inside the guide. */
+.onboarding-embedded-settings .settings-group { margin: 0; border: 1px solid var(--border-color); border-radius: var(--radius-lg); }

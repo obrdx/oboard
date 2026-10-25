@@ -2287,7 +2287,7 @@ export function App() {
 
   return (
     <DialogContext.Provider value={dialogs}>
-      <OnboardingProvider client={client} isAdmin={sessionUser?.role === 'admin'} navigate={navigateTab} realtimeRevision={realtimeRevision}>
+      <OnboardingProvider client={client} isAdmin={sessionUser?.role === 'admin'} navigate={navigateTab} notify={(message, tone) => showToast(setToast, message, tone)} realtimeRevision={realtimeRevision}>
       <PageRefreshProvider register={registerPageRefresh} refresh={refreshCurrentPage} refreshing={pageRefreshing} refreshResources={refreshPageResources}>
       <LoadingContext.Provider value={loading}>
         <AnimatePresence>

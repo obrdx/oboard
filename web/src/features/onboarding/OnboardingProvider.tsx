@@ -42,10 +42,11 @@ function setSessionFlag(key: string) {
 // keeps the derived checklist current, opens the welcome screen on a new
 // panel, resumes an unfinished guide once per session, and routes the guide's
 // shortcuts to the real pages. Everything heavy is loaded on first use.
-export function OnboardingProvider({ client, isAdmin, navigate, realtimeRevision, children }: {
+export function OnboardingProvider({ client, isAdmin, navigate, notify, realtimeRevision, children }: {
   client: OnboardingClient
   isAdmin: boolean
   navigate: (tab: string) => void
+  notify: (message: string, tone?: 'success' | 'error') => void
   realtimeRevision: number
   children: React.ReactNode
 }) {
@@ -147,6 +148,7 @@ export function OnboardingProvider({ client, isAdmin, navigate, realtimeRevision
         refresh={refresh}
         go={go}
         openDemo={() => { setGuide(null); openDemo() }}
+        notify={notify}
         onClose={() => { setGuide(null); if (guideTracked(view)) setResumeVisible(true) }}
       />}
       {demoOpen && <ProxyPathDemoDialog

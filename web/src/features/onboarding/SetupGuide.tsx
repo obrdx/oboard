@@ -4,6 +4,7 @@ import { AlertTriangle, Check, ChevronRight, CirclePlay, Minus, X } from 'lucide
 import { MotionDialogPanel } from '../../components/ui/motion'
 import { Select } from '../../components/ui/select'
 import { SettingsRow, SettingsSwitchRow } from '../../components/settings/SettingsLayout'
+import { StealthTransportSettings, type StealthTransportConfig } from '../../components/settings/StealthTransportSettings'
 import { bbrQdiscHints, bbrQdiscOptions, parseBBRQdisc, type BBRQdisc } from '../../components/server/bbr-options'
 import { itemsByLevel, onboardingContent, onboardingTours, firstOpenRequired, type OnboardingTarget } from './content'
 import type { GuideSection } from './OnboardingProvider'
@@ -18,6 +19,7 @@ type GuideProps = {
   refresh: () => Promise<OnboardingView | undefined>
   go: (target: OnboardingTarget) => void
   openDemo: () => void
+  notify: (message: string, tone?: 'success' | 'error') => void
   onClose: () => void
 }
 
@@ -29,7 +31,7 @@ const sections: Array<{ key: GuideSection; label: string }> = [
 
 const statusLabel: Record<OnboardingItem['status'], string> = { done: '已完成', pending: '待完成', skipped: '已跳过' }
 
-export function SetupGuide({ view, client, initialSection, initialItem, act, refresh, go, openDemo, onClose }: GuideProps) {
+export function SetupGuide({ view, client, initialSection, initialItem, act, refresh, go, openDemo, notify, onClose }: GuideProps) {
   const [section, setSection] = useState<GuideSection>(initialSection)
   const required = itemsByLevel(view, 'required')
   const recommended = itemsByLevel(view, 'recommended')
@@ -93,6 +95,7 @@ export function SetupGuide({ view, client, initialSection, initialItem, act, ref
             refresh={refresh}
             go={go}
             openDemo={openDemo}
+            notify={notify}
             onAdvance={advance}
           />
         </AnimatePresence>
@@ -149,6 +152,7 @@ type DetailProps = {
   refresh: GuideProps['refresh']
   go: GuideProps['go']
   openDemo: () => void
+  notify: GuideProps['notify']
   onAdvance: (next: OnboardingView) => void
 }
 
@@ -156,8 +160,8 @@ function StepDetail(props: DetailProps) {
   const { item, view, busy, error, run, act, go, openDemo, onAdvance } = props
   const reduced = useReducedMotion()
   const content = onboardingContent[item.key]
-  const skippable = !['password', 'controller_url'].includes(item.key)
-  const controllerURLReady = view.items.find(entry => entry.key === 'controller_url')?.status === 'done'
+  const skippable = !['password', 'controller_url', 'agent_link'].includes(item.key)
+  const prerequisitesReady = ['controller_url', 'agent_link'].every(key => view.items.find(entry => entry.key === key)?.status === 'done')
   return <m.section
     className="onboarding-detail"
     aria-labelledby={`onboarding-${item.key}`}
@@ -174,9 +178,10 @@ function StepDetail(props: DetailProps) {
 
     {item.key === 'password' && <PasswordStep {...props} />}
     {item.key === 'controller_url' && <ControllerURLStep {...props} />}
+    {item.key === 'agent_link' && <AgentLinkStep {...props} />}
     {item.key === 'node_defaults' && <NodeDefaultsStep {...props} />}
     {item.key === 'server' && <>
-      {!controllerURLReady && <p className="onboarding-warning"><AlertTriangle size={15} />请先完成「设置面板公开地址」，否则 Agent 无法连接面板。</p>}
+      {!prerequisitesReady && <p className="onboarding-warning"><AlertTriangle size={15} />请先完成「设置面板公开地址」与「配置 AgentLink 传输」，否则无法生成安装命令，Agent 也无法连接面板。</p>}
       <p className="onboarding-fact">已添加 {item.detail?.servers ?? 0} 台服务器，其中 {item.detail?.online ?? 0} 台在线。</p>
     </>}
     {item.key === 'entry' && <p className="onboarding-fact">已启用 {item.detail?.inbounds ?? 0} 个入口。</p>}
@@ -185,7 +190,7 @@ function StepDetail(props: DetailProps) {
     {error && <p className="onboarding-error" role="alert">{error}</p>}
 
     <div className="onboarding-detail-actions">
-      {content.target && !['password', 'node_defaults', 'controller_url'].includes(item.key) && <button type="button" onClick={() => go(content.target!)}>{content.targetLabel}<ChevronRight size={14} /></button>}
+      {content.target && !['password', 'node_defaults', 'controller_url', 'agent_link'].includes(item.key) && <button type="button" onClick={() => go(content.target!)}>{content.targetLabel}<ChevronRight size={14} /></button>}
       {item.key === 'access' && <button type="button" className="ghost" onClick={() => go({ tab: 'users' })}>前往用户与分组<ChevronRight size={14} /></button>}
       {item.key === 'entry' && <button type="button" className="ghost" onClick={openDemo}><CirclePlay size={14} />观看代理链路演示</button>}
       {item.key === 'subscription' && item.status !== 'done' && <button type="button" className="ghost" disabled={busy} onClick={() => void run(async () => onAdvance(await act('confirm', item.key)))}>{content.confirmLabel}</button>}
@@ -252,10 +257,34 @@ function ControllerURLStep({ item, client, busy, run, refresh, onAdvance }: Deta
   </form>
 }
 
+// AgentLinkStep embeds the same AgentLink form as 设置 → 面板 → 访问. When
+// nothing is configured yet it suggests the panel's own host on the default
+// port, which is what most single-host installations use.
+function AgentLinkStep({ item, view, client, refresh, notify, onAdvance }: DetailProps) {
+  const current = (item.detail || {}) as Partial<StealthTransportConfig> & { active?: boolean; error?: string; source?: string }
+  const configured = Boolean(current.enabled || current.public_address)
+  const panelURL = String(view.items.find(entry => entry.key === 'controller_url')?.detail?.url || '')
+  let suggestedHost = ''
+  try { suggestedHost = panelURL ? new URL(panelURL).host.replace(/:\d+$/, '') : '' } catch { suggestedHost = '' }
+  const value = configured || !suggestedHost ? current : { ...current, enabled: true, public_address: `${suggestedHost}:24443`, source: undefined }
+  return <div className="onboarding-embedded-settings">
+    <StealthTransportSettings
+      value={value}
+      defaultOpen
+      notify={notify}
+      onSave={async config => {
+        await client.request('/settings', { method: 'POST', body: JSON.stringify({ stealth_transport: config }) })
+        const next = await refresh()
+        if (next) onAdvance(next)
+      }}
+    />
+  </div>
+}
+
 function NodeDefaultsStep({ item, client, busy, run, act, onAdvance }: DetailProps) {
   const [settings, setSettings] = useState<Record<string, any> | null>(null)
   const [qdisc, setQdisc] = useState<BBRQdisc>('fq')
-  const [tcpTuning, setTCPTuning] = useState(false)
+  const [tcpTuning, setTCPTuning] = useState(true)
   const [timeMode, setTimeMode] = useState('auto')
   useEffect(() => {
     let active = true
@@ -264,14 +293,14 @@ function NodeDefaultsStep({ item, client, busy, run, act, onAdvance }: DetailPro
       const values = result?.settings || {}
       setSettings(values)
       setQdisc(parseBBRQdisc(values.server_default_bbr_qdisc))
-      setTCPTuning(String(values.server_default_tcp_tuning_enabled ?? 'false') === 'true')
+      setTCPTuning(String(values.server_default_tcp_tuning_enabled ?? 'true') === 'true')
       setTimeMode(String(values.server_default_time_correction_mode || 'auto'))
     }).catch(() => setSettings({}))
     return () => { active = false }
   }, [client])
   const changed = useMemo(() => settings !== null && (
     parseBBRQdisc(settings.server_default_bbr_qdisc) !== qdisc ||
-    (String(settings.server_default_tcp_tuning_enabled ?? 'false') === 'true') !== tcpTuning ||
+    (String(settings.server_default_tcp_tuning_enabled ?? 'true') === 'true') !== tcpTuning ||
     String(settings.server_default_time_correction_mode || 'auto') !== timeMode
   ), [settings, qdisc, tcpTuning, timeMode])
   if (!settings) return <p className="onboarding-fact">正在读取当前设置…</p>

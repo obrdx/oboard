@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"net/http"
+	"path/filepath"
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -21,6 +22,7 @@ func onboardingItemStatus(t *testing.T, view map[string]any, key string) string 
 }
 
 func TestOnboardingGuidesFreshPanelAndGatesCompletion(t *testing.T) {
+	t.Setenv("OBOARD_STEALTH_ADDR", "")
 	db := openControllerAutomationTestStore(t)
 	srv := newTestServer(db, "test-secret", "")
 	h := srv.Handler()
@@ -67,6 +69,22 @@ func TestOnboardingGuidesFreshPanelAndGatesCompletion(t *testing.T) {
 
 	if err := db.SetSetting(ctx, "controller_url", "https://panel.example.com"); err != nil {
 		t.Fatal(err)
+	}
+	// AgentLink cannot be skipped: every install command needs it running.
+	request(t, h, http.MethodPost, "/api/v1/ui/onboarding", token, map[string]any{"action": "skip", "item": "agent_link"}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/onboarding", token, map[string]any{"action": "complete"}, http.StatusConflict)
+	srv.ConfigureStealthTransport(filepath.Join(t.TempDir(), "controller.sqlite"))
+	if err := srv.StartStealthTransport(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	addr := unusedStealthAddress(t)
+	if err := srv.updateStealthConfig(ctx, stealthTransportConfig{Enabled: true, ListenAddress: addr, PublicAddress: addr}, true); err != nil {
+		t.Fatal(err)
+	}
+	linked := request(t, h, http.MethodGet, "/api/v1/ui/onboarding", token, nil, http.StatusOK)
+	if onboardingItemStatus(t, linked, "agent_link") != "done" {
+		t.Fatalf("active AgentLink not recognised: %#v", linked["items"])
 	}
 	completed := request(t, h, http.MethodPost, "/api/v1/ui/onboarding", token, map[string]any{"action": "complete"}, http.StatusOK)
 	if completed["state"].(map[string]any)["status"] != "completed" || completed["can_complete"] != true {

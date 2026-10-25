@@ -49,6 +49,9 @@ type onboardingItemSpec struct {
 var onboardingItems = []onboardingItemSpec{
 	{key: "password", level: "required"},
 	{key: "controller_url", level: "required"},
+	// AgentLink must be running before any Agent install command can be
+	// issued, so it cannot be skipped either.
+	{key: "agent_link", level: "required"},
 	{key: "node_defaults", level: "required", skippable: true, confirmable: true},
 	{key: "server", level: "required", skippable: true},
 	{key: "entry", level: "required", skippable: true},
@@ -144,11 +147,14 @@ func (s *Server) onboardingView(ctx context.Context, user *model.User) (onboardi
 		}
 	}
 	controllerURL := strings.TrimSpace(settings["controller_url"])
+	agentLink := s.publicStealthSettings(settings)
+	_, _, agentLinkActive := s.StealthTransportInfo()
 	done := map[string]bool{
 		// Only the bootstrap account starts from a generated password; other
 		// administrators and established panels have nothing to rotate.
 		"password":        state.PasswordRotated || !bootstrap || mode == "established",
 		"controller_url":  controllerURL != "",
+		"agent_link":      agentLinkActive,
 		"node_defaults":   slices.Contains(state.Confirmed, "node_defaults") || signals.Servers > 0,
 		"server":          signals.OnlineServers > 0,
 		"entry":           signals.EnabledInbounds > 0,
@@ -161,6 +167,7 @@ func (s *Server) onboardingView(ctx context.Context, user *model.User) (onboardi
 	}
 	details := map[string]map[string]any{
 		"controller_url": {"url": controllerURL, "https": strings.HasPrefix(strings.ToLower(controllerURL), "https://")},
+		"agent_link":     agentLink,
 		"server":         {"servers": signals.Servers, "online": signals.OnlineServers},
 		"entry":          {"inbounds": signals.EnabledInbounds},
 		"access":         {"plans": signals.PlansWithNodes, "bindings": signals.ActivePlanBindings},

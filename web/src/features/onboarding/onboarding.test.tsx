@@ -7,7 +7,7 @@ import { OnboardingDashboardCard, OnboardingProvider, OnboardingTopbarButton } f
 import { onboardingContent } from './content'
 import type { OnboardingItemKey, OnboardingView } from './types'
 
-const requiredKeys: OnboardingItemKey[] = ['password', 'controller_url', 'node_defaults', 'server', 'entry', 'access', 'subscription']
+const requiredKeys: OnboardingItemKey[] = ['password', 'controller_url', 'agent_link', 'node_defaults', 'server', 'entry', 'access', 'subscription']
 const recommendedKeys: OnboardingItemKey[] = ['two_factor', 'backup', 'notifications', 'dns_credentials', 'updates', 'audit', 'security', 'retention']
 
 function makeView(overrides: Partial<OnboardingView> = {}): OnboardingView {
@@ -73,7 +73,7 @@ function render(view: OnboardingView) {
   }
   const navigate = vi.fn()
   act(() => root.render(<LazyMotion features={domAnimation}>
-    <OnboardingProvider client={client} isAdmin navigate={navigate} realtimeRevision={0}>
+    <OnboardingProvider client={client} isAdmin navigate={navigate} notify={vi.fn()} realtimeRevision={0}>
       <OnboardingTopbarButton />
       <OnboardingDashboardCard />
     </OnboardingProvider>

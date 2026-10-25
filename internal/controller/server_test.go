@@ -1362,6 +1362,7 @@ func TestServerCreationDefaultsAndExplicitOverrides(t *testing.T) {
 // tuning settings, and that a server following the panel is pinned to the BBR
 // choice of its first issued command so a later panel change cannot reach it.
 func TestAgentInstallCommandUsesPanelWideTuningSettings(t *testing.T) {
+	t.Setenv("OBOARD_STEALTH_ADDR", "")
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -1371,7 +1372,18 @@ func TestAgentInstallCommandUsesPanelWideTuningSettings(t *testing.T) {
 	if err := db.SetSetting(ctx, "controller_url", "https://panel.example.com"); err != nil {
 		t.Fatal(err)
 	}
-	h := newTestServer(db, "test-secret", "").Handler()
+	srv := newTestServer(db, "test-secret", "")
+	defer srv.Close()
+	// Every install command carries the AgentLink address, so it must run.
+	srv.ConfigureStealthTransport(filepath.Join(t.TempDir(), "controller.sqlite"))
+	if err := srv.StartStealthTransport(ctx); err != nil {
+		t.Fatal(err)
+	}
+	addr := unusedStealthAddress(t)
+	if err := srv.updateStealthConfig(ctx, stealthTransportConfig{Enabled: true, ListenAddress: addr, PublicAddress: addr}, true); err != nil {
+		t.Fatal(err)
+	}
+	h := srv.Handler()
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
@@ -1384,7 +1396,7 @@ func TestAgentInstallCommandUsesPanelWideTuningSettings(t *testing.T) {
 	}
 
 	command := request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)["install_command"].(string)
-	if !strings.Contains(command, "OBOARD_INSTALL_BBR='fq'") || !strings.Contains(command, "OBOARD_INSTALL_BBR_CAKE_BANDWIDTH='0'") || !strings.Contains(command, "OBOARD_INSTALL_TCP_TUNING='0'") {
+	if !strings.Contains(command, "OBOARD_INSTALL_BBR='fq'") || !strings.Contains(command, "OBOARD_INSTALL_BBR_CAKE_BANDWIDTH='0'") || !strings.Contains(command, "OBOARD_INSTALL_TCP_TUNING='1'") {
 		t.Fatalf("fresh panel defaults not rendered: %s", command)
 	}
 	if qdisc, mbit := storedBBR(serverPath); qdisc != "fq" || mbit != float64(0) {
@@ -1394,9 +1406,9 @@ func TestAgentInstallCommandUsesPanelWideTuningSettings(t *testing.T) {
 	if settings["server_default_bbr_qdisc"] != "fq" || settings["server_default_bbr_cake_bandwidth_mbit"] != float64(0) {
 		t.Fatalf("settings defaults = %v / %v", settings["server_default_bbr_qdisc"], settings["server_default_bbr_cake_bandwidth_mbit"])
 	}
-	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"server_default_bbr_qdisc": "cake", "server_default_bbr_cake_bandwidth_mbit": 950, "server_default_tcp_tuning_enabled": true}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"server_default_bbr_qdisc": "cake", "server_default_bbr_cake_bandwidth_mbit": 950, "server_default_tcp_tuning_enabled": false}, http.StatusOK)
 	command = request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)["install_command"].(string)
-	if !strings.Contains(command, "OBOARD_INSTALL_BBR='fq'") || !strings.Contains(command, "OBOARD_INSTALL_BBR_CAKE_BANDWIDTH='0'") || !strings.Contains(command, "OBOARD_INSTALL_TCP_TUNING='1'") {
+	if !strings.Contains(command, "OBOARD_INSTALL_BBR='fq'") || !strings.Contains(command, "OBOARD_INSTALL_BBR_CAKE_BANDWIDTH='0'") || !strings.Contains(command, "OBOARD_INSTALL_TCP_TUNING='0'") {
 		t.Fatalf("panel BBR change reached a pinned server, or TCP tuning stopped following the panel: %s", command)
 	}
 
