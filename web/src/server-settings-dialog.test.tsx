@@ -31,9 +31,17 @@ function Harness({ onSubmit, panelBBR, initial = baseDraft }: { onSubmit: (draft
 const tab = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(item => item.textContent?.startsWith(label))!
 const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent === label)!
 
-it('navigates sections and sends a missing renewal cycle back to billing before creating', async () => {
+it('creates without a renewal cycle while no expiry date is set', async () => {
   const onSubmit = vi.fn().mockResolvedValue(undefined)
   await act(async () => root.render(<Harness onSubmit={onSubmit} />))
+  await act(async () => button('创建').click())
+  expect(onSubmit).toHaveBeenCalledTimes(1)
+  expect(document.querySelector('#server-renewal-cycle-error')).toBeNull()
+})
+
+it('navigates sections and sends a missing renewal cycle back to billing before creating', async () => {
+  const onSubmit = vi.fn().mockResolvedValue(undefined)
+  await act(async () => root.render(<Harness onSubmit={onSubmit} initial={{ ...baseDraft, expires_at: '2027-01-02' }} />))
   expect(tab('基本信息').getAttribute('aria-selected')).toBe('true')
   expect(document.querySelectorAll('[role="tab"]')).toHaveLength(5)
 

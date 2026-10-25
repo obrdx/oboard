@@ -335,8 +335,12 @@ func (s *Server) prepareServerOnboardRecipe(ctx context.Context, principal appli
 	if nested, ok := input.Params["server"].(map[string]any); ok && cycle == "" {
 		cycle, _ = nested["renewal_cycle"].(string)
 	}
-	if enabled && cycle != string(model.ServerRenewalCycleMonthly) && cycle != string(model.ServerRenewalCycleQuarterly) && cycle != string(model.ServerRenewalCycleSemiannual) && cycle != string(model.ServerRenewalCycleAnnual) {
-		return &mcpPreparedRecipe{Status: "needs_input", Intent: "server.onboard", Questions: []map[string]any{{"field": "server.renewal_cycle", "type": "string", "reason": "开启自动续期必须选择 monthly（月付）、quarterly（季付）、semiannual（半年付）或 annual（年付）。"}}}, nil
+	expiresAt := taskStringParam(input.Params, "server.expires_at", "expires_at")
+	if nested, ok := input.Params["server"].(map[string]any); ok && expiresAt == "" {
+		expiresAt, _ = nested["expires_at"].(string)
+	}
+	if enabled && (cycle != "" || serverRenewalCycleRequired(enabled, strings.TrimSpace(expiresAt) != "")) && !validServerRenewalCycle(model.ServerRenewalCycle(cycle)) {
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "server.onboard", Questions: []map[string]any{{"field": "server.renewal_cycle", "type": "string", "reason": "开启自动续期并设置到期日时必须选择 monthly（月付）、quarterly（季付）、semiannual（半年付）或 annual（年付）。"}}}, nil
 	}
 	ipStack := taskStringParam(input.Params, "server.ip_stack", "ip_stack")
 	if ipStack == "" {

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -198,10 +199,13 @@ func (s *Server) applyServerOnboardingDefaults(ctx context.Context, input json.R
 	envelope := jsonObjectKeys(input)
 	serverKeys := jsonObjectKeys(envelope["server"])
 	if _, ok := serverKeys["auto_renew_enabled"]; !ok {
-		return fmt.Errorf("MCP 创建服务器必须明确传入 auto_renew_enabled；开启时还必须传入 renewal_cycle")
+		return fmt.Errorf("MCP 创建服务器必须明确传入 auto_renew_enabled；开启且设置 expires_at 时还必须传入 renewal_cycle")
 	}
 	applyDefaultBool(serverKeys, "auto_renew_enabled", &request.Server.AutoRenewEnabled, defaults.AutoRenewEnabled)
-	if err := requireServerRenewalCycle(request.Server.AutoRenewEnabled, serverKeys["renewal_cycle"]); err != nil {
+	if raw, ok := serverKeys["renewal_cycle"]; ok && string(raw) == `""` {
+		delete(serverKeys, "renewal_cycle")
+	}
+	if err := requireServerRenewalCycle(request.Server.AutoRenewEnabled, request.Server.ExpiresAt != nil, serverKeys["renewal_cycle"]); err != nil {
 		return err
 	}
 	applyDefaultString(serverKeys, "listen_ip", &request.Server.ListenIP, defaults.ListenIP)
@@ -282,13 +286,26 @@ func (s *Server) applyServerOnboardingDefaults(ctx context.Context, input json.R
 	return nil
 }
 
-func requireServerRenewalCycle(enabled bool, raw json.RawMessage) error {
-	if !enabled {
+// serverRenewalCycleRequired reports whether a create must name a renewal
+// cycle. Automatic renewal only advances an existing expiry date, so without
+// one the cycle has nothing to act on and the default is kept.
+func serverRenewalCycleRequired(autoRenew, hasExpiry bool) bool {
+	return autoRenew && hasExpiry
+}
+
+const serverRenewalCycleRequiredMessage = "开启自动续期并设置到期日时必须明确填写 renewal_cycle（monthly、quarterly、semiannual 或 annual）"
+
+func validServerRenewalCycle(cycle model.ServerRenewalCycle) bool {
+	return cycle == model.ServerRenewalCycleMonthly || cycle == model.ServerRenewalCycleQuarterly || cycle == model.ServerRenewalCycleSemiannual || cycle == model.ServerRenewalCycleAnnual
+}
+
+func requireServerRenewalCycle(enabled, hasExpiry bool, raw json.RawMessage) error {
+	if !enabled || (len(raw) == 0 && !serverRenewalCycleRequired(enabled, hasExpiry)) {
 		return nil
 	}
 	var cycle model.ServerRenewalCycle
-	if len(raw) == 0 || json.Unmarshal(raw, &cycle) != nil || (cycle != model.ServerRenewalCycleMonthly && cycle != model.ServerRenewalCycleQuarterly && cycle != model.ServerRenewalCycleSemiannual && cycle != model.ServerRenewalCycleAnnual) {
-		return fmt.Errorf("开启自动续期时必须明确填写 renewal_cycle（monthly、quarterly、semiannual 或 annual）")
+	if len(raw) == 0 || json.Unmarshal(raw, &cycle) != nil || !validServerRenewalCycle(cycle) {
+		return errors.New(serverRenewalCycleRequiredMessage)
 	}
 	return nil
 }
@@ -347,9 +364,9 @@ func (s *Server) materializeServerOnboardForm(ctx context.Context, input json.Ra
 func panelServerFormResource(defaults panelServerFormDefaults) map[string]any {
 	return map[string]any{
 		"name":     "OBoard server create form",
-		"summary":  "新服务器默认开启自动续期。MCP 必须明确传入 auto_renew_enabled；为 true 时还必须明确传入 renewal_cycle。",
-		"rule":     "其他省略字段使用面板默认值。auto_renew_enabled=false 时可省略 renewal_cycle。",
-		"required": []string{"server.name", "server.auto_renew_enabled", "server.renewal_cycle（自动续期启用时）"},
+		"summary":  "新服务器默认开启自动续期。MCP 必须明确传入 auto_renew_enabled；为 true 且设置 expires_at 时还必须明确传入 renewal_cycle。",
+		"rule":     "其他省略字段使用面板默认值。auto_renew_enabled=false 或未设置 expires_at 时可省略 renewal_cycle，默认 monthly。",
+		"required": []string{"server.name", "server.auto_renew_enabled", "server.renewal_cycle（自动续期启用且设置到期日时）"},
 		"defaults": defaults.asMap(),
 		"default_on_switches": []string{
 			"resource_history_enabled", "latency_probe_enabled",

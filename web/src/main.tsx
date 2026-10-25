@@ -7685,7 +7685,7 @@ export function ServerSettingsDialog({ mode, server, draft, update, onCancel, on
   const nameMissing = !String(draft.name || '').trim()
   const invalid: Partial<Record<ServerSettingsTab, boolean>> = {
     basic: nameMissing,
-    billing: cycleMissing && Boolean(draft.auto_renew_enabled),
+    billing: cycleMissing && Boolean(draft.auto_renew_enabled) && Boolean(draft.expires_at),
     network: !portRangeValid || !internalPortRangeValid || entryAddressInvalid,
   }
   const tabIndex = serverSettingTabs.findIndex(item => item.id === tab)
@@ -7703,7 +7703,7 @@ export function ServerSettingsDialog({ mode, server, draft, update, onCancel, on
       choose('network')
       return
     }
-    if (draft.auto_renew_enabled && !draft.renewal_cycle) {
+    if (draft.auto_renew_enabled && draft.expires_at && !draft.renewal_cycle) {
       setCycleMissing(true)
       choose('billing')
       return
@@ -7792,7 +7792,7 @@ export function ServerSettingsDialog({ mode, server, draft, update, onCancel, on
               <SettingRow label="自动续期" description="到期后保留 3 天宽限期，第 3 天自动按周期顺延。">
                 <Switch checked={Boolean(draft.auto_renew_enabled)} onChange={checked => update({ auto_renew_enabled: checked })} ariaLabel="自动续期" />
               </SettingRow>
-              {Boolean(draft.auto_renew_enabled) && <SettingRow label="续期周期" description="顺延 1、3、6 或 12 个月，月底日期自动取当月最后一天。">
+              {Boolean(draft.auto_renew_enabled) && <SettingRow label="续期周期" description={draft.expires_at ? '顺延 1、3、6 或 12 个月，月底日期自动取当月最后一天。' : '填写到期日后才会按周期续期，现在可以先不选。'}>
                 <Select value={draft.renewal_cycle || ''} onChange={e => { update({ renewal_cycle: e.target.value as 'monthly' | 'quarterly' | 'semiannual' | 'annual' }); setCycleMissing(false) }} aria-label="续期周期" aria-invalid={cycleMissing} aria-describedby={cycleMissing ? 'server-renewal-cycle-error' : undefined}>
                   <option value="" disabled>请选择续期周期</option>
                   <option value="monthly">月付（下月同日）</option>
@@ -7800,7 +7800,7 @@ export function ServerSettingsDialog({ mode, server, draft, update, onCancel, on
                   <option value="semiannual">半年付（六个月后同日）</option>
                   <option value="annual">年付（次年同日）</option>
                 </Select>
-                {cycleMissing && <p id="server-renewal-cycle-error" className="ss-error" role="alert">开启自动续期时必须选择续期周期。</p>}
+                {cycleMissing && Boolean(draft.expires_at) && <p id="server-renewal-cycle-error" className="ss-error" role="alert">开启自动续期并设置到期日时，必须选择续期周期。</p>}
               </SettingRow>}
               <SettingRow label="到期提醒" description="提前天数与发送时间在系统通知设置中配置，频道需勾选“服务器到期”。">
                 <Switch checked={draft.expiry_notify_enabled !== false} onChange={checked => update({ expiry_notify_enabled: checked })} ariaLabel="到期提醒" />

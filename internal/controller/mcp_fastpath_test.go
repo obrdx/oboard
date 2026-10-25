@@ -102,7 +102,7 @@ func TestMCPServerOnboardingUsesControllerDefaults(t *testing.T) {
 	if !request.Server.AutoRenewEnabled || request.Server.RenewalCycle != model.ServerRenewalCycleMonthly {
 		t.Fatalf("renewal settings = %v/%s", request.Server.AutoRenewEnabled, request.Server.RenewalCycle)
 	}
-	for _, raw := range []string{`{"server":{"name":"missing-switch"}}`, `{"server":{"name":"missing-cycle","auto_renew_enabled":true}}`, `{"server":{"name":"bad-cycle","auto_renew_enabled":true,"renewal_cycle":"yearly"}}`} {
+	for _, raw := range []string{`{"server":{"name":"missing-switch"}}`, `{"server":{"name":"missing-cycle","auto_renew_enabled":true,"expires_at":"2027-01-02T03:04:05Z"}}`, `{"server":{"name":"bad-cycle","auto_renew_enabled":true,"renewal_cycle":"yearly"}}`} {
 		candidate, err := decodeServerOnboardingOperation(json.RawMessage(raw))
 		if err != nil {
 			t.Fatal(err)
@@ -110,6 +110,14 @@ func TestMCPServerOnboardingUsesControllerDefaults(t *testing.T) {
 		if err := s.applyServerOnboardingDefaults(ctx, json.RawMessage(raw), &candidate); err == nil {
 			t.Fatalf("accepted incomplete renewal settings: %s", raw)
 		}
+	}
+	noExpiry := json.RawMessage(`{"server":{"name":"no-expiry","auto_renew_enabled":true}}`)
+	undated, err := decodeServerOnboardingOperation(noExpiry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.applyServerOnboardingDefaults(ctx, noExpiry, &undated); err != nil || !undated.Server.AutoRenewEnabled || undated.Server.RenewalCycle != model.ServerRenewalCycleMonthly {
+		t.Fatalf("renewal without expiry should keep the monthly default: server=%+v err=%v", undated.Server, err)
 	}
 	bareDisabled := json.RawMessage(`{"server":{"name":"disabled","auto_renew_enabled":false}}`)
 	disabled, err := decodeServerOnboardingOperation(bareDisabled)
@@ -168,6 +176,14 @@ func TestMCPServerOnboardingUsesControllerDefaults(t *testing.T) {
 	needsRenewal, err := s.prepareServerOnboardRecipe(ctx, application.Principal{}, mcpTaskInput{Params: map[string]any{"name": "Tokyo-needs-renewal"}})
 	if err != nil || needsRenewal.Status != "needs_input" {
 		t.Fatalf("missing renewal response=%#v err=%v", needsRenewal, err)
+	}
+	datedRenewal, err := s.prepareServerOnboardRecipe(ctx, application.Principal{}, mcpTaskInput{Params: map[string]any{"name": "Tokyo-dated", "auto_renew_enabled": true, "expires_at": "2027-01-02T03:04:05Z"}})
+	if err != nil || datedRenewal.Status != "needs_input" || datedRenewal.Questions[0]["field"] != "server.renewal_cycle" {
+		t.Fatalf("dated renewal without cycle=%#v err=%v", datedRenewal, err)
+	}
+	undatedRenewal, err := s.prepareServerOnboardRecipe(ctx, application.Principal{}, mcpTaskInput{Params: map[string]any{"name": "Tokyo-undated", "auto_renew_enabled": true}})
+	if err != nil || undatedRenewal == nil || len(undatedRenewal.Operations) != 1 {
+		t.Fatalf("undated renewal should not ask for a cycle: %#v err=%v", undatedRenewal, err)
 	}
 	nameOnly, err := s.prepareServerOnboardRecipe(ctx, application.Principal{}, mcpTaskInput{Params: map[string]any{"name": "Tokyo-defaults-only", "auto_renew_enabled": false}})
 	if err != nil || nameOnly == nil || len(nameOnly.Operations) != 1 {
