@@ -10811,7 +10811,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
   const submitServerDraft = async () => {
     if (!serverDraft) return
     try {
-      const payload = { ...serverDraft, expires_at: serverDraft.expires_at ? serverExpiryOutputValue(serverDraft.expires_at) : null }
+      const payload = { ...serverDraft, service_start_at: serverDraft.service_start_at ? serverExpiryOutputValue(serverDraft.service_start_at) : null, expires_at: serverDraft.expires_at ? serverExpiryOutputValue(serverDraft.expires_at) : null }
       const result = await createServerRecord<Server>(client, payload, servers)
       applyMutationResult(result)
       onServerSnapshot(result.server)
