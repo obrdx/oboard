@@ -52,6 +52,7 @@ import (
 
 const (
 	settingServerDefaultMTUMode           = "server_default_mtu_mode"
+	settingAgentContinueWhenDisconnected  = "agent_continue_when_disconnected"
 	settingServerDefaultTCPTuningEnabled  = "server_default_tcp_tuning_enabled"
 	settingServerDefaultTimeCorrection    = "server_default_time_correction_mode"
 	settingServerMonitoringRetentionDays  = "server_monitoring_retention_days"
@@ -1099,6 +1100,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			ServerDefaultMTUMode                      *string            `json:"server_default_mtu_mode"`
 			ServerDefaultBBRQdisc                     *string            `json:"server_default_bbr_qdisc"`
 			ServerDefaultCakeBandwidthMbit            *int               `json:"server_default_bbr_cake_bandwidth_mbit"`
+			AgentContinueWhenDisconnected             *bool              `json:"agent_continue_when_disconnected"`
 			ServerDefaultTCPTuningEnabled             *bool              `json:"server_default_tcp_tuning_enabled"`
 			ServerDefaultTimeCorrection               *string            `json:"server_default_time_correction_mode"`
 			ServerMonitoringRetentionDays             *int               `json:"server_monitoring_retention_days"`
@@ -1546,6 +1548,15 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			}
 			changed = append(changed, settingServerDefaultCakeBandwidth)
 		}
+		if req.AgentContinueWhenDisconnected != nil {
+			if err := s.store.SetSetting(r.Context(), settingAgentContinueWhenDisconnected, strconv.FormatBool(*req.AgentContinueWhenDisconnected)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingAgentContinueWhenDisconnected)
+			s.invalidateAuthorizationProjection()
+			s.wakeAuthorizationSync()
+		}
 		if req.ServerDefaultTCPTuningEnabled != nil {
 			if err := s.store.SetSetting(r.Context(), settingServerDefaultTCPTuningEnabled, strconv.FormatBool(*req.ServerDefaultTCPTuningEnabled)); err != nil {
 				fail(w, err, http.StatusInternalServerError)
@@ -1790,6 +1801,7 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 
 func (s *Server) publicSettingsValues(ctx context.Context, items map[string]string) map[string]any {
 	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingDNSAlwaysResolve: false, settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: false, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBRQdisc: agentInstallBBRDefaultQdisc, settingServerDefaultCakeBandwidth: 0, settingServerDefaultTCPTuningEnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingMetricHourlyRetentionDays: store.DefaultMetricHourlyRetentionDays, settingMetricDailyRetentionDays: store.DefaultMetricDailyRetentionDays, settingLatencyRollupRetentionDays: store.DefaultLatencyRollupRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), settingRemoteTerminalEnabled: true, settingRemoteTerminalPasswordConfirmationEnabled: true, settingMCPEnabled: false, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out[settingAgentContinueWhenDisconnected] = false
 	out[resourceDownloadSourceSetting] = "controller"
 	out[agentAutoUpdateSetting] = false
 	out[subscriptionRelayAutoUpdateSetting] = false
@@ -1807,6 +1819,7 @@ func (s *Server) publicSettingsValues(ctx context.Context, items map[string]stri
 	out[settingStealthTransport] = s.publicStealthSettings(items)
 	out[controllerAutoUpdateSetting] = settingBool(items, controllerAutoUpdateSetting, false)
 	out[controllerAutoUpdateIntervalSetting] = controllerUpdateIntervalHours(items)
+	out[settingAgentContinueWhenDisconnected] = settingBool(items, settingAgentContinueWhenDisconnected, false)
 	out[resourceDownloadCNControllerSetting] = settingBool(items, resourceDownloadCNControllerSetting, true)
 	out[agentAutoUpdateSetting] = settingBool(items, agentAutoUpdateSetting, false)
 	out[subscriptionRelayAutoUpdateSetting] = settingBool(items, subscriptionRelayAutoUpdateSetting, false)

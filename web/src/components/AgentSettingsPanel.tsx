@@ -237,6 +237,9 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
     <section className="settings-card agent-settings-card signal-settings" aria-busy={Boolean(savingKey)}>
       {error && <p className="settings-feedback" role="alert">{error}</p>}
       {savingKey === 'auto-save' && <p className="settings-feedback" role="status">正在保存设置…</p>}
+      <SettingsGroup title="服务可用性">
+        <SettingsSwitchRow label="主控失联后继续提供服务" description="默认关闭。开启后按最后收到的授权继续服务，恢复连接后同步流量；已知到期、封禁及本地套餐总额度仍生效。失联期间多节点用量可能超出套餐总额度。需更新 Agent 和内核，设置送达节点后生效。" checked={String(data.settings?.agent_continue_when_disconnected ?? 'false') === 'true'} onChange={checked => void autoSaveSetting({ agent_continue_when_disconnected: checked }, '主控失联服务设置已保存')} disabled={Boolean(savingKey)} ariaLabel="主控失联后继续提供服务" />
+      </SettingsGroup>
       <SettingsGroup title="资源下载" description="选择服务器安装和更新时的下载来源。订阅中继固定从主控下载。">
         <SettingsSwitchRow label="优先从 GitHub 下载" description="开启后优先从 GitHub 下载，无法下载时改用主控。" checked={data.settings?.resource_download_source === 'github'} onChange={checked => void autoSaveSetting({ resource_download_source: checked ? 'github' : 'controller' }, '资源下载来源已保存')} disabled={Boolean(savingKey)} ariaLabel="优先从 GitHub 下载资源" />
         <SettingsSwitchRow label="中国大陆主控优先" description="开启后，中国大陆服务器优先从主控下载资源，其他服务器遵循上方下载来源设置。" checked={data.settings?.resource_download_cn_controller !== false && data.settings?.resource_download_cn_controller !== 'false'} onChange={checked => void autoSaveSetting({ resource_download_cn_controller: checked }, '中国大陆下载偏好已保存')} disabled={Boolean(savingKey)} ariaLabel="中国大陆主控优先" />

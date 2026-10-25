@@ -282,7 +282,7 @@ var settingsAutomationFields = map[string]bool{
 	"audit_action": true, "traffic_timezone": true,
 	"subscription_age_policy": true, "dns_always_resolve": true, "subscription_custom_path_mode": true,
 	"subscription_relay_url": true, "subscription_controller_direct_enabled": true,
-	"server_default_mtu_mode": true, "server_default_bbr_qdisc": true, "server_default_bbr_cake_bandwidth_mbit": true, "server_default_tcp_tuning_enabled": true,
+	"agent_continue_when_disconnected": true, "server_default_mtu_mode": true, "server_default_bbr_qdisc": true, "server_default_bbr_cake_bandwidth_mbit": true, "server_default_tcp_tuning_enabled": true,
 	"server_default_time_correction_mode": true, "time_check_ntp_servers": true,
 	"server_monitoring_retention_days":          true,
 	"server_metric_hourly_retention_days":       true,
@@ -653,6 +653,13 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 		}
 		updates[settingServerDefaultCakeBandwidth] = strconv.Itoa(mbit)
 	}
+	if value, ok := fields[settingAgentContinueWhenDisconnected]; ok {
+		var enabled *bool
+		if err := json.Unmarshal(value, &enabled); err != nil || enabled == nil {
+			return nil, errors.New("agent_continue_when_disconnected must be a boolean")
+		}
+		updates[settingAgentContinueWhenDisconnected] = strconv.FormatBool(*enabled)
+	}
 	if value, ok := fields["server_default_tcp_tuning_enabled"]; ok {
 		if err := setBool(settingServerDefaultTCPTuningEnabled, value); err != nil {
 			return nil, err
@@ -785,6 +792,10 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 	}
 	if err := s.store.SetSettings(ctx, updates); err != nil {
 		return nil, err
+	}
+	if _, ok := updates[settingAgentContinueWhenDisconnected]; ok {
+		s.invalidateAuthorizationProjection()
+		s.wakeAuthorizationSync()
 	}
 	if _, ok := updates["traffic_timezone"]; ok {
 		if err := s.queueApplyTrafficPolicyForAllAccounting(ctx, "traffic_policy_changed"); err != nil {

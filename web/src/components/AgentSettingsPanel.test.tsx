@@ -34,6 +34,21 @@ describe('AgentSettingsPanel', () => {
     ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = false
   })
 
+  it('defaults offline service off and saves both directions', async () => {
+    const client = { request: vi.fn(async () => ({})) }
+    const load = vi.fn(async () => undefined)
+    const notify = vi.fn()
+    act(() => root.render(<AgentSettingsPanel data={mockData} client={client} load={load} notify={notify} />))
+    const toggle = container.querySelector<HTMLButtonElement>('[aria-label="主控失联后继续提供服务"]')!
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    await act(async () => toggle.click())
+    expect(client.request).toHaveBeenLastCalledWith('/settings', { method: 'POST', body: JSON.stringify({ agent_continue_when_disconnected: true }) })
+    act(() => root.render(<AgentSettingsPanel data={{ settings: { agent_continue_when_disconnected: true } }} client={client} load={load} notify={notify} />))
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    await act(async () => toggle.click())
+    expect(client.request).toHaveBeenLastCalledWith('/settings', { method: 'POST', body: JSON.stringify({ agent_continue_when_disconnected: false }) })
+  })
+
   it('renders all sections and labels correctly', () => {
     const mockClient = { request: vi.fn() }
     const mockLoad = vi.fn()

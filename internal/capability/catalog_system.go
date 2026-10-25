@@ -169,7 +169,7 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 		"created_at":            stringValue, "updated_at": stringValue,
 	})
 	descriptors := []Descriptor{
-		adminRead("settings.get", "读取主控全局设置（审计、订阅、通知、Agent 设置等，不含秘密）", schemaObject(nil), schemaObject(map[string]any{"settings": map[string]any{"type": "object", "properties": map[string]any{"stealth_transport": stealthStatus, "storage_diagnostics": storageDiagnosticsSchema()}, "additionalProperties": map[string]any{"type": []string{"string", "number", "integer", "boolean", "array", "object", "null"}}}}, "settings")),
+		adminRead("settings.get", "读取主控全局设置（审计、订阅、通知、Agent 设置等，不含秘密）", schemaObject(nil), schemaObject(map[string]any{"settings": map[string]any{"type": "object", "properties": map[string]any{"agent_continue_when_disconnected": boolValue, "stealth_transport": stealthStatus, "storage_diagnostics": storageDiagnosticsSchema()}, "additionalProperties": map[string]any{"type": []string{"string", "number", "integer", "boolean", "array", "object", "null"}}}}, "settings")),
 		adminRead("telegram_bot.get", "读取统一 Telegram Bot 状态（不返回 Bot Token）", schemaObject(nil), schemaObject(map[string]any{"telegram_bot": telegramBot}, "telegram_bot")),
 		adminRead("controller_update.status", "读取主控更新通道、当前版本、异步更新状态及下载字节、速度、尝试次数和真实耗时", schemaObject(nil), rawSchema(controllerUpdate)),
 		adminRead("controller_update.diagnostics", "读取主控更新诊断报告：更新器状态、最近一次更新任务的阶段与耗时，以及主控日志中与更新相关的记录，用于排查更新失败或卡住", schemaObject(nil), schemaObject(map[string]any{
@@ -200,6 +200,7 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 			"server_default_bbr_qdisc":               map[string]any{"type": "string", "enum": []string{"off", "fq", "cake", "fq_pie"}, "description": "首次安装 Agent 时与 BBR 搭配的队列算法，默认 fq；off 表示安装时不修改拥塞控制。只在安装阶段生效，已安装服务器需重新运行安装脚本；已签发过接入令牌的服务器保持签发时的选择，不受之后修改影响。内核版本不足时安装脚本自动改用 fq。"},
 			"server_default_bbr_cake_bandwidth_mbit": map[string]any{"type": "integer", "minimum": 0, "maximum": 100000, "description": "仅 cake 使用：出站整形带宽（Mbit/s），0 表示不限速。建议设为服务器实际上行带宽的 90%-95%。"},
 			"server_default_tcp_tuning_enabled":      boolValue,
+			"agent_continue_when_disconnected":       boolValue,
 			"server_default_time_correction_mode":    stringValue, "time_check_ntp_servers": stringArray(0, 8),
 			"server_monitoring_retention_days":          map[string]any{"type": "integer", "minimum": 1, "maximum": 30},
 			"server_metric_hourly_retention_days":       map[string]any{"type": "integer", "minimum": 7, "maximum": 180},

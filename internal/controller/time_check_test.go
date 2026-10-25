@@ -295,3 +295,24 @@ func TestFailedDeploymentPreservesTimeCheckResult(t *testing.T) {
 		}
 	}
 }
+
+func TestOfflineServiceSettingsREST(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	srv := newTestServer(db, "test-secret", "")
+	h := srv.Handler()
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+	initial := request(t, h, http.MethodGet, "/api/v1/ui/settings", token, nil, http.StatusOK)["settings"].(map[string]any)
+	if initial[settingAgentContinueWhenDisconnected] != false {
+		t.Fatal("offline service enabled by default")
+	}
+	for _, enabled := range []bool{true, false} {
+		request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{settingAgentContinueWhenDisconnected: enabled}, http.StatusOK)
+		saved := request(t, h, http.MethodGet, "/api/v1/ui/settings", token, nil, http.StatusOK)["settings"].(map[string]any)
+		if saved[settingAgentContinueWhenDisconnected] != enabled {
+			t.Fatal("offline setting not persisted")
+		}
+	}
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{settingAgentContinueWhenDisconnected: "true"}, http.StatusBadRequest)
+}

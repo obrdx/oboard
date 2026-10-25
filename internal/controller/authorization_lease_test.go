@@ -11,6 +11,55 @@ import (
 	"github.com/OboardProject/oboard/internal/store"
 )
 
+func TestOfflineServiceSettingsChangeIssuedLease(t *testing.T) {
+	ctx := context.Background()
+	db := openControllerAutomationTestStore(t)
+	srv := newTestServer(db, "test-secret", "")
+	server := &model.Server{Name: "offline-service", PublicIPv4: "203.0.113.1"}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := srv.currentAuthorizationLease(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial.ContinueWhenDisconnected || srv.publicSettingsValues(ctx, nil)[settingAgentContinueWhenDisconnected] != false {
+		t.Fatal("offline service must default off")
+	}
+	if err := db.SetSetting(ctx, settingAgentContinueWhenDisconnected, "true"); err != nil {
+		t.Fatal(err)
+	}
+	enabled, err := srv.currentAuthorizationLease(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled.ContinueWhenDisconnected || enabled.Revision <= initial.Revision || enabled.Digest == initial.Digest {
+		t.Fatal("setting change reused old authorization")
+	}
+	ack := model.AuthorizationAck{Revision: enabled.Revision, Sequence: enabled.Sequence, Digest: enabled.Digest, Confirmed: true}
+	srv.recordAuthorizationAck(ctx, server, ack)
+	pending, err := db.AuthorizationState(ctx, server.ID)
+	if err != nil || pending.Confirmed() || pending.PendingReason != store.AuthorizationPendingAgentUpgrade {
+		t.Fatalf("old runtime confirmed offline policy: %+v %v", pending, err)
+	}
+	server.KernelCapabilities = []string{"offline_service_control_v1", "offline_service_v1"}
+	srv.recordAuthorizationAck(ctx, server, ack)
+	confirmed, err := db.AuthorizationState(ctx, server.ID)
+	if err != nil || !confirmed.Confirmed() {
+		t.Fatalf("updated runtime not confirmed: %+v %v", confirmed, err)
+	}
+	if err := db.SetSetting(ctx, settingAgentContinueWhenDisconnected, "false"); err != nil {
+		t.Fatal(err)
+	}
+	disabled, err := srv.currentAuthorizationLease(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disabled.ContinueWhenDisconnected || disabled.Revision <= enabled.Revision || len(disabled.OfflineGrants) != 0 {
+		t.Fatal("disable not issued as newer authorization")
+	}
+}
+
 func TestAuthorizationLeaseRevokesWithoutRenderingOrCredentialAllocation(t *testing.T) {
 	ctx := context.Background()
 	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
@@ -188,5 +237,51 @@ func TestAuthorizationLeaseClampsPlanExpiry(t *testing.T) {
 	later := buildAuthorizationLease(1, expiry, 1, data, []model.ProxyCredential{credential})
 	if len(later.Grants) != 0 {
 		t.Fatal("expired binding renewed")
+	}
+}
+
+func TestOfflineServiceCarriesOnlyInstalledGrants(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "authorization-test-secret", "")
+	server := &model.Server{Name: "lease-node", PublicIPv4: "203.0.113.1"}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{Username: "account", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "old-uuid", ProxyPassword: "old-password"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "socks", Protocol: model.ProtocolSocks, Port: 10443, Enabled: true, ConfigJSON: "{}"}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	grantTestPlanInboundNode(t, db, user.ID, inbound.ID)
+	if err := srv.InitializeProxyCredentials(ctx); err != nil {
+		t.Fatal(err)
+	}
+	users, err := db.LoadProxyCredentials(ctx, srv.sessionSecret, []model.User{*user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential := core.UserCredentialForRoute(users[0], inbound.ID, 0, inbound.Protocol)
+	if credential.AuthorizationKey == "" || credential.ProxyUsername == user.Username || credential.ProxyPassword == user.ProxyPassword {
+		t.Fatal("random persisted credential missing")
+	}
+
+	if err := db.SetSetting(ctx, settingAgentContinueWhenDisconnected, "true"); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := srv.currentAuthorizationLease(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline, ok := lease.OfflineGrants[credential.AuthorizationKey]
+	if !lease.ContinueWhenDisconnected || !ok || deadline != "" || len(lease.OfflineGrants) != len(lease.Grants) {
+		t.Fatalf("offline projection: %+v", lease)
 	}
 }

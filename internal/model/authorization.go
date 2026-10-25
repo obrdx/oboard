@@ -9,13 +9,15 @@ package model
 // is the absolute end of the whole lease. Denied lists credential keys the
 // data plane must refuse even if an older, still-unexpired lease granted them.
 type AuthorizationLease struct {
-	Revision  int64             `json:"revision"`
-	Sequence  int64             `json:"sequence,omitempty"`
-	Digest    string            `json:"digest,omitempty"`
-	IssuedAt  string            `json:"issued_at"`
-	ExpiresAt string            `json:"expires_at,omitempty"`
-	Grants    map[string]string `json:"grants"`
-	Denied    []string          `json:"denied,omitempty"`
+	ContinueWhenDisconnected bool              `json:"continue_when_disconnected,omitempty"`
+	OfflineGrants            map[string]string `json:"offline_grants,omitempty"`
+	Revision                 int64             `json:"revision"`
+	Sequence                 int64             `json:"sequence,omitempty"`
+	Digest                   string            `json:"digest,omitempty"`
+	IssuedAt                 string            `json:"issued_at"`
+	ExpiresAt                string            `json:"expires_at,omitempty"`
+	Grants                   map[string]string `json:"grants"`
+	Denied                   []string          `json:"denied,omitempty"`
 }
 
 const (

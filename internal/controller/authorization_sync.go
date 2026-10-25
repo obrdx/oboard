@@ -371,6 +371,17 @@ func (s *Server) recordAuthorizationAck(ctx context.Context, server *model.Serve
 	if ack.Revision <= 0 {
 		return
 	}
+	if settingBool(s.runtimeSettings(ctx), settingAgentContinueWhenDisconnected, false) {
+		agentReady, kernelReady := false, false
+		for _, capability := range server.KernelCapabilities {
+			agentReady = agentReady || capability == "offline_service_control_v1"
+			kernelReady = kernelReady || capability == "offline_service_v1"
+		}
+		if !agentReady || !kernelReady {
+			_ = s.store.MarkAuthorizationPending(ctx, server.ID, store.AuthorizationPendingAgentUpgrade, "主控失联后继续服务需要更新 Agent 和内核", false)
+			return
+		}
+	}
 	if !ack.Confirmed {
 		reason := store.AuthorizationPendingRuntimeUnavailable
 		if strings.TrimSpace(ack.Error) == "" {

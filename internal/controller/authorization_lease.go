@@ -595,7 +595,8 @@ func (s *Server) currentAuthorizationLease(ctx context.Context, serverID int64) 
 	// because the grant set is a pure function of the projection, the server and
 	// the instant: the same projection plus an instant before the next boundary
 	// can only produce the grants already recorded here.
-	if state.reusable(projection, now) {
+	continueOffline := settingBool(s.runtimeSettings(ctx), settingAgentContinueWhenDisconnected, false)
+	if state.reusable(projection, now) && state.lease.ContinueWhenDisconnected == continueOffline {
 		s.hotPath.authorizationLeaseReused.Add(1)
 		return state.lease, nil
 	}
@@ -603,6 +604,10 @@ func (s *Server) currentAuthorizationLease(ctx context.Context, serverID int64) 
 
 	grants := projection.grantsAt(serverID, now)
 	digest, keys := authorizationDigest(grants)
+	if continueOffline {
+		sum := sha256.Sum256([]byte(digest + "\noffline-service"))
+		digest = hex.EncodeToString(sum[:])
+	}
 	expires := now.Add(authorizationLeaseDuration)
 	evaluation, sequence, err := s.store.EvaluateAuthorizationDesiredWithSequence(ctx, serverID, projection.routingRevision, digest, keys, now, expires)
 	if err != nil {
@@ -620,8 +625,19 @@ func (s *Server) currentAuthorizationLease(ctx context.Context, serverID int64) 
 		ExpiresAt: expires.Format(time.RFC3339Nano),
 		Grants:    make(map[string]string, len(grants)),
 	}
+	lease.ContinueWhenDisconnected = continueOffline
+	if continueOffline {
+		lease.OfflineGrants = make(map[string]string, len(grants))
+	}
 	for _, grant := range grants {
 		lease.Grants[grant.key] = grant.deadline.UTC().Format(time.RFC3339Nano)
+		if continueOffline {
+			deadline := ""
+			if !grant.boundary.IsZero() {
+				deadline = grant.boundary.UTC().Format(time.RFC3339Nano)
+			}
+			lease.OfflineGrants[grant.key] = deadline
+		}
 	}
 	for _, denial := range denials {
 		if _, granted := lease.Grants[denial.CredentialID]; granted {
