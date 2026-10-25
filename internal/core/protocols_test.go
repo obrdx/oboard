@@ -1040,7 +1040,7 @@ func TestProxyPathStageRuleSpecificWARPInheritsEgressBinding(t *testing.T) {
 				}
 			}
 			resolver, ok := bound["domain_resolver"].(map[string]any)
-			if !ok || resolver["server"] != primaryBootstrapDNSTag || resolver["strategy"] != test.wantDNSStrategy {
+			if !ok || resolver["server"] != bootstrapDNSGroupTag || resolver["strategy"] != test.wantDNSStrategy {
 				t.Fatalf("bound WARP domain_resolver = %#v, want strategy=%q", bound["domain_resolver"], test.wantDNSStrategy)
 			}
 			if test.status != model.WARPStatusReady && bound["_oboard_warp_pending"] != float64(profile.ID) {
@@ -2839,7 +2839,7 @@ func TestGenerateServerConfigWithRoutingRulesIgnoresUnreferencedWARP(t *testing.
 		t.Fatalf("source-prefix outbound = %#v", prefixOutbound)
 	}
 	resolver, ok := prefixOutbound["domain_resolver"].(map[string]any)
-	if !ok || resolver["server"] != primaryBootstrapDNSTag || resolver["strategy"] != "ipv6_only" {
+	if !ok || resolver["server"] != bootstrapDNSGroupTag || resolver["strategy"] != "ipv6_only" {
 		t.Fatalf("source-prefix domain_resolver = %#v", prefixOutbound["domain_resolver"])
 	}
 	prefixRule := rules[4].(map[string]any)

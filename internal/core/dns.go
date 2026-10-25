@@ -144,12 +144,17 @@ func BuildDNSConfig(server model.Server, state *DNSConfigState) (map[string]any,
 	if len(encrypted) == 0 {
 		final = primaryBootstrapDNSTag
 		if groups && len(bootstrapTags) == 2 {
-			servers = append(servers, dnsFailoverGroup(bootstrapDNSGroupTag, bootstrapTags))
 			final = bootstrapDNSGroupTag
 		}
 	} else if groups && len(remoteTags) == 2 {
 		servers = append(servers, dnsFailoverGroup(remoteDNSGroupTag, remoteTags))
 		final = remoteDNSGroupTag
+	}
+	if groups && len(bootstrapTags) == 2 {
+		servers = append(servers, dnsFailoverGroup(bootstrapDNSGroupTag, bootstrapTags))
+	}
+	for _, item := range servers {
+		applyPhysicalDialResolver(item, server, bootstrapResolverTag(servers), "")
 	}
 	return map[string]any{
 		"servers":  servers,

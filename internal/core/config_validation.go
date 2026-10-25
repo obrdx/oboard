@@ -323,10 +323,6 @@ func (v *configValidator) validateDNS(dns map[string]any) {
 		if detour := stringFromAny(server["detour"]); detour == "direct" {
 			v.addf("%s detour=direct is invalid for OBoard's empty direct outbound", path)
 		}
-		if resolver := stringFromAny(server["domain_resolver"]); resolver != "" && !v.dnsTag[resolver] {
-			// Defer cross-reference until all DNS tags are known.
-			continue
-		}
 		if port := intFromAny(server["server_port"]); port != 0 && !validPort(port) {
 			v.addf("%s invalid server_port %d", path, port)
 		}
@@ -341,9 +337,7 @@ func (v *configValidator) validateDNS(dns map[string]any) {
 		}
 	}
 	for i, server := range servers {
-		if resolver := stringFromAny(server["domain_resolver"]); resolver != "" && !v.dnsTag[resolver] {
-			v.addf("dns.servers[%d].domain_resolver references unknown dns server %q", i, resolver)
-		}
+		v.validateDomainResolver(fmt.Sprintf("dns.servers[%d]", i), server["domain_resolver"])
 		if stringFromAny(server["type"]) != dnsGroupType {
 			continue
 		}

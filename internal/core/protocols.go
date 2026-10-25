@@ -782,6 +782,7 @@ func buildServerConfig(server model.Server, inbounds []model.Inbound, outbounds 
 			*opts.RuntimeUsersOut = pkg
 		}
 	}
+	applyPhysicalDialResolvers(&config, server)
 	return config, nil
 }
 

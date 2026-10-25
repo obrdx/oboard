@@ -16,7 +16,7 @@ func TestBuildDNSConfigUsesBootstrapForDomainDoH(t *testing.T) {
 	}
 	servers := dns["servers"].([]map[string]any)
 	remote := servers[0]
-	if remote["type"] != "https" || remote["domain_resolver"] != "bootstrap-primary" {
+	if remote["type"] != "https" || remote["domain_resolver"] != "bootstrap" {
 		t.Fatalf("remote dns = %#v, want https with bootstrap resolver", remote)
 	}
 	if _, ok := remote["domain_strategy"]; ok {
@@ -86,8 +86,8 @@ func TestBuildDNSConfigIncludesSelectedPrimaryAndSecondary(t *testing.T) {
 	if group["type"] != "oboard-dns-group" || strings.Join(group["members"].([]string), ",") != "remote-primary,remote-secondary" {
 		t.Fatalf("remote failover group = %#v", group)
 	}
-	if _, ok := byTag["bootstrap"]; ok {
-		t.Fatal("bootstrap group emitted while encrypted resolvers are final")
+	if _, ok := byTag["bootstrap"]; !ok {
+		t.Fatal("bootstrap failover group missing for infrastructure lookups")
 	}
 }
 
@@ -171,7 +171,7 @@ func TestBuildDNSConfigSupportsDoQ(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote := dns["servers"].([]map[string]any)[0]
-	if remote["type"] != "quic" || remote["server_port"] != 853 || remote["domain_resolver"] != "bootstrap-primary" {
+	if remote["type"] != "quic" || remote["server_port"] != 853 || remote["domain_resolver"] != "bootstrap" {
 		t.Fatalf("doq remote = %#v", remote)
 	}
 }
@@ -265,7 +265,7 @@ func TestGeneratedConfigUsesCurrentDomainResolverShape(t *testing.T) {
 		t.Fatalf("outbound should not emit deprecated domain_strategy: %#v", outbound)
 	}
 	dialResolver, ok := outbound["domain_resolver"].(map[string]any)
-	if !ok || dialResolver["server"] != "bootstrap-primary" || dialResolver["strategy"] != "prefer_ipv4" {
+	if !ok || dialResolver["server"] != "bootstrap" || dialResolver["strategy"] != "prefer_ipv4" {
 		t.Fatalf("outbound domain_resolver = %#v", outbound["domain_resolver"])
 	}
 }
@@ -277,7 +277,7 @@ func TestBuildDNSConfigUsesListDraftWhenSelectionIsMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	servers := dns["servers"].([]map[string]any)
-	if len(servers) != 6 || servers[0]["tag"] != "remote-primary" || servers[3]["tag"] != "bootstrap-secondary" || servers[5]["tag"] != "remote" {
+	if len(servers) != 7 || servers[0]["tag"] != "remote-primary" || servers[3]["tag"] != "bootstrap-secondary" || servers[5]["tag"] != "remote" {
 		t.Fatalf("draft dns servers = %#v", servers)
 	}
 }
@@ -356,7 +356,7 @@ func TestBuildDNSConfigDefaultState(t *testing.T) {
 		t.Fatalf("strategy = %v, want prefer_ipv6", dns["strategy"])
 	}
 	servers := dns["servers"].([]map[string]any)
-	if len(servers) != 6 || servers[2]["tag"] != "bootstrap-primary" || servers[2]["server"] != "2606:4700:4700::1111" || servers[3]["server"] != "2001:4860:4860::8888" || servers[5]["tag"] != "remote" {
+	if len(servers) != 7 || servers[2]["tag"] != "bootstrap-primary" || servers[2]["server"] != "2606:4700:4700::1111" || servers[3]["server"] != "2001:4860:4860::8888" || servers[5]["tag"] != "remote" {
 		t.Fatalf("default dns servers = %#v", servers)
 	}
 }
