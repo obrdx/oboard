@@ -81,6 +81,7 @@ export function DemoStage({ scene, cursorX, cursorY, camera, paused, speed, redu
 
   const byID = new Map(scene.nodes.map(node => [node.id, node]))
   const focusNode = scene.emphasis && scene.emphasis !== 'sync' ? scene.emphasis : null
+  const flowDepth = edgeDepths(scene.edges)
   const provisionalSource = scene.provisional ? byID.get(scene.provisional.from) : undefined
 
   return <div ref={frameRef} className={`pd-frame${paused ? ' is-paused' : ''}${reducedMotion ? ' is-reduced' : ''}`} style={{ ['--pd-speed' as string]: String(speed) }} aria-hidden="true">
@@ -93,17 +94,11 @@ export function DemoStage({ scene, cursorX, cursorY, camera, paused, speed, redu
             const from = byID.get(item.from)
             const to = byID.get(item.to)
             if (!from || !to) return null
-            return <DemoEdgePath key={item.id} edge={item} from={from} to={to} fromMotion={nodeMotion(from)} toMotion={nodeMotion(to)} dimmed={Boolean(focusNode)} />
+            return <DemoEdgePath key={item.id} edge={item} from={from} to={to} fromMotion={nodeMotion(from)} toMotion={nodeMotion(to)} dimmed={Boolean(focusNode)} flowDepth={reducedMotion || !item.packets ? null : flowDepth.get(item.id) ?? 0} />
           })}
           {provisionalSource && <ProvisionalEdge node={provisionalSource} motion={nodeMotion(provisionalSource)} cursorX={cursorX} cursorY={cursorY} camera={camera} />}
         </svg>
 
-        {!reducedMotion && scene.edges.filter(item => item.packets).map(item => {
-          const from = byID.get(item.from)
-          const to = byID.get(item.to)
-          if (!from || !to) return null
-          return <EdgePackets key={`packets-${item.id}`} edge={item} from={from} to={to} fromMotion={nodeMotion(from)} toMotion={nodeMotion(to)} />
-        })}
 
         {scene.nodes.map(node => <DemoNodeCard
           key={node.id}
@@ -279,14 +274,34 @@ function useEdgeD(from: DemoNode, to: DemoNode, fromMotion: NodeMotion, toMotion
     edgePath({ x: fx + fromWidth / 2, y: fy + fromHeight }, { x: tx + toWidth / 2, y: ty }))
 }
 
-function DemoEdgePath({ edge, from, to, fromMotion, toMotion, dimmed }: { edge: DemoEdge; from: DemoNode; to: DemoNode; fromMotion: NodeMotion; toMotion: NodeMotion; dimmed: boolean }) {
+// edgeDepths numbers each edge by its hop from the start of the chain, so
+// the flow light can be staggered and read as one pulse travelling down.
+function edgeDepths(edges: DemoEdge[]) {
+  const incoming = new Map(edges.map(item => [item.to, item]))
+  const depths = new Map<string, number>()
+  for (const item of edges) {
+    let depth = 0
+    for (let parent = incoming.get(item.from); parent && depth < edges.length; parent = incoming.get(parent.from)) depth++
+    depths.set(item.id, depth)
+  }
+  return depths
+}
+
+function DemoEdgePath({ edge, from, to, fromMotion, toMotion, dimmed, flowDepth }: { edge: DemoEdge; from: DemoNode; to: DemoNode; fromMotion: NodeMotion; toMotion: NodeMotion; dimmed: boolean; flowDepth: number | null }) {
   const d = useEdgeD(from, to, fromMotion, toMotion)
   // Dashed links fade in; a dash pattern cannot be drawn on with pathLength.
   const dashed = edge.kind === 'belongs' || edge.kind === 'device'
+  // Traffic is a short light streak sliding along the line itself rather
+  // than separate dots, which crowded the handles on short hops.
+  const flowStyle = flowDepth === null ? undefined : { animationDelay: `calc(${flowDepth * 0.32}s / var(--pd-speed, 1))` }
   return <g className={`pd-edge is-${edge.kind}${dimmed ? ' is-dimmed' : ''}`}>
     {dashed
       ? <m.path className="pd-edge-line" d={d} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }} />
       : <m.path className="pd-edge-line" d={d} initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }} />}
+    {flowStyle && <>
+      <m.path className="pd-edge-flow is-halo" d={d} pathLength={100} style={flowStyle} />
+      <m.path className="pd-edge-flow" d={d} pathLength={100} style={flowStyle} />
+    </>}
   </g>
 }
 
@@ -296,16 +311,6 @@ function ProvisionalEdge({ node, motion, cursorX, cursorY, camera }: { node: Dem
   const d = useTransform([motion.x, motion.y, cursorX, cursorY, camera.x, camera.y, camera.scale], ([x, y, cx, cy, kx, ky, ks]: number[]) =>
     dragPath({ x: x + width / 2, y: y + height }, { x: (cx - kx) / ks, y: (cy - ky) / ks }))
   return <m.path className="pd-edge-provisional" d={d} />
-}
-
-function EdgePackets({ edge, from, to, fromMotion, toMotion }: { edge: DemoEdge; from: DemoNode; to: DemoNode; fromMotion: NodeMotion; toMotion: NodeMotion }) {
-  const d = useEdgeD(from, to, fromMotion, toMotion)
-  const offsetPath = useTransform(d, value => `path("${value}")`)
-  return <>{[0, 1].map(index => <m.span
-    key={index}
-    className={`pd-packet is-${edge.kind}`}
-    style={{ offsetPath, animationDelay: `calc(${index * -1.2}s / var(--pd-speed))` } as any}
-  />)}</>
 }
 
 function DemoNodeCard({ node, motion, emphasis, activeSide, matching, edges, reducedMotion }: {

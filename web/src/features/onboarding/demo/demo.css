@@ -194,31 +194,20 @@
 .pd-edge.is-device .pd-edge-line { stroke: rgba(71, 85, 105, .42); stroke-width: 1.8; stroke-dasharray: 5 5; }
 .pd-edge-provisional { fill: none; stroke: var(--text-muted); stroke-width: 2; stroke-dasharray: 6 5; stroke-linecap: round; }
 
-.pd-packet {
-  --pd-dot: var(--graph-chain);
-  position: absolute;
-  left: 0;
-  top: 0;
-  z-index: 2;
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-full);
-  background: var(--pd-dot);
-  box-shadow: 0 0 6px var(--pd-dot);
-  offset-rotate: 0deg;
-  offset-anchor: 50% 50%;
-  animation: pd-packet calc(2.4s / var(--pd-speed, 1)) linear infinite;
-  will-change: offset-distance;
+.pd-edge-flow {
+  fill: none;
+  stroke: var(--pd-edge);
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-dasharray: 22 140;
+  stroke-dashoffset: 22;
+  animation: pd-edge-flow calc(1.6s / var(--pd-speed, 1)) cubic-bezier(.45, 0, .25, 1) infinite;
 }
-.pd-packet.is-belongs, .pd-packet.is-device { --pd-dot: var(--graph-entry); }
-.pd-packet.is-warp { --pd-dot: var(--graph-wireguard); }
-.pd-packet.is-routing { --pd-dot: var(--graph-forward); }
-.pd-packet.is-direct { --pd-dot: var(--graph-direct); }
-@keyframes pd-packet {
-  0% { offset-distance: 0%; opacity: 0; }
-  12% { opacity: 1; }
-  88% { opacity: 1; }
-  100% { offset-distance: 100%; opacity: 0; }
+.pd-edge.is-belongs .pd-edge-flow, .pd-edge.is-device .pd-edge-flow { stroke: var(--graph-entry); }
+.pd-edge-flow.is-halo { stroke-width: 7; opacity: .22; }
+@keyframes pd-edge-flow {
+  0% { stroke-dashoffset: 22; }
+  70%, 100% { stroke-dashoffset: -100; }
 }
 
 .pd-node-anchor { position: absolute; left: 0; top: 0; z-index: 3; will-change: transform; }
@@ -499,7 +488,7 @@
 .pd-spinner { width: 10px; height: 10px; border: 2px solid currentColor; border-right-color: transparent; border-radius: var(--radius-full); animation: pd-spin .8s linear infinite; }
 @keyframes pd-spin { to { transform: rotate(360deg); } }
 
-.pd-frame.is-paused .pd-packet,
+.pd-frame.is-paused .pd-edge-flow,
 .pd-frame.is-paused .pd-spinner,
 .pd-frame.is-paused .pd-node-rule::before,
 .pd-frame.is-paused .pd-handle.is-rule::after { animation-play-state: paused; }
