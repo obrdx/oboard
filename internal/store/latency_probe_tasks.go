@@ -462,22 +462,21 @@ func ValidateNetworkProbeAddress(address string, method model.LatencyProbeMode) 
 		}
 		host = u.Hostname()
 	}
-	if addr, err := netip.ParseAddr(host); err == nil {
-		if !addr.Is4() || !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() {
-			return errors.New("目标必须是公网 IPv4 地址或域名")
-		}
+	if _, err := netip.ParseAddr(host); err == nil {
 		return nil
 	}
-	if len(host) > 253 || !strings.Contains(host, ".") {
-		return errors.New("请输入公网 IPv4 地址或完整域名")
+	if host == "" || len(host) > 253 {
+		return errors.New("请输入 IP 地址或主机名")
 	}
 	labels := strings.Split(strings.TrimSuffix(host, "."), ".")
-	if len(labels) < 2 || len(labels[len(labels)-1]) < 2 {
+	if len(labels) > 1 && len(labels[len(labels)-1]) < 2 {
 		return errors.New("目标域名无效")
 	}
-	for _, c := range strings.ToLower(labels[len(labels)-1]) {
-		if c < 'a' || c > 'z' {
-			return errors.New("目标域名无效")
+	if len(labels) > 1 {
+		for _, c := range strings.ToLower(labels[len(labels)-1]) {
+			if c < 'a' || c > 'z' {
+				return errors.New("目标域名无效")
+			}
 		}
 	}
 	for _, label := range labels {

@@ -21,6 +21,7 @@ import (
 
 	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/store"
 )
 
 const (
@@ -187,6 +188,16 @@ func parseLatencyProbeResourceTarget(value string) (host, ip string, ok bool) {
 	return value, "", true
 }
 
+func parseCustomLatencyProbeTarget(host string) (string, string, bool) {
+	if err := store.ValidateNetworkProbeAddress(host, model.LatencyProbeModeTCP); err != nil {
+		return "", "", false
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return host, addr.String(), true
+	}
+	return host, "", true
+}
+
 func validLatencyProbeResourceIPv4(addr netip.Addr) bool {
 	return addr.IsValid() && addr.Is4() && addr.IsGlobalUnicast() && !addr.IsPrivate() && !addr.IsLoopback() && !addr.IsLinkLocalUnicast() && !addr.IsLinkLocalMulticast() && !addr.IsMulticast() && !addr.IsUnspecified()
 }
@@ -269,7 +280,7 @@ func latencyProbeTargets(resource latencyProbeResource, server model.Server, tas
 			if server.LatencyProbeMaxTargets > 0 && len(items) >= server.LatencyProbeMaxTargets {
 				break
 			}
-			host, ip, _ := parseLatencyProbeResourceTarget(task.Address)
+			host, ip, _ := parseCustomLatencyProbeTarget(task.Address)
 			port, targetURL := task.Port, ""
 			if task.Method == model.LatencyProbeModeHTTP {
 				u, err := url.Parse(task.Address)
@@ -284,7 +295,7 @@ func latencyProbeTargets(resource latencyProbeResource, server model.Server, tas
 				if u.Port() != "" {
 					port, _ = strconv.Atoi(u.Port())
 				}
-				_, ip, _ = parseLatencyProbeResourceTarget(host)
+				_, ip, _ = parseCustomLatencyProbeTarget(host)
 			}
 			items = append(items, model.LatencyProbeTarget{ProbeID: fmt.Sprintf("t%d-0", task.ID), Kind: "custom", TaskID: task.ID, TaskName: task.Name, Mode: task.Method, Host: host, IP: ip, Port: port, URL: targetURL, IntervalSeconds: task.IntervalSeconds})
 			continue
@@ -580,6 +591,9 @@ func validateAutonomousLatencyProbeReport(report *model.LatencyProbeResultReport
 				return errors.New("地区延迟目标无效")
 			}
 			host, expectedIP, ok := parseLatencyProbeResourceTarget(item.Host)
+			if item.Kind == "custom" {
+				host, expectedIP, ok = parseCustomLatencyProbeTarget(item.Host)
+			}
 			if !ok || item.Host != host {
 				return errors.New("地区延迟目标无效")
 			}
@@ -589,7 +603,7 @@ func validateAutonomousLatencyProbeReport(report *model.LatencyProbeResultReport
 				}
 			} else if item.IP != "" {
 				addr, err := netip.ParseAddr(item.IP)
-				if err != nil || !validLatencyProbeResourceIPv4(addr) {
+				if err != nil || (item.Kind != "custom" && !validLatencyProbeResourceIPv4(addr)) {
 					return errors.New("地区延迟目标无效")
 				}
 			}

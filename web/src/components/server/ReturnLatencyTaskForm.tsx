@@ -73,7 +73,7 @@ export function ReturnLatencyTaskForm({ task, regions, targets = [], servers, lo
     if (!value) return legacyRegion ? '' : '请填写目标地址或从预设中选择。'
     if (method === 'http') {
       try { const url = new URL(value); if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash) return '请输入不含凭据或片段的 HTTP / HTTPS URL。' } catch { return '请输入完整 URL，例如 https://example.com/health。' }
-    } else if (/[\s/:?#]/.test(value)) return '请只填写公网 IPv4 地址或域名，端口单独设置。'
+    } else if (/[\s/?#]/.test(value) || (value.includes(':') && !/^[0-9a-fA-F:.]+(?:%[a-zA-Z0-9_.-]+)?$/.test(value))) return '请只填写 IP 地址或主机名，端口单独设置。'
     return ''
   })()
   const portInvalid = method === 'tcp' && (!Number.isInteger(port) || Number(port) < 1 || Number(port) > 65535)
@@ -111,11 +111,11 @@ export function ReturnLatencyTaskForm({ task, regions, targets = [], servers, lo
                     <Select variant="segmented" className="full-width" aria-label="探测方式" value={method} onChange={event => { setMethod(event.target.value as NetworkProbeMethod) }}>
                       <option value="tcp">TCP</option><option value="icmp">Ping</option><option value="http">HTTP</option>
                     </Select>
-                    <p className="muted probe-method-hint">{method === 'tcp' ? '检测指定端口能否建立连接。' : method === 'icmp' ? '通过 ICMP 检测公网 IPv4 的可达性与延迟。' : '发送 GET 请求，跟随最多 3 次跳转，以 2xx 响应为成功。'}</p>
+                    <p className="muted probe-method-hint">{method === 'tcp' ? '检测指定端口能否建立连接。' : method === 'icmp' ? '通过 ICMP 检测目标的可达性与延迟。' : '发送 GET 请求，跟随最多 3 次跳转，以 2xx 响应为成功。'}</p>
                   </FormField>
                   <FormField label={method === 'http' ? '目标 URL' : '目标地址'} required full={method !== 'tcp'}>
                     <input aria-label="目标地址" required={!legacyRegion} aria-describedby="probe-address-hint" aria-invalid={Boolean(address && addressError)} type="text" maxLength={2048} placeholder={method === 'http' ? 'https://example.com/health' : '例如 example.com 或 1.1.1.1'} value={address} onChange={event => setAddress(event.target.value)} />
-                    <small id="probe-address-hint" className={address && addressError ? 'danger-text' : 'muted'}>{addressError || (legacyRegion ? `当前目标：${targetLabel(province, carrier)}。填写地址可改为指定目标。` : '由所选节点直接探测，目标须解析到公网 IPv4。')}</small>
+                    <small id="probe-address-hint" className={address && addressError ? 'danger-text' : 'muted'}>{addressError || (legacyRegion ? `当前目标：${targetLabel(province, carrier)}。填写地址可改为指定目标。` : '由所选节点直接探测，支持 IPv4、IPv6 和内网目标。')}</small>
                   </FormField>
                   <div className="probe-preset-picker">
                     <button type="button" className="probe-preset-toggle" aria-expanded={presetOpen} aria-controls="probe-presets" onClick={() => setPresetOpen(!presetOpen)}>

@@ -38,6 +38,34 @@ func TestNetworkProbeMixedMethodWirePlan(t *testing.T) {
 	}
 }
 
+func TestNetworkProbeInternalPlansAndReports(t *testing.T) {
+	for _, tc := range []struct {
+		address, host, ip string
+		method            model.LatencyProbeMode
+	}{
+		{"127.0.0.1", "127.0.0.1", "127.0.0.1", "tcp"},
+		{"10.0.0.1", "10.0.0.1", "10.0.0.1", "icmp"},
+		{"::1", "::1", "::1", "tcp"},
+		{"fd00::1", "fd00::1", "fd00::1", "icmp"},
+		{"router1", "router1", "", "tcp"},
+		{"http://[fd00::1]:8080/health", "fd00::1", "fd00::1", "http"},
+	} {
+		t.Run(tc.address, func(t *testing.T) {
+			targets := latencyProbeTargets(latencyProbeResource{}, model.Server{LatencyProbeMode: "icmp", LatencyProbeMaxTargets: 64}, []model.LatencyProbeTask{{ID: 1, Address: tc.address, Method: tc.method, Port: 80, Enabled: true}})
+			if len(targets) != 2 || targets[1].Host != tc.host || targets[1].IP != tc.ip {
+				t.Fatalf("plan lost target: %#v", targets)
+			}
+			report := model.LatencyProbeResultReport{ReportID: "internal", ResourceVersion: "v1", CheckedAt: time.Now().UTC()}
+			for _, target := range targets {
+				report.Items = append(report.Items, model.LatencyProbeResult{ProbeID: target.ProbeID, Kind: target.Kind, Host: target.Host, IP: target.IP, Mode: string(effectiveLatencyTargetMode(target, "icmp")), Port: target.Port, SampleCount: 1, SuccessCount: 1, Available: true})
+			}
+			if err := validateAutonomousLatencyProbeReport(&report); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestNetworkProbeCustomPlansDoNotFetchPresets(t *testing.T) {
 	ctx := context.Background()
 	db := openControllerAutomationTestStore(t)
@@ -119,20 +147,20 @@ func TestNetworkProbeAutomationLifecycleAndBoundary(t *testing.T) {
 	if err := db.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
-	input := json.RawMessage(fmt.Sprintf(`{"name":"HTTP health","method":"http","address":"https://example.com/health","server_ids":[%d]}`, server.ID))
+	input := json.RawMessage(fmt.Sprintf(`{"name":"HTTP health","method":"http","address":"http://[::1]/health","server_ids":[%d]}`, server.ID))
 	applyAutomationChangeset(t, app, principal, "network-create", automation.OperationRequest{Capability: "latency_probe_tasks.create", Input: input})
 	tasks, err := db.ListLatencyProbeTasks(ctx)
 	if err != nil || len(tasks) != 1 {
 		t.Fatalf("tasks: %#v %v", tasks, err)
 	}
 	task := tasks[0]
-	if task.Method != "http" || task.Address != "https://example.com/health" || task.Port != 0 {
+	if task.Method != "http" || task.Address != "http://[::1]/health" || task.Port != 0 {
 		t.Fatalf("task fields lost: %#v", task)
 	}
-	update := json.RawMessage(fmt.Sprintf(`{"id":%d,"method":"tcp","address":"example.com","port":8443}`, task.ID))
+	update := json.RawMessage(fmt.Sprintf(`{"id":%d,"method":"tcp","address":"10.0.0.1","port":8443}`, task.ID))
 	applyAutomationChangeset(t, app, principal, "network-update", automation.OperationRequest{Capability: "latency_probe_tasks.update", Input: update})
 	got, err := db.GetLatencyProbeTask(ctx, task.ID)
-	if err != nil || got.Method != "tcp" || got.Port != 8443 {
+	if err != nil || got.Method != "tcp" || got.Port != 8443 || got.Address != "10.0.0.1" {
 		t.Fatalf("update: %#v %v", got, err)
 	}
 	restricted := principal
@@ -157,7 +185,7 @@ func TestNetworkProbeRESTTaskLifecycle(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	app := newTestServer(db, "test-secret", "")
 	create := httptest.NewRecorder()
-	app.latencyProbeTasks(create, httptest.NewRequest(http.MethodPost, "/api/v1/ui/latency-probe-tasks", strings.NewReader(`{"method":"http","address":"https://example.com/health","name":"Web task","server_ids":[]}`)))
+	app.latencyProbeTasks(create, httptest.NewRequest(http.MethodPost, "/api/v1/ui/latency-probe-tasks", strings.NewReader(`{"method":"http","address":"http://[::1]/health","name":"Web task","server_ids":[]}`)))
 	if create.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", create.Code, create.Body.String())
 	}
@@ -167,7 +195,7 @@ func TestNetworkProbeRESTTaskLifecycle(t *testing.T) {
 	if err := json.Unmarshal(create.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Task.Method != "http" || body.Task.Address != "https://example.com/health" {
+	if body.Task.Method != "http" || body.Task.Address != "http://[::1]/health" {
 		t.Fatalf("created task: %#v", body.Task)
 	}
 	patch := httptest.NewRecorder()
@@ -180,9 +208,9 @@ func TestNetworkProbeRESTTaskLifecycle(t *testing.T) {
 		t.Fatalf("updated task: %#v %v", got, err)
 	}
 	invalid := httptest.NewRecorder()
-	app.latencyProbeTask(invalid, httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/api/v1/latency-probe-tasks/%d", body.Task.ID), strings.NewReader(`{"address":"127.0.0.1"}`)))
+	app.latencyProbeTask(invalid, httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/api/v1/latency-probe-tasks/%d", body.Task.ID), strings.NewReader(`{"address":"bad/target"}`)))
 	if invalid.Code != http.StatusBadRequest {
-		t.Fatalf("private target accepted: %d", invalid.Code)
+		t.Fatalf("invalid target accepted: %d", invalid.Code)
 	}
 	got, err = db.GetLatencyProbeTask(ctx, body.Task.ID)
 	if err != nil || got.Address != "1.1.1.1" {

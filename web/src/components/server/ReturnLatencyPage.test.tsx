@@ -63,6 +63,14 @@ describe('return latency probe tasks', () => {
     expect(submit).toHaveBeenCalledWith({ name: 'example.com', method: 'tcp', address: 'example.com', port: 80, province: '', carrier: '', interval_seconds: 300, enabled: true, server_ids: [1] })
   })
 
+  it.each(['127.0.0.1', '10.0.0.1', '::1', 'fd00::1', 'fe80::1%eth0', 'localhost', 'router1'])('creates a probe for internal target %s', async address => {
+    const submit = vi.fn()
+    await act(async () => root.render(<ReturnLatencyTaskForm regions={[]} servers={servers} onSubmit={submit} onCancel={() => {}} />))
+    await setInput(container.querySelector<HTMLInputElement>('[aria-label="目标地址"]')!, address)
+    await click(buttonIn(container, '创建任务')!)
+    expect(submit.mock.calls[0][0]).toMatchObject({ address, method: 'tcp' })
+  })
+
   it('keeps an explicit task name so several tasks can share one target', async () => {
     const submit = vi.fn()
     await act(async () => root.render(<ReturnLatencyTaskForm regions={regions} servers={servers} onSubmit={submit} onCancel={() => {}} />))

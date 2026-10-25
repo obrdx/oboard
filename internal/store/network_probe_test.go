@@ -53,11 +53,11 @@ func TestNetworkProbeTaskValidation(t *testing.T) {
 		port    int
 	}{
 		{"udp", "example.com", 80}, {"tcp", " ", 80}, {"tcp", "example.com", 65536},
-		{"tcp", "localhost", 80}, {"tcp", "127.0.0.1", 80}, {"icmp", "10.0.0.1", 0},
-		{"tcp", "2001:db8::1", 80}, {"tcp", "example.com:443", 80}, {"tcp", "example.1", 80},
-		{"tcp", "single.", 80}, {"tcp", "http://example.com", 80},
+
+		{"tcp", "example.com:443", 80}, {"tcp", "example.1", 80},
+		{"tcp", "http://example.com", 80},
 		{"http", "ftp://example.com", 0}, {"http", "https://user:pass@example.com", 0},
-		{"http", "https://example.com/#fragment", 0}, {"http", "http://169.254.169.254/", 0},
+		{"http", "https://example.com/#fragment", 0},
 		{"http", "http://example.com:65536/", 0}, {"http", "", 0},
 	} {
 		t.Run(string(tc.method)+tc.address, func(t *testing.T) {
@@ -66,6 +66,23 @@ func TestNetworkProbeTaskValidation(t *testing.T) {
 				t.Fatalf("invalid target accepted: %#v", task)
 			}
 		})
+	}
+}
+
+func TestNetworkProbeTaskAcceptsInternalTargets(t *testing.T) {
+	for _, address := range []string{"localhost", "router", "router.lan", "127.0.0.1", "10.0.0.1", "169.254.169.254", "::1", "fd00::1", "2001:db8::1", "fe80::1%eth0"} {
+		for _, method := range []model.LatencyProbeMode{model.LatencyProbeModeTCP, model.LatencyProbeModeICMP} {
+			task := model.LatencyProbeTask{Address: address, Method: method, Port: 80}
+			if err := normalizeLatencyProbeTask(&task); err != nil {
+				t.Fatalf("%s %s: %v", method, address, err)
+			}
+		}
+	}
+	for _, address := range []string{"http://localhost/health", "http://127.0.0.1/", "http://10.0.0.1:8080/", "http://[::1]/", "https://[fd00::1]/"} {
+		task := model.LatencyProbeTask{Address: address, Method: model.LatencyProbeModeHTTP}
+		if err := normalizeLatencyProbeTask(&task); err != nil {
+			t.Fatalf("%s: %v", address, err)
+		}
 	}
 }
 
