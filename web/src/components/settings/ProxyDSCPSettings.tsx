@@ -17,23 +17,21 @@ const coverage = 'EF（46）标记已支持的代理 TCP／原生 UDP socket。H
 export function ProxyDSCPSettings({ data, client, load, notify }: Props) {
   const [enabled, setEnabled] = useState(on(data.settings?.proxy_dscp_enabled))
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
   const [open, setOpen] = useState(false)
   useEffect(() => setEnabled(on(data.settings?.proxy_dscp_enabled)), [data.settings?.proxy_dscp_enabled])
   const save = async (value: boolean) => {
     if (saving) return
-    setSaving(true); setError('')
+    setSaving(true)
     try {
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ proxy_dscp_enabled: value }) })
       setEnabled(value); await load()
       notify('DSCP 设置已保存，等待节点同步', 'success')
-    } catch (e: any) { setError(e?.message || '保存失败，请重试') }
+    } catch (e: any) { notify(e?.message || '保存失败，请重试', 'error') }
     finally { setSaving(false) }
   }
   return <>
     <SettingsGroup title="代理流量优先标记" actions={<><FieldHelp label="代理 DSCP 覆盖范围" hint={coverage} /><button type="button" className="ghost remote-access-server-button" onClick={() => setOpen(true)}><Settings2 size={14} aria-hidden="true" />管理服务器</button></>}>
       <SettingsSwitchRow label="全局启用 DSCP" description="开启覆盖所有服务器；关闭后按逐台设置生效。HY2（Hysteria2）暂不支持。" checked={enabled} disabled={saving} onChange={value => void save(value)} ariaLabel="全局启用代理 DSCP" />
-      {error ? <p role="alert">{error}</p> : null}
     </SettingsGroup>
     <AnimatePresence>{open ? <ServerDialog client={client} global={enabled} notify={notify} onClose={() => setOpen(false)} /> : null}</AnimatePresence>
   </>

@@ -22,17 +22,19 @@ function mount(ui: React.ReactElement) {
 
 it('saves the trimmed stealth transport config', async () => {
   const onSave = vi.fn(async () => {})
+  const notify = vi.fn()
   const view = mount(<StealthTransportSettings
     value={{ enabled: false, listen_address: '0.0.0.0:24443', public_address: '', active: false, source: 'settings' }}
     onSave={onSave}
+    notify={notify}
   />)
   try {
     await view.render()
     const switchInput = view.host.querySelector('[role="switch"]') as HTMLInputElement
     await act(async () => switchInput.click())
     const inputs = [...view.host.querySelectorAll('input')] as HTMLInputElement[]
-    const listen = inputs.find(input => input.getAttribute('aria-label') === '安全进程监听地址')!
-    const publicAddress = inputs.find(input => input.getAttribute('aria-label') === '安全进程 Agent 连接地址')!
+    const listen = inputs.find(input => input.getAttribute('aria-label') === 'AgentLink 监听地址')!
+    const publicAddress = inputs.find(input => input.getAttribute('aria-label') === 'AgentLink 专用地址')!
     const setValue = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!
     await act(async () => {
       setValue.call(listen, ' 0.0.0.0:24443 ')
@@ -43,7 +45,7 @@ it('saves the trimmed stealth transport config', async () => {
     await act(async () => ([...view.host.querySelectorAll('button')] as HTMLButtonElement[])
       .find(button => button.type === 'submit')!.click())
     expect(onSave).toHaveBeenCalledWith({ enabled: true, listen_address: '0.0.0.0:24443', public_address: 'agent.example.com:24443' })
-    expect(view.host.querySelector('[role="status"]')?.textContent).toContain('已保存')
+    expect(notify).toHaveBeenCalledWith('AgentLink 传输设置已保存并生效', 'success')
   } finally {
     view.done()
   }
@@ -51,18 +53,20 @@ it('saves the trimmed stealth transport config', async () => {
 
 it('surfaces save failures and transport status without losing the draft', async () => {
   const onSave = vi.fn(async () => { throw new Error('无法监听安全传输端口：地址已被占用') })
+  const notify = vi.fn()
   const view = mount(<StealthTransportSettings
     value={{ enabled: true, listen_address: '0.0.0.0:24443', public_address: 'agent.example.com:24443', active: true, error: '', source: 'settings' }}
     onSave={onSave}
+    notify={notify}
   />)
   try {
     await view.render()
     expect(view.host.textContent).toContain('监听中')
     await act(async () => ([...view.host.querySelectorAll('button')] as HTMLButtonElement[])
       .find(button => button.type === 'submit')!.click())
-    expect(view.host.querySelector('[role="alert"]')?.textContent).toContain('无法监听安全传输端口')
+    expect(notify).toHaveBeenCalledWith('无法监听安全传输端口：地址已被占用', 'error')
     const listen = ([...view.host.querySelectorAll('input')] as HTMLInputElement[])
-      .find(input => input.getAttribute('aria-label') === '安全进程监听地址')!
+      .find(input => input.getAttribute('aria-label') === 'AgentLink 监听地址')!
     expect(listen.value).toBe('0.0.0.0:24443')
     expect(listen.disabled).toBe(false)
   } finally {
@@ -74,6 +78,7 @@ it('marks a configured but inactive transport and explains the environment sourc
   const view = mount(<StealthTransportSettings
     value={{ enabled: true, listen_address: '0.0.0.0:24443', public_address: 'agent.example.com:24443', active: false, error: '安全传输运行环境尚未初始化', source: 'environment' }}
     onSave={vi.fn(async () => {})}
+    notify={vi.fn()}
   />)
   try {
     await view.render()
@@ -89,6 +94,7 @@ it('renders as a collapsible disclosure with question-mark help buttons', async 
   const view = mount(<StealthTransportSettings
     value={{ enabled: false, listen_address: '0.0.0.0:24443', public_address: '', active: false }}
     onSave={vi.fn(async () => {})}
+    notify={vi.fn()}
   />)
   try {
     await view.render()

@@ -211,19 +211,23 @@ describe('AgentSettingsPanel', () => {
 
   it('restores the persisted qdisc and shows an error when auto-save fails', async () => {
     const client = { request: vi.fn(async () => { throw new Error('保存失败，请重试') }) }
-    act(() => root.render(<AgentSettingsPanel data={mockData} client={client} load={vi.fn()} notify={vi.fn()} />))
+    const notify = vi.fn()
+    act(() => root.render(<AgentSettingsPanel data={mockData} client={client} load={vi.fn()} notify={notify} />))
     const trigger = container.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="拥塞控制"]')!
     await act(async () => trigger.click())
     await act(async () => [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(option => option.textContent === 'BBR + CAKE')!.click())
     expect(trigger.textContent).toContain('BBR + FQ（默认）')
     expect(container.querySelector('[aria-label="CAKE 带宽（Mbit/s）"]')).toBeNull()
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe('保存失败，请重试')
+    expect(notify).toHaveBeenCalledWith('正在保存设置…', 'info')
+    expect(notify).toHaveBeenLastCalledWith('保存失败，请重试', 'error')
+    expect(container.querySelector('.settings-feedback')).toBeNull()
     expect(trigger.disabled).toBe(false)
   })
 
   it('keeps NTP drafts after failure and disables saving an empty time source', async () => {
     const client = { request: vi.fn(async () => { throw new Error('NTP 保存失败') }) }
-    act(() => root.render(<AgentSettingsPanel data={mockData} client={client} load={vi.fn()} notify={vi.fn()} />))
+    const notify = vi.fn()
+    act(() => root.render(<AgentSettingsPanel data={mockData} client={client} load={vi.fn()} notify={notify} />))
     const input = container.querySelector<HTMLInputElement>('[aria-label="NTP 时间源 1"]')!
     const save = [...container.querySelectorAll('button')].find(button => button.textContent === '保存 NTP 时间源')!
     const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
@@ -232,7 +236,7 @@ describe('AgentSettingsPanel', () => {
     act(() => { setValue.call(input, 'pool.ntp.org'); input.dispatchEvent(new Event('input', { bubbles: true })) })
     await act(async () => save.click())
     expect(input.value).toBe('pool.ntp.org')
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe('NTP 保存失败')
+    expect(notify).toHaveBeenLastCalledWith('NTP 保存失败', 'error')
     expect(save.disabled).toBe(false)
   })
 

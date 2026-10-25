@@ -39,14 +39,13 @@ export function IPDataSettings({ client, notify }: Props) {
   const [providers, setProviders] = useState<Provider[]>([])
   const [offline, setOffline] = useState<{ available?: boolean; error?: string }>({})
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
   const [editing, setEditing] = useState<Provider | null>(null)
   const apply = (value: any) => { setProviders(value?.providers || []); setOffline(value?.offline || {}) }
   const load = useCallback(async (signal?: AbortSignal) => {
-    try { apply(await client.request('/ip-data/keys', { signal })); setError('') }
-    catch (e: any) { if (!signal?.aborted) setError(e?.message || '读取数据源失败') }
+    try { apply(await client.request('/ip-data/keys', { signal })) }
+    catch (e: any) { if (!signal?.aborted) notify(e?.message || '读取数据源失败', 'error') }
     finally { if (!signal?.aborted) setLoading(false) }
-  }, [client])
+  }, [client, notify])
   useEffect(() => { const abort = new AbortController(); void load(abort.signal); return () => abort.abort() }, [load])
 
   return <>
@@ -66,7 +65,6 @@ export function IPDataSettings({ client, notify }: Props) {
         <span className={`status-pill ${offline.available ? 'ok' : 'warning'}`}>{offline.available ? '可用' : offline.error || '未加载'}</span>
       </SettingsRow>}
     </SettingsGroup>)}
-    {error && <p role="alert" className="settings-feedback">{error}</p>}
     <AnimatePresence>{editing && <KeyDialog provider={editing} client={client} notify={notify} onSaved={apply} onClose={() => setEditing(null)} />}</AnimatePresence>
   </>
 }
@@ -74,30 +72,31 @@ export function IPDataSettings({ client, notify }: Props) {
 function KeyDialog({ provider, client, notify, onSaved, onClose }: { provider: Provider; client: Props['client']; notify: Props['notify']; onSaved: (value: any) => void; onClose: () => void }) {
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState<'' | 'save' | 'clear' | 'test'>('')
-  const [error, setError] = useState('')
   const [configured, setConfigured] = useState(provider.configured)
-  const [test, setTest] = useState<TestResult | null>(null)
   const id = useId()
   const save = async (clear: boolean) => {
     if (busy || (!clear && !value.trim())) return
-    setBusy(clear ? 'clear' : 'save'); setError(''); setTest(null)
+    setBusy(clear ? 'clear' : 'save')
     try {
       const body = clear ? { keys: {}, clear: [provider.name] } : { keys: { [provider.name]: value.trim() }, clear: [] }
       const result = await client.request('/ip-data/keys', { method: 'POST', body: JSON.stringify(body) })
       onSaved(result); setValue(''); setConfigured(!clear)
       notify(clear ? `已清除 ${provider.label} Key` : `${provider.label} Key 已保存`, 'success')
-    } catch (e: any) { setError(e?.message || '保存失败，请重试') }
+    } catch (e: any) { notify(e?.message || '保存失败，请重试', 'error') }
     finally { setBusy('') }
   }
   const runTest = async () => {
     if (busy) return
-    setBusy('test'); setError('')
+    setBusy('test')
     try {
       const key = value.trim()
       const result = await client.request('/ip-data/keys/test', { method: 'POST', body: JSON.stringify(key ? { provider: provider.name, key } : { provider: provider.name }) })
-      setTest(result?.result || null)
+      const test: TestResult | null = result?.result || null
+      if (test) notify(test.status === 'ok'
+        ? `测试成功：${[test.asn, test.as_name, test.country_code || test.country].filter(Boolean).join(' · ') || '已返回数据'}`
+        : `测试未通过：${ipDataStatusText[test.status] || test.status}${test.error ? `，${test.error}` : ''}`, test.status === 'ok' ? 'success' : 'error')
       onSaved(await client.request('/ip-data/keys'))
-    } catch (e: any) { setError(e?.message || '测试失败') }
+    } catch (e: any) { notify(e?.message || '测试失败', 'error') }
     finally { setBusy('') }
   }
   return <MotionDialogPanel onCancel={() => { if (!busy) onClose() }} className="ip-data-key-dialog" aria-labelledby={`${id}-title`}>
@@ -105,12 +104,8 @@ function KeyDialog({ provider, client, notify, onSaved, onClose }: { provider: P
     <form className="dialog-body form" onSubmit={event => { event.preventDefault(); void save(false) }} aria-busy={Boolean(busy)}>
       <p className="muted">{provider.key_required ? '此来源必须填写 Key 才会查询。' : provider.keyless}。Key 加密保存在主控，保存后不会再显示。 <a href={provider.signup_url} target="_blank" rel="noreferrer noopener">获取 Key</a></p>
       <FormField label={provider.key_label} hint={configured ? '已配置；留空不修改，填写新值将替换。' : '粘贴从数据源后台获取的 Key。'}>
-        <input type="password" autoComplete="off" spellCheck={false} value={value} onChange={event => { setValue(event.target.value); setError('') }} placeholder={configured ? '已配置（不显示）' : ''} disabled={Boolean(busy)} aria-invalid={Boolean(error)} aria-describedby={error ? `${id}-error` : undefined} />
+        <input type="password" autoComplete="off" spellCheck={false} value={value} onChange={event => setValue(event.target.value)} placeholder={configured ? '已配置（不显示）' : ''} disabled={Boolean(busy)} />
       </FormField>
-      {error && <p id={`${id}-error`} role="alert" className="settings-feedback">{error}</p>}
-      {test && <p role="status" className="settings-feedback">{test.status === 'ok'
-        ? `测试成功：${[test.asn, test.as_name, test.country_code || test.country].filter(Boolean).join(' · ') || '已返回数据'}`
-        : `测试未通过：${ipDataStatusText[test.status] || test.status}${test.error ? `，${test.error}` : ''}`}</p>}
       <footer className="dialog-actions">
         {configured && <button type="button" className="ghost danger-ghost" disabled={Boolean(busy)} onClick={() => void save(true)}>{busy === 'clear' ? '清除中…' : '清除 Key'}</button>}
         <button type="button" className="ghost" disabled={Boolean(busy)} onClick={() => void runTest()}>{busy === 'test' ? '测试中…' : '测试连接'}</button>

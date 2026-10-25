@@ -183,7 +183,7 @@ function NodePresetCards({ presets, editingID, onEdit, onDelete, busy }: { prese
   </div>
 }
 
-function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, saving, hideTitle, error }: { title: string; draft: NodeDraft; setDraft: (draft: NodeDraft) => void; lockKind?: boolean; onSave: () => void; onCancel: () => void; saving: boolean; hideTitle?: boolean; error?: string }) {
+function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, saving, hideTitle }: { title: string; draft: NodeDraft; setDraft: (draft: NodeDraft) => void; lockKind?: boolean; onSave: () => void; onCancel: () => void; saving: boolean; hideTitle?: boolean }) {
   const meta = kindMeta(draft.kind) || nodePresetKinds[0]
   const tls = objectConfig(draft.config.tls)
   const transport = objectConfig(draft.config.transport)
@@ -328,7 +328,6 @@ function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, 
       <SettingsRow label="备注" description="可选说明，例如适用机房或用途。">
         <input value={draft.remark} onChange={event => setDraft({ ...draft, remark: event.target.value })} placeholder="可选" />
       </SettingsRow>
-      {error && <p className="settings-feedback" role="alert">{error}</p>}
       <div className="settings-actions">
         <button type="button" onClick={onSave} disabled={saving || !draft.name.trim() || draft.default_port < 1 || draft.default_port > 65535 || !Number.isInteger(draft.default_port)}>{saving ? '保存中...' : '保存预设'}</button>
         <button type="button" className="ghost" onClick={onCancel}>取消</button>
@@ -345,13 +344,12 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
   const [editingNode, setEditingNode] = useState<null | { id?: number; builtin?: boolean; draft: NodeDraft }>(null)
   const [editingSnell, setEditingSnell] = useState<null | { id?: number; draft: SnellDraft }>(null)
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
   const [initialDraft, setInitialDraft] = useState('')
   const openNode = (entry: NonNullable<typeof editingNode>) => {
-    setError(''); setInitialDraft(JSON.stringify(entry.draft)); setEditingSnell(null); setEditingNode(entry)
+    setInitialDraft(JSON.stringify(entry.draft)); setEditingSnell(null); setEditingNode(entry)
   }
   const openSnell = (entry: NonNullable<typeof editingSnell>) => {
-    setError(''); setInitialDraft(JSON.stringify(entry.draft)); setEditingNode(null); setEditingSnell(entry)
+    setInitialDraft(JSON.stringify(entry.draft)); setEditingNode(null); setEditingSnell(entry)
   }
   const closeNode = useSettingsEditorClose({ busy: saving, dirty: Boolean(editingNode) && JSON.stringify(editingNode?.draft) !== initialDraft, onClose: () => setEditingNode(null) })
   const closeSnell = useSettingsEditorClose({ busy: saving, dirty: Boolean(editingSnell) && JSON.stringify(editingSnell?.draft) !== initialDraft, onClose: () => setEditingSnell(null) })
@@ -376,7 +374,6 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
 
   const saveNode = async () => {
     if (!editingNode || saving) return
-    setError('')
     setSaving(true)
     try {
       const meta = kindMeta(editingNode.draft.kind) || nodePresetKinds[0]
@@ -399,7 +396,6 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
       setEditingNode(null)
       await load()
     } catch (error: any) {
-      setError(String(error?.message || error || '保存失败'))
       notify(String(error?.message || error || '保存失败'), 'error')
     } finally {
       setSaving(false)
@@ -408,7 +404,6 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
 
   const saveSnell = async () => {
     if (!editingSnell || saving) return
-    setError('')
     setSaving(true)
     try {
       if (editingSnell.id) {
@@ -421,7 +416,6 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
       setEditingSnell(null)
       await load()
     } catch (error: any) {
-      setError(String(error?.message || error || '保存失败'))
       notify(String(error?.message || error || '保存失败'), 'error')
     } finally {
       setSaving(false)
@@ -431,14 +425,12 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
   const deleteNode = async (preset: NodePreset) => {
     if (saving || preset.builtin || preset.usage_count > 0) return
     setSaving(true)
-    setError('')
     try {
       if (!await dialogs.confirm({ title: `删除预设「${preset.name}」？`, message: '删除后无法恢复。', confirmText: '删除', tone: 'danger' })) return
       await client.request(`/node-presets/${preset.id}`, { method: 'DELETE' })
       notify('预设已删除', 'success')
       await load()
     } catch (error: any) {
-      setError(String(error?.message || error || '删除失败'))
       notify(String(error?.message || error || '删除失败'), 'error')
     } finally { setSaving(false) }
   }
@@ -446,14 +438,12 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
   const deleteSnell = async (profile: SnellProfile) => {
     if (saving || profile.builtin || profile.usage_count > 0) return
     setSaving(true)
-    setError('')
     try {
       if (!await dialogs.confirm({ title: `删除预设「${profile.name}」？`, message: '删除后无法恢复。', confirmText: '删除', tone: 'danger' })) return
       await client.request(`/snell-profiles/${profile.id}`, { method: 'DELETE' })
       notify('预设已删除', 'success')
       await load()
     } catch (error: any) {
-      setError(String(error?.message || error || '删除失败'))
       notify(String(error?.message || error || '删除失败'), 'error')
     } finally { setSaving(false) }
   }
@@ -470,7 +460,6 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
   const restoreSystem = async () => {
     if (saving) return
     setSaving(true)
-    setError('')
     try {
       if (!await dialogs.confirm({
         title: '恢复全部系统模板？',
@@ -482,7 +471,6 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
       notify('已恢复系统模板', 'success')
       await load()
     } catch (error: any) {
-      setError(String(error?.message || error || '恢复失败'))
       notify(String(error?.message || error || '恢复失败'), 'error')
     } finally {
       setSaving(false)
@@ -492,7 +480,6 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
   return <section id="settings-panel-presets" className="settings-card signal-settings signal-presets" aria-busy={saving}>
     <div className="settings-group">
       <div className="settings-group-body">
-        {error && !editingNode && !editingSnell && <p className="settings-feedback" role="alert">{error}</p>}
         <div className="node-presets-toolbar">
         <div className="node-preset-filters" role="group" aria-label="按协议筛选">
           {protocolFilters.map(item => (
@@ -507,12 +494,12 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
       </div>
       {editingNode && (
         <Dialog isOpen={Boolean(editingNode)} onClose={() => void closeNode()} className="signal-settings-dialog" title={editingNode.id ? '编辑节点预设' : '新建节点预设'} size="lg">
-          <NodePresetEditor title={editingNode.id ? '编辑节点预设' : '新建节点预设'} draft={editingNode.draft} setDraft={draft => setEditingNode({ id: editingNode.id, builtin: editingNode.builtin, draft })} lockKind={Boolean(editingNode.builtin)} onSave={saveNode} onCancel={() => void closeNode()} saving={saving} error={error} hideTitle />
+          <NodePresetEditor title={editingNode.id ? '编辑节点预设' : '新建节点预设'} draft={editingNode.draft} setDraft={draft => setEditingNode({ id: editingNode.id, builtin: editingNode.builtin, draft })} lockKind={Boolean(editingNode.builtin)} onSave={saveNode} onCancel={() => void closeNode()} saving={saving} hideTitle />
         </Dialog>
       )}
       {editingSnell && (
         <Dialog isOpen={Boolean(editingSnell)} onClose={() => void closeSnell()} className="signal-settings-dialog" title={editingSnell.id ? '编辑 Snell 预设' : '新建 Snell 预设'} size="lg">
-          <SnellProfileEditor title={editingSnell.id ? '编辑 Snell 预设' : '新建 Snell 预设'} draft={editingSnell.draft} setDraft={draft => setEditingSnell({ id: editingSnell.id, draft })} onSave={saveSnell} onCancel={() => void closeSnell()} saving={saving} error={error} hideTitle />
+          <SnellProfileEditor title={editingSnell.id ? '编辑 Snell 预设' : '新建 Snell 预设'} draft={editingSnell.draft} setDraft={draft => setEditingSnell({ id: editingSnell.id, draft })} onSave={saveSnell} onCancel={() => void closeSnell()} saving={saving} hideTitle />
         </Dialog>
       )}
       {groupedPresets.map(group => (

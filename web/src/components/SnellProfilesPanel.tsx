@@ -74,7 +74,7 @@ export function SnellProfileCards({ profiles, editingID, onEdit, onDelete, busy 
   </div>
 }
 
-export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, saving, hideTitle, error }: { title: string; draft: SnellDraft; setDraft: (draft: SnellDraft) => void; onSave: () => void; onCancel: () => void; saving: boolean; hideTitle?: boolean; error?: string }) {
+export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, saving, hideTitle }: { title: string; draft: SnellDraft; setDraft: (draft: SnellDraft) => void; onSave: () => void; onCancel: () => void; saving: boolean; hideTitle?: boolean }) {
   const [showPSK, setShowPSK] = useState(false)
   const isV6 = Number(draft.version) === 6
   return <div className={`snell-profile-editor${hideTitle ? ' is-dialog' : ''}`}>
@@ -118,7 +118,6 @@ export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, s
       <SettingsRow label="备注" description="可选说明，例如适用机房或用途。">
         <input value={draft.remark} onChange={event => setDraft({ ...draft, remark: event.target.value })} placeholder="可选" />
       </SettingsRow>
-      {error && <p className="settings-feedback" role="alert">{error}</p>}
       <div className="settings-actions">
         <button type="button" onClick={onSave} disabled={saving || !draft.name.trim()}>{saving ? '保存中...' : '保存预设'}</button>
         <button type="button" className="ghost" onClick={onCancel}>取消</button>
@@ -132,17 +131,15 @@ export function SnellProfilesPanel({ data, client, load, notify }: SnellProfiles
   const profiles: SnellProfile[] = data.snell_profiles || []
   const [editing, setEditing] = useState<null | { id?: number; draft: SnellDraft }>(null)
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
   const [initialDraft, setInitialDraft] = useState('')
   const openEditor = (entry: NonNullable<typeof editing>) => {
-    setError(''); setInitialDraft(JSON.stringify(entry.draft)); setEditing(entry)
+    setInitialDraft(JSON.stringify(entry.draft)); setEditing(entry)
   }
   const closeEditor = useSettingsEditorClose({ busy: saving, dirty: Boolean(editing) && JSON.stringify(editing?.draft) !== initialDraft, onClose: () => setEditing(null) })
 
   const saveProfile = async () => {
     if (!editing || saving) return
     setSaving(true)
-    setError('')
     try {
       const body = { ...editing.draft }
       if (editing.id) {
@@ -155,7 +152,6 @@ export function SnellProfilesPanel({ data, client, load, notify }: SnellProfiles
       setEditing(null)
       await load()
     } catch (error: any) {
-      setError(String(error?.message || error || '保存失败'))
       notify(String(error?.message || error || '保存失败'), 'error')
     } finally {
       setSaving(false)
@@ -165,20 +161,17 @@ export function SnellProfilesPanel({ data, client, load, notify }: SnellProfiles
   const deleteProfile = async (profile: SnellProfile) => {
     if (saving || profile.builtin || profile.usage_count > 0) return
     setSaving(true)
-    setError('')
     try {
       if (!await dialogs.confirm({ title: `删除预设「${profile.name}」？`, message: '删除后无法恢复。', confirmText: '删除', tone: 'danger' })) return
       await client.request(`/snell-profiles/${profile.id}`, { method: 'DELETE' })
       notify('预设已删除', 'success')
       await load()
     } catch (error: any) {
-      setError(String(error?.message || error || '删除失败'))
       notify(String(error?.message || error || '删除失败'), 'error')
     } finally { setSaving(false) }
   }
 
   return <section id="settings-panel-snell" className="settings-card signal-settings signal-presets" aria-busy={saving}>
-    {error && !editing && <p className="settings-feedback" role="alert">{error}</p>}
     <SettingsGroup title="Snell 参数预设" description="多个入口可共用参数，修改后在下次部署时生效。内置预设不可删除。">
        <div className="snell-profiles-head">
          <span className="muted">共 {profiles.length} 套，内置 {profiles.filter(p => p.builtin).length} 套</span>
@@ -188,7 +181,7 @@ export function SnellProfilesPanel({ data, client, load, notify }: SnellProfiles
      </SettingsGroup>
      {editing && (
        <Dialog isOpen={Boolean(editing)} onClose={() => void closeEditor()} className="signal-settings-dialog" title={editing.id ? '编辑预设' : '新建预设'} size="lg">
-         <SnellProfileEditor title={editing.id ? '编辑预设' : '新建预设'} draft={editing.draft} setDraft={draft => setEditing({ id: editing.id, draft })} onSave={saveProfile} onCancel={() => void closeEditor()} saving={saving} error={error} hideTitle />
+         <SnellProfileEditor title={editing.id ? '编辑预设' : '新建预设'} draft={editing.draft} setDraft={draft => setEditing({ id: editing.id, draft })} onSave={saveProfile} onCancel={() => void closeEditor()} saving={saving} hideTitle />
        </Dialog>
      )}
    </section>

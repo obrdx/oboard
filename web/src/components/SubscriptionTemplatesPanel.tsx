@@ -25,7 +25,6 @@ export function SubscriptionTemplatesPanel({ client, notify }: { client: any; no
   const [draft, setDraft] = useState('')
   const [preview, setPreview] = useState('')
   const [busy, setBusy] = useState('')
-  const [error, setError] = useState('')
   const [loadError, setLoadError] = useState('')
   const closeEditor = useSettingsEditorClose({ busy: Boolean(busy), dirty: Boolean(editing) && draft !== editing?.content, onClose: () => setEditing(null) })
 
@@ -54,7 +53,6 @@ export function SubscriptionTemplatesPanel({ client, notify }: { client: any; no
 
   const openEditor = (item: SubscriptionClientTemplate) => {
     setEditing(item)
-    setError('')
     setDraft(item.content)
     setPreview('')
   }
@@ -62,11 +60,9 @@ export function SubscriptionTemplatesPanel({ client, notify }: { client: any; no
   const run = async (key: string, action: () => Promise<void>) => {
     if (busy) return
     setBusy(key)
-    setError('')
     try {
       await action()
     } catch (error: any) {
-      setError(String(error?.message || error || '操作失败'))
       notify(String(error?.message || error || '操作失败'), 'error')
     } finally {
       setBusy('')
@@ -148,9 +144,8 @@ export function SubscriptionTemplatesPanel({ client, notify }: { client: any; no
             <p className="muted">来源 {editing.source === 'custom' ? '自定义' : '系统'} · 版本 {editing.revision || 0} · 系统摘要 {editing.builtin_digest.slice(0, 12)}{editing.base_builtin_digest ? ` · 自定义基于 ${editing.base_builtin_digest.slice(0, 12)}` : ''}</p>
             {editing.builtin_updated && <p className="danger-text">系统模板已有新版，当前自定义模板仍基于旧系统模板，不会自动覆盖。</p>}
             <p className="muted">可用标记：{(editing.markers || []).join(' ')}</p>
-            <textarea className="monospace-input subscription-template-textarea" disabled={Boolean(busy)} value={draft} onChange={event => { setDraft(event.target.value); setPreview(''); setError('') }} spellCheck={false} aria-label={`${editing.label} 模板内容`} />
+            <textarea className="monospace-input subscription-template-textarea" disabled={Boolean(busy)} value={draft} onChange={event => { setDraft(event.target.value); setPreview('') }} spellCheck={false} aria-label={`${editing.label} 模板内容`} />
             {preview && <section aria-label="合成节点预览"><h4>合成节点预览</h4><pre className="subscription-template-preview">{preview}</pre></section>}
-            {error && <p className="settings-feedback" role="alert">{error}</p>}
             <footer className="dialog-actions">
               <button type="button" className="ghost" onClick={validate} disabled={Boolean(busy)}>{busy === 'validate' ? '校验中...' : '校验'}</button>
               <button type="button" className="ghost" onClick={renderPreview} disabled={Boolean(busy)}>{busy === 'preview' ? '预览中...' : '预览'}</button>

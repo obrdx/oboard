@@ -95,7 +95,6 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
   const [monitoringRetentionDays, setMonitoringRetentionDays] = useState<number>(Number(data.settings?.server_monitoring_retention_days) || 7)
 
   const [savingKey, setSavingKey] = useState<string>('')
-  const [error, setError] = useState('')
 
   useEffect(() => {
     setServerDefaultMTUMode(String(data.settings?.server_default_mtu_mode || 'detect'))
@@ -124,7 +123,7 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
   const autoSaveSetting = async (payload: Record<string, any>, successMessage: string, rollback?: () => void) => {
     if (savingKey) return
     setSavingKey('auto-save')
-    setError('')
+    notify('正在保存设置…', 'info')
     let persisted = false
     try {
       await client.request('/settings', { method: 'POST', body: JSON.stringify(payload) })
@@ -133,8 +132,7 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
       notify(successMessage, 'success')
     } catch (error: any) {
       if (!persisted) rollback?.()
-      setError(persisted ? '设置已保存，但刷新失败。请刷新页面确认。' : error?.message || String(error))
-      notify(error?.message || String(error), 'error')
+      notify(persisted ? '设置已保存，但刷新失败。请刷新页面确认。' : error?.message || String(error), 'error')
     } finally {
       setSavingKey('')
     }
@@ -183,7 +181,6 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
   const refreshAllRuntime = async () => {
     if (savingKey) return
     setSavingKey('refresh-runtime')
-    setError('')
     try {
       let healthNotice = ''
       try {
@@ -205,7 +202,6 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
       notify(`已向 ${count} 台已接入服务器重新下发全部配置、授权、用户与探测计划`, 'success')
       await load()
     } catch (error: any) {
-      setError(error?.message || String(error))
       notify(error?.message || String(error), 'error')
     } finally {
       setSavingKey('')
@@ -215,7 +211,6 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
   const saveNTPServers = async () => {
     if (savingKey) return
     setSavingKey('ntp-servers')
-    setError('')
     try {
       await client.request('/settings', {
         method: 'POST',
@@ -226,7 +221,6 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
       await load()
       notify('NTP 时间源已保存', 'success')
     } catch (error: any) {
-      setError(error?.message || String(error))
       notify(error?.message || String(error), 'error')
     } finally {
       setSavingKey('')
@@ -235,8 +229,6 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
 
   return (
     <section className="settings-card agent-settings-card signal-settings" aria-busy={Boolean(savingKey)}>
-      {error && <p className="settings-feedback" role="alert">{error}</p>}
-      {savingKey === 'auto-save' && <p className="settings-feedback" role="status">正在保存设置…</p>}
       <SettingsGroup title="服务可用性">
         <SettingsSwitchRow label="主控失联后继续提供服务" description="默认关闭。开启后按最后收到的授权继续服务，恢复连接后同步流量；已知到期、封禁及本地套餐总额度仍生效。失联期间多节点用量可能超出套餐总额度。需更新 Agent 和内核，设置送达节点后生效。" checked={String(data.settings?.agent_continue_when_disconnected ?? 'false') === 'true'} onChange={checked => void autoSaveSetting({ agent_continue_when_disconnected: checked }, '主控失联服务设置已保存')} disabled={Boolean(savingKey)} ariaLabel="主控失联后继续提供服务" />
       </SettingsGroup>

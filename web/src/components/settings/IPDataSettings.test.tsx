@@ -48,7 +48,8 @@ it("tests the key typed in the dialog before it is saved", async () => {
   const request = vi.fn(async (path: string) => path === "/ip-data/keys/test"
     ? { result: { provider: "ipapi_is", status: "ok", asn: "AS13335", country_code: "AU" } }
     : { providers, offline: { available: true } })
-  await act(async () => root.render(<IPDataSettings client={{ request }} notify={vi.fn()} />))
+  const notify = vi.fn()
+  await act(async () => root.render(<IPDataSettings client={{ request }} notify={notify} />))
   const open = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "填写 Key" && b.closest(".settings-row")?.textContent?.includes("AbuseIPDB"))!
   await act(async () => open.click())
   const input = document.body.querySelector<HTMLInputElement>(".ip-data-key-dialog input[type=password]")!
@@ -61,5 +62,5 @@ it("tests the key typed in the dialog before it is saved", async () => {
   await act(async () => test.click())
   const posted = request.mock.calls.find(([path]) => path === "/ip-data/keys/test")!
   expect(JSON.parse(String(posted[1]?.body))).toEqual({ provider: "abuseipdb", key: "typed-key" })
-  expect(document.body.textContent).toContain("测试成功：AS13335 · AU")
+  expect(notify).toHaveBeenCalledWith("测试成功：AS13335 · AU", "success")
 })
