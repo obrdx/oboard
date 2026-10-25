@@ -3,9 +3,9 @@ import { AnimatePresence, m, motionValue, useMotionValue, useReducedMotion } fro
 import { Check, ChevronLeft, ChevronRight, Pause, Play, RotateCcw } from 'lucide-react'
 import { Dialog } from '../../../components/ui/dialog'
 import { DemoAborted, DemoTimeline } from './engine'
-import { DemoStage } from './DemoStage'
+import { DemoStage, type DemoCamera } from './DemoStage'
 import { chapterDuration, proxyPathChapters, type DemoChapter, type DemoRuntime } from './proxy-path-script'
-import type { DemoScene } from './scene'
+import type { Camera, DemoScene } from './scene'
 import './demo.css'
 
 const CHAPTER_GAP_MS = 1200
@@ -35,6 +35,9 @@ export function ProxyPathDemo({ chapters, onTry }: { chapters: DemoChapter[]; on
   const [durations, setDurations] = useState<number[]>([])
   const cursorX = useMotionValue(0)
   const cursorY = useMotionValue(0)
+  // Each chapter run gets its own camera, so the layer fading out keeps its
+  // framing while the next chapter sets up a different one.
+  const [camera, setCamera] = useState<DemoCamera>(() => makeCamera(chapters[0].start().camera))
   const progress = useMotionValue(0)
   const timelineRef = useRef<DemoTimeline | null>(null)
   const playingRef = useRef(playing)
@@ -56,6 +59,8 @@ export function ProxyPathDemo({ chapters, onTry }: { chapters: DemoChapter[]; on
     const timeline = new DemoTimeline({ instant: reducedMotion, speed: speedRef.current })
     timelineRef.current = timeline
     let sceneValue = current.start()
+    const runCamera = makeCamera(sceneValue.camera)
+    setCamera(runCamera)
     setScene(sceneValue)
     setCaption('')
     progress.set(0)
@@ -66,6 +71,9 @@ export function ProxyPathDemo({ chapters, onTry }: { chapters: DemoChapter[]; on
       timeline,
       cursorX,
       cursorY,
+      cameraX: runCamera.x,
+      cameraY: runCamera.y,
+      cameraScale: runCamera.scale,
       scene: () => sceneValue,
       update: change => {
         sceneValue = change(sceneValue)
@@ -170,7 +178,7 @@ export function ProxyPathDemo({ chapters, onTry }: { chapters: DemoChapter[]; on
       <div className="pd-viewport">
         <AnimatePresence initial={false}>
           <m.div key={`${chapter}-${run}`} className="pd-layer" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.22 }}>
-            <DemoStage scene={scene} cursorX={cursorX} cursorY={cursorY} paused={!playing} speed={speed} reducedMotion={reducedMotion} onRippleDone={removeRipple} />
+            <DemoStage scene={scene} cursorX={cursorX} cursorY={cursorY} camera={camera} paused={!playing} speed={speed} reducedMotion={reducedMotion} onRippleDone={removeRipple} />
           </m.div>
         </AnimatePresence>
         <AnimatePresence>
@@ -212,4 +220,8 @@ export function ProxyPathDemo({ chapters, onTry }: { chapters: DemoChapter[]; on
       </div>
     </div>
   </div>
+}
+
+function makeCamera(value: Camera): DemoCamera {
+  return { x: motionValue(value.x), y: motionValue(value.y), scale: motionValue(value.scale) }
 }
