@@ -62,6 +62,8 @@
   min-width: 0;
 }
 
+.inbound-editor-grid > .inbound-ddns-action { align-self: end; }
+
 .inbound-editor-grid > .form-field-full,
 .inbound-editor-grid > .inbound-editor-switch,
 .inbound-editor-grid > .access-note { grid-column: 1 / -1; }

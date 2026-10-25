@@ -13907,6 +13907,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     const normalizedPrefix = prefix.trim().replace(/^\.+|\.+$/g, '')
     return normalizedPrefix && zoneName ? `${normalizedPrefix}.${zoneName}` : ''
   }
+  const [serverLocked] = useState(() => mode === 'create' && Number(draft.server_id) > 0)
   const changeServer = (serverID: number) => {
     const nextServer = servers.find(s => s.id === serverID)
     const currentPort = Number(draft.port) || 443
@@ -14059,12 +14060,12 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             {protocol === 'snell' && cfg.mode === 'unsafe-raw' && <p role="alert" className="field-hint warning-text">unsafe-raw 没有 PSK 加密认证，禁止用于 Snell 入口。</p>}
           </EntryEditorSection>
 
-          <EntryEditorSection title="服务器与端口">
+          <EntryEditorSection title={serverLocked ? '端口' : '服务器与端口'} aside={serverLocked ? <ServerRelatedJumps serverID={Number(draft.server_id || 0)} /> : undefined}>
             <div className="inbound-editor-grid">
-              <FormField label="服务器" required>
+              {!serverLocked && <FormField label="服务器" required>
                 <Select value={draft.server_id} onChange={e => changeServer(Number(e.target.value))}><option value={0}>选择服务器</option>{servers.map(s => <option value={s.id} key={s.id}>{s.name}</option>)}</Select>
                 <ServerRelatedJumps serverID={Number(draft.server_id || 0)} />
-              </FormField>
+              </FormField>}
               <FormField label="入口名称" required hint="用于拓扑图、订阅和任务识别；同协议多个入口会自动加序号。">
                 <input value={draft.name} onChange={e => update({ name: e.target.value })} enterKeyHint="next" />
               </FormField>

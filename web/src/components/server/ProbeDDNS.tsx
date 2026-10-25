@@ -267,7 +267,7 @@ export function InboundDDNSField({ serverID, recordID, domain, client, credentia
         {records.map(record => <option key={record.id} value={record.id}>{record.name} · {record.domain}</option>)}
       </Select>
     </FormField>
-    <div className="inline-field-action">
+    <div className="inline-field-action inbound-ddns-action">
       <button type="button" className="ghost" disabled={!serverID} onClick={() => setCreating(true)}>新建 DDNS</button>
     </div>
     {selected && <p className="field-hint">当前 Host 将使用 {selected.domain}。{selected.error ? ` 最近一次更新失败：${selected.error}` : ''}</p>}
