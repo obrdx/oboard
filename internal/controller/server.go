@@ -13336,6 +13336,22 @@ func deploymentFail(status int, err error) error {
 	return &deploymentHTTPError{status: status, err: err}
 }
 
+// serverDesiredStateError marks a deployment failure caused by one server's
+// own desired state, so automatic sync can set that server aside and still
+// deploy the others.
+type serverDesiredStateError struct {
+	serverID int64
+	err      error
+}
+
+func (e *serverDesiredStateError) Error() string { return e.err.Error() }
+
+func (e *serverDesiredStateError) Unwrap() error { return e.err }
+
+func serverDeploymentFail(serverID int64, status int, err error) error {
+	return deploymentFail(status, &serverDesiredStateError{serverID: serverID, err: err})
+}
+
 // deployConfiguration prepares and queues apply_deployment tasks under the
 // deployment lock. selectedServerID==0 targets every server; otherwise only that
 // server. expandTransparentScope lets automatic pushes fall back to a full
@@ -13382,7 +13398,7 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 	}
 	for _, path := range data.ProxyPaths {
 		root, ok := inboundIndex[path.InboundID]
-		if !path.Enabled || !ok || root.Protocol != model.ProtocolSSH {
+		if !path.Enabled || !ok || root.Protocol != model.ProtocolSSH || allowedServerIDs != nil && !allowedServerIDs[root.ServerID] {
 			continue
 		}
 		server, ok := serverByID(servers, root.ServerID)
@@ -13391,7 +13407,7 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 			if ok {
 				name = server.Name
 			}
-			return nil, 0, deploymentFail(http.StatusConflict, fmt.Errorf("服务器 %s 的 Agent 不支持 SSH 链式代理；请先更新 Agent", name))
+			return nil, 0, serverDeploymentFail(root.ServerID, http.StatusConflict, fmt.Errorf("服务器 %s 的 Agent 不支持 SSH 链式代理；请先更新 Agent", name))
 		}
 	}
 	groupedServers := core.TransparentForwardServerIDs(data.ProxyPaths, data.ProxyPathSteps, in)
@@ -13432,7 +13448,7 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 				if ok {
 					name = server.Name
 				}
-				return nil, 0, deploymentFail(http.StatusConflict, fmt.Errorf("服务器 %s 的 Agent 不支持第三方节点出口探测；请先更新 Agent", name))
+				return nil, 0, serverDeploymentFail(serverID, http.StatusConflict, fmt.Errorf("服务器 %s 的 Agent 不支持第三方节点出口探测；请先更新 Agent", name))
 			}
 		}
 	}
@@ -13521,7 +13537,7 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 		if warpServerIDs[server.ID] {
 			profile, ok := findWARPProfileForServer(data.WARPProfiles, server.ID)
 			if !ok || !profile.Enabled {
-				return nil, 0, deploymentFail(400, fmt.Errorf("server %s requires an unavailable WARP profile", server.Name))
+				return nil, 0, serverDeploymentFail(server.ID, 400, fmt.Errorf("server %s requires an unavailable WARP profile", server.Name))
 			}
 			if profile.Status == model.WARPStatusReady && strings.TrimSpace(profile.ConfigJSON) != "" {
 				// The complete endpoint is already generated into the Controller config.
@@ -13541,7 +13557,7 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 				}
 				underlay, err := core.ValidateDialConstraint(profile.UnderlayJSON)
 				if err != nil {
-					return nil, 0, deploymentFail(400, err)
+					return nil, 0, serverDeploymentFail(server.ID, 400, err)
 				}
 				plan.Underlay = &model.DialConstraint{Mode: underlay.Mode, InterfaceName: underlay.InterfaceName, SourceAddress: underlay.SourceAddress, Family: underlay.Family}
 				warpRequests = append(warpRequests, plan)
@@ -13562,7 +13578,7 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 			// Generation rejects operator-fixable desired state too — a listener
 			// conflict, an unreachable address, an unsupported protocol field. Those
 			// are 400s like the dedicated validators below, not server faults.
-			return nil, 0, deploymentFail(deploymentConfigErrorStatus(err), err)
+			return nil, 0, serverDeploymentFail(server.ID, deploymentConfigErrorStatus(err), err)
 		}
 		managedAssets, cfg := generated.Assets, generated.Config
 		configChanged := true
@@ -13582,7 +13598,7 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 
 		forwardPlan, err := core.BuildPortForwardPlan(version, server, servers, forwards)
 		if err != nil {
-			return nil, 0, deploymentFail(400, err)
+			return nil, 0, serverDeploymentFail(server.ID, 400, err)
 		}
 
 		inboundProbePlan, externalInboundProbePlan := buildInboundProbePlans(version, server, in, ledger, true)
@@ -13602,22 +13618,22 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 
 		tunnelPlan, err := core.BuildTunnelPlan(version, server, servers, tunnels)
 		if err != nil {
-			return nil, 0, deploymentFail(400, err)
+			return nil, 0, serverDeploymentFail(server.ID, 400, err)
 		}
 		sshInboundPlan, err := buildSSHInboundPlan(version, server, data, inboundBindings, pathBindings, generated.TrafficPolicies)
 		if err != nil {
-			return nil, 0, deploymentFail(400, err)
+			return nil, 0, serverDeploymentFail(server.ID, 400, err)
 		}
 		if err := core.ValidateDeploymentListenResources(server.ID, cfg, forwardPlan, tunnelPlan, sshInboundPlan); err != nil {
-			return nil, 0, deploymentFail(400, err)
+			return nil, 0, serverDeploymentFail(server.ID, 400, err)
 		}
 		dnsState, err := core.DNSConfigStateForServer(server.ID, data.DNSLists, data.ServerDNSPolicies)
 		if err != nil {
-			return nil, 0, deploymentFail(400, err)
+			return nil, 0, serverDeploymentFail(server.ID, 400, err)
 		}
 		dnsPlan, err := core.DNSBenchmarkPlanForPolicy(version, *dnsState.Policy, dnsState.EncryptedList, *dnsState.BootstrapList, core.EffectiveIPStack(server), dnsState.Policy.AutoTest, "")
 		if err != nil {
-			return nil, 0, deploymentFail(400, err)
+			return nil, 0, serverDeploymentFail(server.ID, 400, err)
 		}
 		var mtuPlan *model.MTUDetectionPlan
 		if server.MTUMode != "" && server.MTUMode != model.MTUModeDisabled {

@@ -497,3 +497,28 @@ func (p *RuntimeUserPackage) Request() model.UsersInstallRequest {
 		ContentDigest: p.ContentDigest,
 	}
 }
+
+// ConfigOutboundTags returns the outbound and endpoint tags a generated
+// sing-box configuration defines; the kernel resolves runtime user routes
+// against both. It returns nil when the configuration cannot be parsed.
+func ConfigOutboundTags(config string) map[string]bool {
+	var parsed struct {
+		Outbounds []struct {
+			Tag string `json:"tag"`
+		} `json:"outbounds"`
+		Endpoints []struct {
+			Tag string `json:"tag"`
+		} `json:"endpoints"`
+	}
+	if json.Unmarshal([]byte(config), &parsed) != nil {
+		return nil
+	}
+	tags := make(map[string]bool, len(parsed.Outbounds)+len(parsed.Endpoints))
+	for _, item := range parsed.Outbounds {
+		tags[item.Tag] = true
+	}
+	for _, item := range parsed.Endpoints {
+		tags[item.Tag] = true
+	}
+	return tags
+}

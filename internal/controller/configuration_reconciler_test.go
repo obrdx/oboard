@@ -1131,3 +1131,66 @@ func (s *Server) markConfigurationRevision(ctx context.Context, revision uint64,
 	}
 	s.publishRealtime("configuration", "deployments", "tasks")
 }
+
+// TestConfigurationReconcilerIsolatesServerWithInvalidDesiredState reproduces
+// the incident where one server's path ending at an HTTP exit could not be
+// prepared and the whole automatic batch failed with it.
+func TestConfigurationReconcilerIsolatesServerWithInvalidDesiredState(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	srv := newTestServer(db, "test-secret", "")
+	servers := []*model.Server{
+		{Name: "old-kernel", AgentID: "old-agent", AgentTokenHash: security.HashSecret("old-token"), AgentBuild: "20261001000000", KernelCapabilities: []string{"runtime_users_v1"}, Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 19999},
+		{Name: "healthy-a", AgentID: "healthy-a-agent", AgentTokenHash: security.HashSecret("healthy-a-token"), Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 20000, PortRangeEnd: 29999},
+		{Name: "healthy-b", AgentID: "healthy-b-agent", AgentTokenHash: security.HashSecret("healthy-b-token"), Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 30000, PortRangeEnd: 39999},
+	}
+	for _, server := range servers {
+		if err := db.CreateServer(ctx, server); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries := make([]*model.Inbound, 0, len(servers))
+	for index, server := range servers {
+		inbound := &model.Inbound{ServerID: server.ID, Name: server.Name + "-entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 10443 + index, ConfigJSON: "{}", Enabled: true}
+		if err := db.CreateInbound(ctx, inbound); err != nil {
+			t.Fatal(err)
+		}
+		entries = append(entries, inbound)
+	}
+	external := &model.ExternalOutbound{Name: "ntt-http", Protocol: model.ProtocolHTTP, Scope: model.ExternalOutboundScopeGlobal, TargetAddress: "180.53.81.127", TargetPort: 8080, ConfigJSON: `{"tls":{"enabled":true}}`, RegionMode: "auto", Enabled: true}
+	if err := db.CreateExternalOutbound(ctx, external); err != nil {
+		t.Fatal(err)
+	}
+	path := &model.ProxyPath{InboundID: entries[0].ID, Name: "via-http", Secret: "via-http-secret", Enabled: true}
+	if err := db.CreateProxyPath(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	externalID := external.ID
+	if err := db.CreateProxyPathStep(ctx, &model.ProxyPathStep{PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepImported, ExternalOutboundID: &externalID, TransportMode: "singbox", ConfigJSON: "{}"}); err != nil {
+		t.Fatal(err)
+	}
+	revision, err := db.ConfigurationRevision(ctx)
+	if err != nil || revision == 0 {
+		t.Fatalf("configuration revision=%d err=%v", revision, err)
+	}
+	if _, err := db.MarkConfigurationSyncPending(ctx, revision, []int64{servers[0].ID, servers[1].ID, servers[2].ID}); err != nil {
+		t.Fatal(err)
+	}
+	srv.reconcileConfiguration(ctx)
+	broken, err := db.ConfigurationSyncState(ctx, servers[0].ID)
+	// An old kernel is fixed by an Agent upgrade, not a configuration edit, so
+	// the problem keeps the automatic retry policy.
+	if err != nil || broken.State != "failed" || broken.LastTaskID != 0 || len(broken.Problems) != 1 || broken.Problems[0].RetryPolicy != "automatic" {
+		t.Fatalf("broken server state=%#v err=%v", broken, err)
+	}
+	for _, server := range servers[1:] {
+		state, stateErr := db.ConfigurationSyncState(ctx, server.ID)
+		if stateErr != nil || state.State != "queued" || state.LastTaskID == 0 {
+			t.Fatalf("healthy server %s state=%#v err=%v", server.Name, state, stateErr)
+		}
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -330,6 +331,14 @@ func (s *Server) syncServerRuntimeUsers(ctx context.Context, serverID int64, for
 		return
 	}
 	if state.DeliveredRevision == pkg.UsersRevision && state.DeliveredAt != nil && time.Since(*state.DeliveredAt) < runtimeUsersRedeliveryAfter && state.PendingReason != store.RuntimeUsersPendingAgentUpgrade {
+		return
+	}
+	if missing := s.undeployedRuntimeUserRoutes(ctx, serverID, pkg); len(missing) > 0 {
+		message := "等待包含出口 " + strings.Join(missing, ", ") + " 的配置部署成功后再下发"
+		if state.PendingReason != store.RuntimeUsersPendingAwaitingDeployment || state.LastError != message {
+			log.Printf("runtime users held server=%d(%s) revision=%d awaiting deployment of outbounds=%s", serverID, safeLogField(server.Name), pkg.UsersRevision, safeLogField(strings.Join(missing, ",")))
+			_ = s.store.MarkRuntimeUsersPending(ctx, serverID, store.RuntimeUsersPendingAwaitingDeployment, message, true)
+		}
 		return
 	}
 	if !s.agentControlOnline(serverID) {
@@ -819,4 +828,43 @@ func parseAppliedUsersHeaders(r *http.Request) *model.UsersAppliedSnapshot {
 		return nil
 	}
 	return &model.UsersAppliedSnapshot{Revision: revision, Digest: digest, BootID: bootID, ContentDigest: content}
+}
+
+// undeployedRuntimeUserRoutes lists the route outbounds the package needs that
+// the server's last successfully applied configuration does not define. The
+// kernel refuses a users install routed to an unknown outbound, so delivering
+// before that deployment converges only produces a reject-and-retry loop. A
+// server without a recorded deployment is not held: there is nothing to
+// compare against, and its first deployment carries the outbounds anyway.
+func (s *Server) undeployedRuntimeUserRoutes(ctx context.Context, serverID int64, pkg core.RuntimeUserPackage) []string {
+	applied, err := s.lastControllerDesiredConfig(ctx, serverID)
+	if err != nil {
+		return nil
+	}
+	return missingRuntimeUserRoutes(applied, pkg)
+}
+
+func missingRuntimeUserRoutes(applied string, pkg core.RuntimeUserPackage) []string {
+	if strings.TrimSpace(applied) == "" {
+		return nil
+	}
+	defined := core.ConfigOutboundTags(applied)
+	if defined == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var missing []string
+	for _, entry := range pkg.Entries {
+		tag := strings.TrimSpace(entry.RouteOutbound)
+		if tag == "" || defined[tag] || seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		missing = append(missing, tag)
+	}
+	sort.Strings(missing)
+	if len(missing) > 8 {
+		missing = append(missing[:8], "…")
+	}
+	return missing
 }

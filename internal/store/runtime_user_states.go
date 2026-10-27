@@ -16,6 +16,10 @@ const (
 	RuntimeUsersPendingAwaitingConfirm    = "awaiting_confirmation"
 	RuntimeUsersPendingRuntimeUnavailable = "runtime_unavailable"
 	RuntimeUsersPendingCoreConfigFallback = "core_config_fallback"
+	// RuntimeUsersPendingAwaitingDeployment holds a users package whose entries
+	// route to outbounds the server has not deployed yet; the kernel would
+	// reject it until the deployment carrying those outbounds succeeds.
+	RuntimeUsersPendingAwaitingDeployment = "awaiting_deployment"
 	// RuntimeUsersPendingRevisionConflict marks a node that refuses the revision
 	// it is being sent because it already holds that revision with different
 	// content. Redelivery cannot resolve it - only a new revision can - so it is

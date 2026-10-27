@@ -472,12 +472,19 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 			logConfigurationError("supersede stale task", err)
 		}
 	}
+	claimedByServer := make(map[int64]store.ConfigurationSyncState, len(claimed))
+	for _, state := range claimed {
+		claimedByServer[state.ServerID] = state
+	}
 	preparedTasks, version, deployErr := s.deployConfigurationScoped(withAutomaticConfigurationSync(ctx), 0, true, plan.changed, nil, false)
 	if deployErr != nil {
 		if s.reconcileConfigurationAroundDuplicateDirectPaths(ctx, claimed) {
 			s.publishRealtime("configuration", "deployments", "tasks")
 			return
 		}
+		preparedTasks, version, deployErr = s.deployConfigurationIsolatingServers(ctx, claimedByServer, plan.changed, nil, deployErr)
+	}
+	if deployErr != nil {
 		for _, state := range claimed {
 			if !plan.changed[state.ServerID] {
 				continue
@@ -722,6 +729,69 @@ func configurationTaskResultMessage(resultJSON string) string {
 	return ""
 }
 
+// deployConfigurationIsolatingServers prepares serverIDs as one automatic batch.
+// When a server's own desired state cannot be prepared, that server — and every
+// trusted transparent-forward member, which must change together — is set aside
+// with its own problem and the others are prepared again, so one invalid server
+// never stalls the fleet. serverIDs is narrowed in place to the servers that
+// remain. failure, when set, is the error the caller's batch already returned.
+// An error that names no server still fails the whole batch.
+func (s *Server) deployConfigurationIsolatingServers(ctx context.Context, claimedByServer map[int64]store.ConfigurationSyncState, serverIDs, ignoredPathIDs map[int64]bool, failure error) ([]model.AgentTask, int64, error) {
+	var grouped map[int64]bool
+	for attempt := 0; ; attempt++ {
+		if failure == nil {
+			tasks, version, err := s.deployConfigurationScoped(withAutomaticConfigurationSync(ctx), 0, true, serverIDs, ignoredPathIDs, false)
+			if err == nil {
+				return tasks, version, nil
+			}
+			failure = err
+		}
+		err := failure
+		failure = nil
+		var serverErr *serverDesiredStateError
+		if !errors.As(err, &serverErr) || attempt > len(claimedByServer) {
+			return nil, 0, err
+		}
+		if grouped == nil {
+			data, loadErr := s.store.FullRoutingConfigData(ctx)
+			if loadErr != nil {
+				return nil, 0, err
+			}
+			filtered := routingConfigWithoutProxyPaths(data, ignoredPathIDs)
+			grouped = core.TransparentForwardServerIDs(filtered.ProxyPaths, filtered.ProxyPathSteps, filtered.Inbounds)
+		}
+		isolated := map[int64]bool{serverErr.serverID: true}
+		if grouped[serverErr.serverID] {
+			for serverID := range grouped {
+				isolated[serverID] = true
+			}
+		}
+		progressed := false
+		for serverID := range isolated {
+			if !serverIDs[serverID] {
+				continue
+			}
+			delete(serverIDs, serverID)
+			progressed = true
+			state, ok := claimedByServer[serverID]
+			if !ok {
+				continue
+			}
+			if serverID == serverErr.serverID {
+				s.recordConfigurationPrepareError(ctx, state, err)
+				continue
+			}
+			_ = s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, "", configurationLocalProblem(state.ServerID, "related_configuration_invalid", "configuration", "after_change", "关联的透明转发成员存在配置问题；修复该成员后会成组重试"))
+		}
+		if !progressed {
+			return nil, 0, err
+		}
+		if len(serverIDs) == 0 {
+			return nil, 0, nil
+		}
+	}
+}
+
 func (s *Server) reconcileConfigurationAroundDuplicateDirectPaths(ctx context.Context, claimed []store.ConfigurationSyncState) bool {
 	data, err := s.store.FullRoutingConfigData(ctx)
 	if err != nil {
@@ -791,7 +861,7 @@ func (s *Server) reconcileConfigurationAroundDuplicateDirectPaths(ctx context.Co
 	if len(validServerIDs) == 0 {
 		return true
 	}
-	preparedTasks, version, deployErr := s.deployConfigurationScoped(withAutomaticConfigurationSync(ctx), 0, true, validServerIDs, ignoredPathIDs, false)
+	preparedTasks, version, deployErr := s.deployConfigurationIsolatingServers(ctx, claimedByServer, validServerIDs, ignoredPathIDs, nil)
 	if deployErr != nil {
 		for serverID := range validServerIDs {
 			if state, ok := claimedByServer[serverID]; ok {
@@ -887,6 +957,10 @@ func (s *Server) recordConfigurationTaskResult(ctx context.Context, task model.A
 	}
 	if err := s.store.MarkConfigurationSyncResult(ctx, task.ServerID, task.ConfigVersion, succeeded, message); err != nil {
 		logConfigurationError("record task result", err)
+	}
+	if succeeded {
+		// A users package held for this deployment's outbounds can go now.
+		s.wakeRuntimeUsersSyncFor("deployment_applied", task.ServerID)
 	}
 	s.publishRealtime("configuration", "deployments", "tasks")
 }
