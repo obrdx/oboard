@@ -399,7 +399,7 @@ func (v *configValidator) validateOutbounds(outbounds []map[string]any) {
 			if fallback, ok := outbound["fallback"].(bool); !ok || !fallback {
 				v.addf("%s must enable bounded family fallback", path)
 			}
-		case "vless", "hysteria2", "anytls", "shadowsocks", "mieru", "snell", "socks":
+		case "vless", "hysteria2", "anytls", "shadowsocks", "mieru", "snell", "socks", "http":
 			v.validateRemoteAdapter(path, typ, outbound)
 		case "user-selector":
 		case "vpngate-pool":
@@ -651,6 +651,13 @@ func (v *configValidator) validateRemoteAdapter(path, typ string, item map[strin
 		v.validateSnellVersionFields(path, item, false)
 	case "socks":
 		// Username/password are optional for unauthenticated third-party SOCKS5.
+	case "http":
+		// Credentials are optional; the renderer emits only the closed field set.
+		if raw, ok := item["tls"]; ok {
+			if _, isObject := raw.(map[string]any); !isObject {
+				v.addf("%s tls must be an object", path)
+			}
+		}
 	}
 }
 

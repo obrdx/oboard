@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -34,5 +35,42 @@ func TestHTTPExternalOutboundRequiresKernelCapability(t *testing.T) {
 	}
 	if _, err := ParseHTTPExternalConfig(`{"headers":{"Proxy-Authorization":"x"}}`); err == nil {
 		t.Fatal("kernel-owned header accepted")
+	}
+}
+
+// TestGeneratedConfigWithHTTPExitPassesValidation runs a full server config
+// with an HTTP exit through the generated-config validator, which rejected the
+// type and blocked every server's desired-state preparation.
+func TestGeneratedConfigWithHTTPExitPassesValidation(t *testing.T) {
+	server := model.Server{ID: 1, Name: "edge", PublicIPv4: "203.0.113.1", IPStack: model.IPStackPreferIPv4}
+	root := model.Inbound{ID: 10, ServerID: 1, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	external := model.ExternalOutbound{ID: 30, Name: "ntt", Protocol: model.ProtocolHTTP, TargetAddress: "proxy.example.com", TargetPort: 8080, ConfigJSON: `{"username":"u","password":"p","tls":{"enabled":true}}`, Enabled: true}
+	path := model.ProxyPath{ID: 40, Name: "entry-via-http", InboundID: root.ID, Secret: "path-secret", Enabled: true}
+	externalID := external.ID
+	opts := ConfigOptions{
+		Servers:           []model.Server{server},
+		Inbounds:          []model.Inbound{root},
+		ExternalOutbounds: []model.ExternalOutbound{external},
+		ProxyPaths:        []model.ProxyPath{path},
+		ProxyPathSteps:    []model.ProxyPathStep{{ID: 1, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepImported, ExternalOutboundID: &externalID}},
+		InboundUsers:      []model.InboundUser{{InboundID: root.ID, UserID: 1, Enabled: true}},
+	}
+	config, err := generateFixtureConfig(server, []model.Inbound{root}, nil, nil, []model.User{{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed SingBoxConfig
+	if err := json.Unmarshal([]byte(config), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateGeneratedSingBoxConfig(parsed); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, outbound := range parsed.Outbounds {
+		found = found || outbound["tag"] == "path-40-step-1" && outbound["type"] == "http"
+	}
+	if !found {
+		t.Fatalf("http exit missing from generated config: %s", config)
 	}
 }
