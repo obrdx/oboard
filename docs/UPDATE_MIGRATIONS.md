@@ -254,6 +254,26 @@
 - **移除条件：** 最老支持数据库和所有可恢复备份必须已包含该列；恢复入口不得导入缺少它的 schema。
 - **移除状态：** 生效中。
 
+### controller-db-20261028-server-host-booted-at
+
+- **引入日期：** 2026-10-28
+- **引入提交：** `obrdx/oboard@459096c98de6eaf1f632a1e45fed11a8f38211ef`（Agent `obrdx/oboard-agent@e1d84ae32478170e754383b3a06255d3fbb78b4f`）
+- **引入版本：** `dev-459096c98de6`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/model`、`internal/controller`、Agent `internal/agent`、`internal/model`、Web
+- **类别：** SQLite schema / wire protocol
+- **原因：** 服务器卡片“已运行”此前显示服务器记录创建以来的天数；现改名“已接入”，“已运行”改为主机自上次开机以来的时长，主机重启后重置。
+- **源状态：** `servers` 没有 `host_booted_at` 列；Agent `HealthReport` 没有 `host_uptime_seconds`。
+- **目标状态：** `servers.host_booted_at text`（可空）；健康报告/入网携带 `host_uptime_seconds`，Controller 用自己的时钟推算开机时间，两分钟内的抖动保留原值。省略或 `0` 保留上次值。
+- **实现位置：** `oboard/internal/store/store.go`（`create table` 与 `ensureColumn`）、`health_report.go`、`oboard/internal/model/types.go`（`DeriveHostBootedAt`）、`oboard/internal/controller/server.go`、`agentlink.go`、`realtime.go`、`oboard-agent/internal/agent/probe.go`、`probe_unix.go`、`probe_windows.go`、`agent.go`
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时幂等补列。
+- **数据影响：** 既有服务器开机时间为空，直到新 Agent 上报；界面显示“—”。
+- **重复执行：** `ensureColumn`；重复打开不改写已有值。
+- **失败行为：** 补列失败会阻止打开数据库。
+- **回归测试：** `TestServerHostBootedAtMigrateFromPreviousSchema`、`TestApplyHealthReportTracksHostReboot`、`TestParseProcUptime`
+- **移除条件：** 最老支持数据库和所有可恢复备份必须已包含该列；恢复入口不得导入缺少它的 schema。
+- **移除状态：** 生效中。
+
 ### controller-db-20260829-server-display-tags
 
 - **引入日期：** 2026-08-29
