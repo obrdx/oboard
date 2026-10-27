@@ -310,6 +310,14 @@ func ResolveProxyPathExitRegions(paths []model.ProxyPath, steps []model.ProxyPat
 			}
 			target, targetOK := targetByPath[path.ID]
 			result, resultOK := resultByPath[path.ID]
+			if targetOK {
+				if reason := httpExitUnsupportedReason(externalByID[target.ExternalOutboundID], serverByID[target.OwnerServerID]); reason != "" {
+					path.ExitRegionSource = RegionSourceUnresolved
+					path.ExitRegionStatus = RegionStatusFailed
+					path.ExitRegionError = reason
+					continue
+				}
+			}
 			if !targetOK || !resultOK {
 				path.ExitRegionSource = RegionSourceUnresolved
 				path.ExitRegionStatus = RegionStatusPending
@@ -460,4 +468,14 @@ func detectedRegionCode(code string) string {
 		return ""
 	}
 	return code
+}
+
+// httpExitUnsupportedReason explains why an HTTP/HTTPS exit can never be
+// probed: its owner server runs a kernel without the HTTP outbound, so the
+// deployment that would carry the probe is refused.
+func httpExitUnsupportedReason(external model.ExternalOutbound, owner model.Server) string {
+	if external.Protocol != model.ProtocolHTTP || strings.TrimSpace(owner.AgentID) == "" || len(owner.KernelCapabilities) == 0 || stringSliceContains(owner.KernelCapabilities, KernelCapabilityHTTPOutbound) {
+		return ""
+	}
+	return fmt.Sprintf("服务器 %s 的内核不支持 HTTP/HTTPS 出站，请先更新 Agent 后重新部署", owner.Name)
 }

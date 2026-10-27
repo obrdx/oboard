@@ -882,7 +882,7 @@ function exitRegionStatusLabel(status?: string, code?: string) {
   return '待探测'
 }
 
-function ExitRegionBadge({ code, status, compact = false }: { code?: string; status?: string; compact?: boolean }) {
+function ExitRegionBadge({ code, status, error, compact = false }: { code?: string; status?: string; error?: string; compact?: boolean }) {
   const effectiveCode = normalizeRegionCode(code)
   const flagCode = effectiveCode || 'AQ'
   const tone = status === 'failed' || status === 'conflict'
@@ -891,7 +891,7 @@ function ExitRegionBadge({ code, status, compact = false }: { code?: string; sta
       ? 'warning'
       : 'ok'
   const label = exitRegionStatusLabel(status, effectiveCode)
-  return <span className={`exit-region-badge ${tone}${compact ? ' compact' : ''}`} title={label}>
+  return <span className={`exit-region-badge ${tone}${compact ? ' compact' : ''}`} title={error ? `${label}：${error}` : label}>
     <span className="exit-region-emoji" role="img" aria-label={effectiveCode ? regionLabel(effectiveCode) : '待探测'}>{regionFlagEmoji(flagCode)}</span>
     <span>{compact && effectiveCode ? effectiveCode : label}</span>
   </span>
@@ -10146,8 +10146,8 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	const addImportedToCurrentEntry = async (node: ExternalOutbound) => {
 	  const entry = await chooseCurrentEntry()
 	  if (!entry) return
-	  setCanvasImportedIDs(ids => ids.includes(node.id) ? ids : [...ids, node.id])
-	  await createPathFromEntry(entry, { node_type: 'imported', external_outbound_id: node.id })
+	  const created = await createPathFromEntry(entry, { node_type: 'imported', external_outbound_id: node.id })
+	  if (created) consumeCanvasImportedTarget(`imported-${node.id}`, [created])
 	}
 	// One panel collects the whole selection so the operator can revise any field
 	// before committing, instead of walking an unrevisable chain of prompts.
@@ -10420,6 +10420,24 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	    return next
 	  })
 	}
+	// A placed third-party node is a staging card: once a path uses it, the path
+	// node takes its place and position, like the server and WARP cards above.
+	const consumeCanvasImportedTarget = (targetID: string, createdSteps: ProxyPathStep[]) => {
+	  const externalID = Number(targetID.match(/^imported-(\d+)$/)?.[1] || 0)
+	  if (!externalID || !createdSteps.length) return
+	  setCanvasImportedIDs(ids => ids.filter(id => id !== externalID))
+	  setPositions(current => {
+	    const sourcePosition = current[targetID]
+	    const next = { ...current }
+	    delete next[targetID]
+	    createdSteps.forEach((step, index) => {
+	      const nodeID = proxyPathStepNodeID(step)
+	      if (sourcePosition && nodeID && !next[nodeID]) next[nodeID] = { x: sourcePosition.x + index * 300, y: sourcePosition.y }
+	    })
+	    saveGraphPositions(next)
+	    return next
+	  })
+	}
 	const consumeCanvasLocalExitTarget = (targetID: string, createdSteps: ProxyPathStep[]) => {
 	  consumeCanvasWARPTarget(targetID, createdSteps)
 	  consumeCanvasVPNGateTarget(targetID, createdSteps)
@@ -10542,6 +10560,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 				if (!created) return
 				if (target.node_type === 'server_inbound') consumeCanvasServerTarget(conn.target, [created])
 				if (isLocalExitStep(target)) consumeCanvasLocalExitTarget(conn.target, [created])
+				if (target.node_type === 'imported') consumeCanvasImportedTarget(conn.target, [created])
 				reconcileTopology()
 				return
 			  }
@@ -10577,6 +10596,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 			    if (!created) return
 			    if (target.node_type === 'server_inbound') consumeCanvasServerTarget(conn.target, [created])
 			    if (isLocalExitStep(target)) consumeCanvasLocalExitTarget(conn.target, [created])
+			    if (target.node_type === 'imported') consumeCanvasImportedTarget(conn.target, [created])
 			    reconcileTopology()
 			    return
 			  }
@@ -10635,11 +10655,12 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 			    }
 			    const transport = await chooseTransportForTarget(target, undefined, sourceTitle)
 			    if (!transport) return
-			    await runSharedAppends(sources, graphSourceLabel, source => {
+			    const created = await runSharedAppends(sources, graphSourceLabel, source => {
 			      if (source.step_id) return appendPathAfterStep(source.step_id, { ...target, ...transport })
 			      const entry = entries.find(item => item.id === source.inbound_id)
 			      return entry ? createPathFromEntry(entry, { ...target, ...transport }) : Promise.resolve(null)
 			    })
+			    consumeCanvasImportedTarget(conn.target, created)
 			    reconcileTopology()
 			    return
 			  }
@@ -10735,7 +10756,8 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	    } else if (target) {
 	      const transport = await chooseTransportForTarget(target)
 	      if (transport) {
-	        await appendPathAfterStep(sourcePathStepID, { ...target, ...transport })
+	        const created = await appendPathAfterStep(sourcePathStepID, { ...target, ...transport })
+	        if (created) consumeCanvasImportedTarget(conn.target, [created])
 	        reconcileTopology()
 	      }
 	    }
@@ -10746,7 +10768,8 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	    if (target?.node_type === 'imported') {
 	      const transport = await chooseTransportForTarget(target, undefined, sourceHandleEntry.name || sourceEntity?.label)
 	      if (transport) {
-	        await createPathFromEntry(sourceHandleEntry, { ...target, ...transport })
+	        const created = await createPathFromEntry(sourceHandleEntry, { ...target, ...transport })
+	        if (created) consumeCanvasImportedTarget(conn.target, [created])
 	        reconcileTopology()
 	      }
 	    } else if (target?.node_type === 'server_inbound') {
@@ -10759,7 +10782,8 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	    const entry = entries.find(x => x.id === sourceEntity.id)
 	    const transport = await chooseTransportForTarget({ node_type: 'imported', external_outbound_id: targetEntity.id } as any, undefined, sourceEntity.label)
 	    if (entry && transport) {
-	      await createPathFromEntry(entry, { node_type: 'imported', external_outbound_id: targetEntity.id, ...transport })
+	      const created = await createPathFromEntry(entry, { node_type: 'imported', external_outbound_id: targetEntity.id, ...transport })
+	      if (created) consumeCanvasImportedTarget(conn.target, [created])
 	      reconcileTopology()
 	    }
 	    return
@@ -15492,7 +15516,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
         if (!imported) return
         const importedPathSources = continuationByNode.get(id) || []
         const importedWidth = graphServerNodeWidth(Math.max(1, importedPathSources.length))
-	        nodes.push({ id, className: 'graph-node imported-graph-node proxy-path-instance-node', position, style: { width: importedWidth }, data: { entity, pathIDs: sharedPathIDs, label: <GraphNode kind="导入节点" title={imported.name} meta={`${externalProtocolLabel(imported)} · ${formatHostPort(imported.target_address, imported.target_port)} · ${sharedCount > 1 ? `${sharedCount} 条路径共享` : pathDisplayName(canonicalPath.id)}`} pathHandles={importedPathSources} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
+	        nodes.push({ id, className: 'graph-node imported-graph-node proxy-path-instance-node', position, style: { width: importedWidth }, data: { entity, pathIDs: sharedPathIDs, label: <GraphNode kind="导入节点" title={imported.name} meta={`${externalProtocolLabel(imported)} · ${formatHostPort(imported.target_address, imported.target_port)} · ${sharedCount > 1 ? `${sharedCount} 条路径共享` : pathDisplayName(canonicalPath.id)}`} pathHandles={importedPathSources} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status, error: canonicalPath.exit_region_error } : undefined} /> } })
         return
       }
       const serverID = graphStepServerID(canonicalStep, inboundByID)
@@ -15989,7 +16013,7 @@ function GraphNode({
   ipv4?: string;
   cpu?: number;
   memory?: number;
-  exitRegion?: { code?: string; status?: string };
+  exitRegion?: { code?: string; status?: string; error?: string };
 }) {
   const isOnline = status === 'online'
   const metaParts = meta.split(' · ')
@@ -16071,7 +16095,8 @@ function GraphNode({
 
       {/* Body */}
       <div className="rf-node-body">
-		{exitRegion && <div className="rf-node-exit-region"><span>出口地区</span><ExitRegionBadge code={exitRegion.code} status={exitRegion.status} compact /></div>}
+		{exitRegion && <div className="rf-node-exit-region"><span>出口地区</span><ExitRegionBadge code={exitRegion.code} status={exitRegion.status} error={exitRegion.error} compact /></div>}
+		{exitRegion?.error && exitRegion.status === 'failed' && <p className="rf-node-exit-region-error">{exitRegion.error}</p>}
         {isServer ? (
           <>
             <div className="rf-node-detail"><span>公网地址</span><code>{ipv4 || subtitle2 || '未检测'}</code></div>

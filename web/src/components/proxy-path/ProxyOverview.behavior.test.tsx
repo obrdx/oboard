@@ -185,6 +185,25 @@ describe('ProxyOverview canvas behavior', () => {
     await cancel()
   })
 
+  it('replaces a placed third-party card with the path node once an entry connects to it', async () => {
+    const external = { id: 5, name: 'NTT HTTPS', protocol: 'http', scope: 'global', target_address: '180.53.81.127', target_port: 8080, config_json: '{"tls":{"enabled":true}}', region_mode: 'auto', region_code: '', expose_to_users: false, enabled: true }
+    const step = { id: 77, path_id: 9, position: 1, node_type: 'imported', external_outbound_id: 5, transport_mode: 'singbox', config_json: '{}' }
+    request.mockImplementation((async (path: string) => path === '/proxy-paths'
+      ? { proxy_path: { id: 9, inbound_id: 10, name: 'Entry 1 / NTT', enabled: true, kind: 'chain' }, proxy_path_steps: [step] }
+      : {}) as any)
+    await render(1, { ...data, external_outbounds: [external] } as any)
+    const paneMenu = { clientX: 200, clientY: 160, preventDefault: () => undefined, stopPropagation: () => undefined } as unknown as React.MouseEvent
+    await act(async () => flow.props.onPaneContextMenu!(paneMenu))
+    await act(async () => Array.from(document.querySelectorAll<HTMLButtonElement>('[aria-label="画布操作"] button')).find(item => item.textContent?.trim() === '第三方节点')!.click())
+    await act(async () => button('将 NTT HTTPS 添加到拓扑').click())
+    expect(nodes().map(node => node.id)).toContain('imported-5')
+    await act(async () => flow.props.onConnect!(connect('imported-5')))
+    await act(async () => button('确定').click())
+    expect(request).toHaveBeenCalledWith('/proxy-paths', expect.objectContaining({ method: 'POST' }))
+    expect(nodes().map(node => node.id)).not.toContain('imported-5')
+    request.mockImplementation((async () => ({})) as any)
+  })
+
   it('shows the empty canvas without a stuck loading indicator after the last server is removed', async () => {
     await render()
     await render(0, { ...data, servers: [], inbounds: [] })

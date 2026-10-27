@@ -1,6 +1,7 @@
 package core
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -170,5 +171,25 @@ func TestExternalEgressTopologyFingerprintIgnoresPresentationAndRegionFields(t *
 	third := ExternalEgressProbeTargets([]model.ProxyPath{path}, steps, servers, inbounds, externals)[0]
 	if second.TopologyFingerprint == third.TopologyFingerprint {
 		t.Fatal("topology change did not alter fingerprint")
+	}
+}
+
+func TestResolveProxyPathExitRegionsExplainsHTTPExitOnOldKernel(t *testing.T) {
+	externalID := int64(31)
+	servers := []model.Server{{ID: 1, Name: "edge", AgentID: "agent", KernelCapabilities: []string{"runtime_users_v1"}}}
+	inbounds := []model.Inbound{{ID: 10, ServerID: 1, Enabled: true}}
+	paths := []model.ProxyPath{{ID: 200, InboundID: 10, Enabled: true}}
+	steps := []model.ProxyPathStep{{ID: 2, PathID: 200, Position: 1, NodeType: model.ProxyPathStepImported, ExternalOutboundID: &externalID}}
+	externals := []model.ExternalOutbound{{ID: externalID, Protocol: model.ProtocolHTTP, Scope: model.ExternalOutboundScopeGlobal, TargetAddress: "180.53.81.127", TargetPort: 8080, ConfigJSON: `{"tls":{"enabled":true}}`, RegionMode: "auto", Enabled: true}}
+
+	resolved, _ := ResolveProxyPathExitRegions(paths, steps, servers, inbounds, externals, nil)
+	if got := resolved[0]; got.ExitRegionStatus != RegionStatusFailed || !strings.Contains(got.ExitRegionError, "HTTP") {
+		t.Fatalf("old kernel HTTP exit = %#v", got)
+	}
+
+	servers[0].KernelCapabilities = append(servers[0].KernelCapabilities, KernelCapabilityHTTPOutbound)
+	resolved, _ = ResolveProxyPathExitRegions(paths, steps, servers, inbounds, externals, nil)
+	if got := resolved[0]; got.ExitRegionStatus != RegionStatusPending {
+		t.Fatalf("supported kernel without a probe should stay pending: %#v", got)
 	}
 }
