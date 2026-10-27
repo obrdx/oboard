@@ -277,6 +277,7 @@ func defaultDescriptors() []Descriptor {
 		"time_correction_mode":           stringValue,
 		"time_check_status":              map[string]any{"type": "string", "description": "unknown/pending: not measured; ok/skewed/corrected: measured; unavailable: check failed; config_error: Agent mode could not be saved, no measurement attempted"},
 		"time_check_error":               stringValue,
+		"host_booted_at":                 map[string]any{"type": []string{"string", "null"}, "description": "主机最近一次开机时间（Controller 时钟，由 Agent 上报的系统运行时长推算）；服务器重启后重置"},
 		"last_seen_at":                   nullableString(), "created_at": stringValue, "updated_at": stringValue,
 		"authorization_revision": map[string]any{"type": "integer"}, "authorization_confirmed": boolValue,
 		"authorization_pending_reason": stringValue, "users_revision": map[string]any{"type": "integer"},

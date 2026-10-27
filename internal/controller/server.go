@@ -15277,6 +15277,7 @@ func (s *Server) agentEnroll(w http.ResponseWriter, r *http.Request) {
 		if req.Health.CPUCores > 0 {
 			server.CPUCores = req.Health.CPUCores
 		}
+		server.HostBootedAt = model.DeriveHostBootedAt(server.HostBootedAt, req.Health.HostUptimeSeconds, time.Now().UTC())
 		server.MemoryBytes = req.Health.MemoryBytes
 		server.CPUUsagePercent = req.Health.CPUUsagePercent
 		server.MemoryUsedBytes = req.Health.MemoryUsedBytes
@@ -15936,6 +15937,7 @@ func applyHealthReportToServer(server *model.Server, result store.HealthApplyRes
 	server.Kernel = current.Kernel
 	server.CPU = current.CPU
 	server.CPUCores = current.CPUCores
+	server.HostBootedAt = current.HostBootedAt
 	server.MemoryBytes = current.MemoryBytes
 	server.CPUUsagePercent = result.Curr.CPUUsagePercent
 	server.MemoryUsedBytes = result.Curr.MemoryUsedBytes

@@ -430,6 +430,7 @@ func healthRealtimePatch(result store.HealthApplyResult) realtimeServerPatch {
 	set("kernel", previous.Kernel != current.Kernel, current.Kernel)
 	set("cpu", previous.CPU != current.CPU, current.CPU)
 	set("cpu_cores", previous.CPUCores != current.CPUCores, current.CPUCores)
+	set("host_booted_at", !sameRealtimeTime(previous.HostBootedAt, current.HostBootedAt), current.HostBootedAt)
 	set("memory_bytes", previous.MemoryBytes != current.MemoryBytes, current.MemoryBytes)
 	set("cpu_usage_percent", previous.CPUUsagePercent != current.CPUUsagePercent, current.CPUUsagePercent)
 	set("memory_used_bytes", previous.MemoryUsedBytes != current.MemoryUsedBytes, current.MemoryUsedBytes)
@@ -861,4 +862,11 @@ func realtimeResourcesForRequest(path string) []string {
 	default:
 		return []string{"all"}
 	}
+}
+
+func sameRealtimeTime(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Equal(*b)
 }

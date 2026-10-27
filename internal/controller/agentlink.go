@@ -209,6 +209,7 @@ func (s *Server) handleStealthEnroll(session *agentlink.Session, auth *agentlink
 		if health.CPUCores > 0 {
 			server.CPUCores = health.CPUCores
 		}
+		server.HostBootedAt = model.DeriveHostBootedAt(server.HostBootedAt, health.HostUptimeSeconds, time.Now().UTC())
 		server.MemoryBytes = health.MemoryBytes
 		server.CPUUsagePercent = health.CPUUsagePercent
 		server.MemoryUsedBytes = health.MemoryUsedBytes

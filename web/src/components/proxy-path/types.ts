@@ -68,6 +68,7 @@ export type Server = {
   arch: string
   cpu: string
   cpu_cores?: number
+  host_booted_at?: string
   cpu_usage_percent: number
   memory_used_bytes: number
   memory_total_bytes: number

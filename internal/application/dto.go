@@ -65,6 +65,7 @@ type ServerDTO struct {
 	TimeCorrectionMode          model.TimeCorrectionMode   `json:"time_correction_mode"`
 	TimeCheckStatus             string                     `json:"time_check_status"`
 	TimeCheckError              string                     `json:"time_check_error"`
+	HostBootedAt                *time.Time                 `json:"host_booted_at,omitempty"`
 	LastSeenAt                  *time.Time                 `json:"last_seen_at,omitempty"`
 	CreatedAt                   time.Time                  `json:"created_at"`
 	UpdatedAt                   time.Time                  `json:"updated_at"`
@@ -277,7 +278,7 @@ func serverDTO(item model.Server) ServerDTO {
 		DisplayTags:                 append([]model.ServerDisplayTag{}, item.DisplayTags...),
 		TimeCorrectionMode:          item.TimeCorrectionMode, TimeCheckStatus: item.TimeCheckStatus,
 		TimeCheckError: item.TimeCheckError,
-		LastSeenAt: item.LastSeenAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
+		HostBootedAt: item.HostBootedAt, LastSeenAt: item.LastSeenAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
 		AuthorizationRevision: item.AuthorizationRevision, AuthorizationConfirmed: item.AuthorizationConfirmed,
 		AuthorizationPendingReason: item.AuthorizationPendingReason, UsersRevision: item.UsersRevision,
 		UsersConfirmed: item.UsersConfirmed, UsersPendingReason: item.UsersPendingReason, UsersPendingDetail: item.UsersPendingDetail, UsersFallback: item.UsersFallback,

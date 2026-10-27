@@ -56,6 +56,21 @@ export function enrolledDaysLabel(server: Pick<Server, 'created_at'>, now = new 
   return `${days} 天`
 }
 
+// Host uptime since the last boot, derived from the Agent-reported boot time.
+// It is only meaningful while the Agent is online and reporting.
+export function hostUptimeLabel(server: Pick<Server, 'status' | 'host_booted_at'>, now = new Date()) {
+  if (!isServerOnline(server)) return ''
+  const raw = String(server.host_booted_at || '').trim()
+  if (!raw) return ''
+  const booted = new Date(raw)
+  if (Number.isNaN(booted.getTime())) return ''
+  const minutes = Math.floor(Math.max(0, now.getTime() - booted.getTime()) / 60000)
+  if (minutes < 60) return `${Math.max(1, minutes)} 分钟`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} 小时 ${minutes % 60} 分`
+  return `${Math.floor(hours / 24)} 天 ${hours % 24} 小时`
+}
+
 export function cardExpiryStatus(server: Pick<Server, 'expires_at' | 'auto_renew_enabled'>, now = new Date()): { label: string; tone: ServerExpiryTone; days: number | null } {
   const raw = String(server.expires_at || '').trim()
   if (!raw) return { label: '未设置', tone: 'muted', days: null }

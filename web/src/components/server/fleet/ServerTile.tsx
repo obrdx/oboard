@@ -12,6 +12,7 @@ import {
   cpuCoresLabel,
   cpuModelLabel,
   enrolledDaysLabel,
+  hostUptimeLabel,
   formatByteRate,
   formatPercent,
   isServerEnrolled,
@@ -125,6 +126,7 @@ export function ServerTile({ server, role, expectedBuild, uninstalling, selected
   const attention = serverAttention(server, expectedBuild)
   const expiry = cardExpiryStatus(server)
   const age = enrolledDaysLabel(server)
+  const uptime = hostUptimeLabel(server)
   const tags = (server.display_tags || []).filter(tag => String(tag.text || '').trim())
   const na = !online
   return (
@@ -174,7 +176,8 @@ export function ServerTile({ server, role, expectedBuild, uninstalling, selected
       </div>
       <footer className="fleet-tile-foot">
         <span title={`到期 ${serverExpiryDateLabel(server.expires_at)}`}>到期 <strong className={`tone-${expiry.tone}`}>{expiry.label}</strong></span>
-        <span title={server.created_at ? `入库时间 ${formatDate(server.created_at)}` : undefined}>已运行 <strong>{age || '—'}</strong></span>
+        <span title={server.host_booted_at ? `开机时间 ${formatDate(server.host_booted_at)}` : undefined}>已运行 <strong>{uptime || '—'}</strong></span>
+        <span title={server.created_at ? `接入时间 ${formatDate(server.created_at)}` : undefined}>已接入 <strong>{age || '—'}</strong></span>
         <span className="fleet-foot-end">
           <AttentionChips items={attention} server={server} uninstalling={uninstalling} onAction={onAction} />
           {tags.length ? <span className="fleet-tags">{tags.map(tag => <span key={`${tag.tone}-${tag.text}`} className={`fleet-tag tone-${tag.tone || 'blue'}`}>{displayTagIcon(tag.tone)}{tag.text}</span>)}</span> : null}

@@ -1,5 +1,6 @@
 import React from 'react'
 import type { Server } from '../../proxy-path/types'
+import { hostUptimeLabel } from '../fleet/fleet-format'
 
 function formatBytes(v:number){
   if(!v) return '0 B'
@@ -18,7 +19,7 @@ export function SystemOverviewTab({ server, connectivity }: { server: Server; co
           <div className="server-about-item"><dt className="server-about-label">系统</dt><dd className="server-about-value">{server.distro_name || server.os || '—'} {server.distro_version||''}</dd></div>
           <div className="server-about-item"><dt className="server-about-label">Kernel</dt><dd className="server-about-value">{(server as any).kernel_version || '—'}</dd></div>
           <div className="server-about-item"><dt className="server-about-label">架构</dt><dd className="server-about-value">{server.arch||'—'}</dd></div>
-          <div className="server-about-item"><dt className="server-about-label">运行时间</dt><dd className="server-about-value">{(server as any).uptime ? `${Math.floor(Number((server as any).uptime)/86400)} 天` : '—'}</dd></div>
+          <div className="server-about-item"><dt className="server-about-label">运行时间</dt><dd className="server-about-value">{hostUptimeLabel(server) || '—'}</dd></div>
         </dl>
       </section>
       <section className="server-detail-section">

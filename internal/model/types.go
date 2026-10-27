@@ -1100,6 +1100,7 @@ type Server struct {
 	ConnectivityCheckedAt       *time.Time         `json:"connectivity_checked_at,omitempty"`
 	ConnectivityError           string             `json:"connectivity_error"`
 	TelemetryUpdatedAt          *time.Time         `json:"telemetry_updated_at,omitempty"`
+	HostBootedAt                *time.Time         `json:"host_booted_at,omitempty"`
 	LastSeenAt                  *time.Time         `json:"last_seen_at,omitempty"`
 	CreatedAt                   time.Time          `json:"created_at"`
 	UpdatedAt                   time.Time          `json:"updated_at"`
@@ -3450,6 +3451,7 @@ type HealthReport struct {
 	Kernel                    string                     `json:"kernel"`
 	CPU                       string                     `json:"cpu"`
 	CPUCores                  int                        `json:"cpu_cores,omitempty"`
+	HostUptimeSeconds         uint64                     `json:"host_uptime_seconds,omitempty"`
 	MemoryBytes               uint64                     `json:"memory_bytes"`
 	CPUUsagePercent           float64                    `json:"cpu_usage_percent"`
 	MemoryUsedBytes           uint64                     `json:"memory_used_bytes"`
@@ -3590,4 +3592,33 @@ type VersionInfo struct {
 	Protocols            []string `json:"protocols"`
 	Kernel               string   `json:"kernel"`
 	APIPrefix            string   `json:"api_prefix"`
+}
+
+// MaxReportedHostUptime bounds a reported host uptime; anything longer is a
+// broken counter, not a real boot.
+const MaxReportedHostUptime = 20 * 365 * 24 * time.Hour
+
+// hostBootJitter absorbs report latency and second truncation, so the derived
+// boot time only moves when the host really rebooted.
+const hostBootJitter = 2 * time.Minute
+
+// DeriveHostBootedAt turns an Agent-reported host uptime into a boot time on
+// the Controller clock, so a skewed node clock never shifts it. A missing or
+// implausible uptime keeps the previous value.
+func DeriveHostBootedAt(previous *time.Time, uptimeSeconds uint64, seenAt time.Time) *time.Time {
+	uptime := time.Duration(uptimeSeconds) * time.Second
+	if uptimeSeconds == 0 || uptime > MaxReportedHostUptime {
+		return previous
+	}
+	booted := seenAt.Add(-uptime).UTC().Truncate(time.Second)
+	if previous != nil {
+		diff := booted.Sub(*previous)
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff < hostBootJitter {
+			return previous
+		}
+	}
+	return &booted
 }
