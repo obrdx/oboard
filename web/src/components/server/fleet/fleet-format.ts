@@ -64,11 +64,8 @@ export function hostUptimeLabel(server: Pick<Server, 'status' | 'host_booted_at'
   if (!raw) return ''
   const booted = new Date(raw)
   if (Number.isNaN(booted.getTime())) return ''
-  const minutes = Math.floor(Math.max(0, now.getTime() - booted.getTime()) / 60000)
-  if (minutes < 60) return `${Math.max(1, minutes)} 分钟`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} 小时 ${minutes % 60} 分`
-  return `${Math.floor(hours / 24)} 天 ${hours % 24} 小时`
+  const days = Math.floor(Math.max(0, now.getTime() - booted.getTime()) / 86400000)
+  return `${days} 天`
 }
 
 export function cardExpiryStatus(server: Pick<Server, 'expires_at' | 'auto_renew_enabled'>, now = new Date()): { label: string; tone: ServerExpiryTone; days: number | null } {
@@ -106,7 +103,8 @@ export function serverDeliveryStatus(server: Server) {
   const authPending = server.authorization_confirmed === false
   const usersPending = server.users_confirmed === false && !usersFallback
   if (!authPending && !usersPending) return null
-  const title = [authPending ? '授权租约未确认' : '', usersPending ? '运行时用户未确认' : ''].filter(Boolean).join('；')
+  const usersLabel = server.users_pending_reason === 'awaiting_deployment' ? '运行时用户等待配置部署成功后下发' : '运行时用户未确认'
+  const title = [authPending ? '授权租约未确认' : '', usersPending ? usersLabel : ''].filter(Boolean).join('；')
   return { tone: 'danger' as const, label: '授权待同步', title }
 }
 
