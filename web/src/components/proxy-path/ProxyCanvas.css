@@ -220,14 +220,25 @@
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 5px;
-  max-width: min(440px, calc(100vw - 32px));
+  width: max-content;
+  max-width: min(560px, calc(100% - 32px));
+  box-sizing: border-box;
   padding: 6px;
   pointer-events: auto;
 }
-.graph-selection-actions :is(strong, span) { overflow-wrap: anywhere; }
-.graph-selection-actions > strong { padding-inline: 5px; font-size: 12px; }
+.graph-selection-actions > strong {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  padding-inline: 5px;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.graph-selection-actions button { flex: 0 0 auto; white-space: nowrap; }
+.graph-selection-actions .icon-button { width: 30px; min-width: 30px; padding: 0; justify-content: center; }
 
 .graph-connection-hint,
 .graph-canvas-loading {

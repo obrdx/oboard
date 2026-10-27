@@ -11794,7 +11794,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
           <button type="button" className="ghost" onClick={autoArrangeGraph} disabled={!nodes.length || pendingGraphNodeIDs.length > 0} title="按链路拓扑重新排列全部节点，并清除手动摆放的位置"><Sliders size={14} />重置布局</button>
         </div>
         {selectedGraphItem && <div className="graph-selection-actions" aria-label="选中对象操作">
-          <strong>{selectedGraphItem.entity.label}</strong>
+          <strong title={selectedGraphItem.entity.label}>{selectedGraphItem.entity.label}</strong>
           {relationTargetForEntity(selectedGraphItem.entity, selectedGraphItem.pathIDs) && <button type="button" className="ghost" onClick={() => openRelatedPaths(selectedGraphItem.entity, selectedGraphItem.pathIDs)}><Workflow size={14} />相关链路</button>}
           <button type="button" className="ghost" disabled={pendingGraphNodeIDs.length > 0} onClick={event => {
             const rect = event.currentTarget.getBoundingClientRect()
