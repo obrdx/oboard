@@ -34,7 +34,6 @@ export type ServerItemProps = {
   role?: Role
   expectedBuild?: string
   uninstalling?: boolean
-  selected?: boolean
   sortControls?: ReactNode
   onAction: (type: string, server: Server) => void
 }
@@ -120,7 +119,7 @@ function TargetButton({ server, name, onAction }: { server: Server; name: string
   return <button type="button" className="fleet-target-button" aria-label={`选择 ${serverDisplayName(server)} 的监控目标，当前：${name}`} title={`监控目标：${name}`} onClick={event => { event.stopPropagation(); onAction('monitoring-target', server) }}><Settings2 size={12} aria-hidden="true" /></button>
 }
 
-export function ServerTile({ server, role, expectedBuild, uninstalling, selected, sortControls, onAction }: ServerItemProps) {
+export function ServerTile({ server, role, expectedBuild, uninstalling, sortControls, onAction }: ServerItemProps) {
   const name = serverDisplayName(server)
   const { online, cpu, memory, disk, monitoring, traffic } = serverMetrics(server)
   const attention = serverAttention(server, expectedBuild)
@@ -130,13 +129,13 @@ export function ServerTile({ server, role, expectedBuild, uninstalling, selected
   const tags = (server.display_tags || []).filter(tag => String(tag.text || '').trim())
   const na = !online
   return (
-    <article className={`fleet-tile${online ? '' : ' is-offline'}${selected ? ' is-selected' : ''}`} aria-label={name} onClick={event => openDetailsOnSurface(event, () => onAction('resource-details', server))}>
+    <article className={`fleet-tile${online ? '' : ' is-offline'}`} aria-label={name} onClick={event => openDetailsOnSurface(event, () => onAction('resource-details', server))}>
       <button type="button" className="fleet-tile-hit" onClick={() => onAction('resource-details', server)} aria-label={`查看 ${name} 的负载与延迟`} />
       <header className="fleet-tile-head">
         {sortControls}
         <RegionFlag code={serverRegionCode(server)} size={22} className="fleet-flag" />
         <div className="fleet-tile-title">
-          <button type="button" className="fleet-name" onClick={event => { event.stopPropagation(); onAction('inspect', server) }} title="查看概要">{name}</button>
+          <button type="button" className="fleet-name" onClick={event => { event.stopPropagation(); onAction('about', server) }} title="查看概要">{name}</button>
           <ServerAddresses server={server} />
         </div>
         <div className="fleet-tile-tools">
@@ -220,20 +219,20 @@ function CompactMeter({ percent, value, sub, tone = '', muted = false, label }: 
   )
 }
 
-export function ServerRow({ server, role, expectedBuild, uninstalling, selected, sortControls, onAction }: ServerItemProps) {
+export function ServerRow({ server, role, expectedBuild, uninstalling, sortControls, onAction }: ServerItemProps) {
   const name = serverDisplayName(server)
   const { online, cpu, memory, disk, monitoring, traffic } = serverMetrics(server)
   const attention = serverAttention(server, expectedBuild)
   const expiry = cardExpiryStatus(server)
   const na = !online
   return (
-    <article className={`fleet-row${online ? '' : ' is-offline'}${selected ? ' is-selected' : ''}${sortControls ? ' is-sortable' : ''}`} role="row" aria-label={name} onClick={event => openDetailsOnSurface(event, () => onAction('resource-details', server))}>
+    <article className={`fleet-row${online ? '' : ' is-offline'}${sortControls ? ' is-sortable' : ''}`} role="row" aria-label={name} onClick={event => openDetailsOnSurface(event, () => onAction('resource-details', server))}>
       <button type="button" className="fleet-tile-hit" onClick={() => onAction('resource-details', server)} aria-label={`查看 ${name} 的负载与延迟`} />
       {sortControls ? <span className="fleet-cell fleet-cell-sort" role="cell">{sortControls}</span> : null}
       <div className="fleet-cell fleet-cell-server" role="cell">
         <RegionFlag code={serverRegionCode(server)} size={20} className="fleet-flag" />
         <div className="fleet-row-title">
-          <button type="button" className="fleet-name" onClick={event => { event.stopPropagation(); onAction('inspect', server) }} title="查看概要">{name}</button>
+          <button type="button" className="fleet-name" onClick={event => { event.stopPropagation(); onAction('about', server) }} title="查看概要">{name}</button>
           <ServerAddresses server={server} />
           <AttentionChips items={attention} server={server} uninstalling={uninstalling} onAction={onAction} />
         </div>

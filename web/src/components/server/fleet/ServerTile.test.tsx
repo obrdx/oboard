@@ -73,7 +73,7 @@ it('shows clear card metrics and routes card, name and chip clicks to separate a
   await act(async () => (tile.querySelector('.fleet-meter') as HTMLElement).click())
   expect(onAction).toHaveBeenLastCalledWith('resource-details', server)
   await act(async () => host.querySelector<HTMLButtonElement>('.fleet-name')!.click())
-  expect(onAction).toHaveBeenLastCalledWith('inspect', server)
+  expect(onAction).toHaveBeenLastCalledWith('about', server)
   const chips = [...host.querySelectorAll<HTMLButtonElement>('button.fleet-chip')]
   expect(chips.map(chip => chip.textContent)).toEqual(['时间偏差过大', 'Agent 待更新'])
   await act(async () => chips[1].click())

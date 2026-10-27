@@ -14,7 +14,6 @@ import { userAccountDisplay, userPlanDisplay, userUsageDisplay } from './compone
 import { useUserAction } from './components/users/useUserAction'
 import { connectivityLatencyLabel, serverMonitoring } from './server-monitoring'
 import { ServerMonitoringTargetDialog } from './components/server/ServerMonitoringTargetDialog'
-import { ServerInspectorPanel } from './components/server/ServerInspectorPanel'
 import { ServerTile, ServerRow, ServerListHeader } from './components/server/fleet/ServerTile'
 import { FleetSummary, FleetSearch, RegionFilter, FilterPopover, ViewToggle, fleetStats, serverNeedsAttention, type FleetView } from './components/server/fleet/FleetToolbar'
 import { buildNeedsUpdate, compactBuildLabel, cpuCoresLabel, serverDeliveryStatus } from './components/server/fleet/fleet-format'
@@ -6392,8 +6391,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
   const [deleteServerBusy, setDeleteServerBusy] = useState(false)
   const [deleteServerError, setDeleteServerError] = useState('')
   const [uninstallingServerIDs, setUninstallingServerIDs] = useState<Set<number>>(() => new Set())
-  const [inspectedServerId, setInspectedServerId] = useState<number | null>(null)
-  const inspectedServer = useMemo(() => servers.find(s => s.id === inspectedServerId) || null, [servers, inspectedServerId])
 
   // URL panel state sync: /servers?server=12&panel=network&tab=diagnostics
   const syncURLPanel = (serverId: number | null, panel: string | null, tab: string | null) => {
@@ -6603,28 +6600,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
     setPrevServerFilterKey(serverFilterKey)
     if (serverPage !== 0) setServerPage(0)
   }
-  useEffect(() => {
-    if (!inspectedServerId) return
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
-      if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        const idx = visibleServers.findIndex(s => s.id === inspectedServerId)
-        if (idx >= 0 && idx < visibleServers.length - 1) {
-          setInspectedServerId(visibleServers[idx + 1].id)
-        }
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        const idx = visibleServers.findIndex(s => s.id === inspectedServerId)
-        if (idx > 0) {
-          setInspectedServerId(visibleServers[idx - 1].id)
-        }
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [inspectedServerId, visibleServers])
   const hasServerFilters = Boolean(serverQuery.trim() || serverStatusFilter !== 'all' || serverRegionFilter !== 'all')
   const clearServerFilters = () => {
     setServerQuery('')
@@ -6946,7 +6921,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
       setServers(current => removeServerSnapshot(current, id))
       patchPageData?.((current: any) => ({ ...current, servers: removeServerSnapshot(current.servers || [], id) }))
       setDeleteServerDraft(null)
-      setInspectedServerId(current => current === id ? null : current)
       void refreshServers()
       notify?.(`服务器 ${server.name || `#${id}`} 已删除`, 'success')
     } catch (error: any) {
@@ -6961,7 +6935,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
   const clearServerWorkspaces = () => { setAboutServer(null); setBasicServer(null); setNetworkServer(null); setSystemServer(null); setTasksServer(null) }
   const handleServerAction = async (type: string, s: Server) => {
     if (type === 'about' || type === 'details') { clearServerWorkspaces(); setAboutServer(s) }
-    else if (type === 'inspect') { setInspectedServerId(current => current === s.id ? null : s.id) }
     else if (type === 'full-about') {
       clearServerWorkspaces()
       setAboutServer(s)
@@ -7051,7 +7024,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
       role,
       expectedBuild: expectedAgentBuild,
       uninstalling: uninstallingServerIDs.has(server.id),
-      selected: inspectedServerId === server.id,
       sortControls,
       onAction: handleServerAction,
     }
@@ -7157,7 +7129,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
         />
       : !visibleServers.length
       ? <div className="fleet-empty"><Search size={20} aria-hidden="true" /><strong>没有符合条件的服务器</strong><button type="button" className="ghost" onClick={clearServerFilters}>清除筛选</button></div>
-      : <div className={`fleet-workbench${inspectedServer ? ' has-inspector' : ''}`}>
+      : <div className="fleet-workbench">
           <ServerListPage
             key={serverFilterKey}
             items={visibleServers}
@@ -7167,14 +7139,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
             layout={fleetView}
             header={fleetView === 'list' ? <ServerListHeader sortable={customSort} /> : undefined}
           />
-          {inspectedServer && (
-            <ServerInspectorPanel
-              server={inspectedServer}
-              role={role}
-              onClose={() => setInspectedServerId(null)}
-              onAction={handleServerAction}
-            />
-          )}
         </div>}
     <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} servers={data.servers || []} panelBBR={panelBBRFromDefaults(creationDefaults)} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
     <AnimatePresence>{editServer && <ServerEditDialog server={editServer} client={client} notify={notify} role={role} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} panelBBR={panelBBRFromDefaults(creationDefaults)} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
