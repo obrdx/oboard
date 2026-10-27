@@ -24,6 +24,7 @@ func (s *Server) registerTrafficAutomationOperations() {
 	s.registerRoutingRuleSetOperations()
 	s.registerFamilySplitTemplateOperations()
 	s.registerExternalOutboundOperations()
+	s.registerExternalOutboundCheck()
 }
 
 // ---- outbounds ----
@@ -790,6 +791,55 @@ func (s *Server) registerExternalOutboundOperations() {
 	}
 }
 
+func (s *Server) registerExternalOutboundCheck() {
+	const name = "external_outbounds.check"
+	boundary := func(ctx context.Context, principal application.Principal, input json.RawMessage) (*model.ExternalOutbound, externalOutboundCheckRequest, error) {
+		var request externalOutboundCheckRequest
+		if err := strictAutomationInput(input, &request); err != nil {
+			return nil, request, err
+		}
+		if request.ExternalOutboundID <= 0 {
+			return nil, request, errors.New("external_outbound_id must be a positive integer")
+		}
+		if request.ServerID != nil && *request.ServerID > 0 && !principal.AllowsInt64("server_ids", *request.ServerID) {
+			return nil, request, errors.New("server is outside the authorized server boundary")
+		}
+		current, err := s.store.GetExternalOutbound(ctx, request.ExternalOutboundID)
+		if err != nil {
+			return nil, request, err
+		}
+		if current.ServerID != nil && *current.ServerID != 0 && !principal.AllowsInt64("server_ids", *current.ServerID) {
+			return nil, request, errors.New("external outbound is outside the authorized server boundary")
+		}
+		return current, request, nil
+	}
+	s.automation.RegisterValidator(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		current, _, err := boundary(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"external_outbound_id": current.ID}, nil
+	})
+	s.automation.RegisterRevisionResolver(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		current, _, err := boundary(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"external_outbound:" + strconv.FormatInt(current.ID, 10): current.UpdatedAt.UTC().Format(time.RFC3339Nano)}, nil
+	})
+	s.automation.Register(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		current, request, err := boundary(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		result, _, err := s.checkExternalOutbound(ctx, *current, request.ServerID, func(id int64) bool { return principal.AllowsInt64("server_ids", id) })
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"check": result}, nil
+	})
+}
+
 type externalOutboundOperationInput struct {
 	ExternalOutbound   json.RawMessage `json:"external_outbound,omitempty"`
 	ExternalOutboundID int64           `json:"external_outbound_id,omitempty"`
@@ -829,7 +879,7 @@ func (s *Server) externalOutboundAutomationValidate(ctx context.Context, princip
 		for index := range items {
 			items[index].ServerID = request.ServerID
 			items[index].Scope = scope
-			items[index].ExposeToUsers = request.ExposeToUsers
+			items[index].ExposeToUsers = request.ExposeToUsers && items[index].Protocol != model.ProtocolHTTP
 			items[index].Enabled = true
 			if err := s.validateExternalOutbound(ctx, &items[index]); err != nil {
 				return nil, err
@@ -1030,7 +1080,7 @@ func (s *Server) applyExternalOutboundOperation(ctx context.Context, principal a
 		for index := range items {
 			items[index].ServerID = request.ServerID
 			items[index].Scope = scope
-			items[index].ExposeToUsers = request.ExposeToUsers
+			items[index].ExposeToUsers = request.ExposeToUsers && items[index].Protocol != model.ProtocolHTTP
 			items[index].Enabled = true
 			if err := s.validateExternalOutbound(ctx, &items[index]); err != nil {
 				return nil, err

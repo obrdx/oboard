@@ -44,6 +44,10 @@ const (
 	// inbound and advertises v4 to clients). UDP relay rides on the
 	// established TCP stream rather than a native UDP listener.
 	ProtocolSnell Protocol = "snell"
+	// ProtocolHTTP is an HTTP CONNECT proxy, with TLS for HTTPS. It is only a
+	// third-party (external outbound) dial target: OBoard never runs an HTTP
+	// proxy inbound and never renders it into a user subscription.
+	ProtocolHTTP Protocol = "http"
 	// ProtocolSSH is a managed, password-authenticated SSH proxy entry. It is run by
 	// the Agent rather than sing-box, so it is intentionally kept out of the
 	// generic proxy protocol adapters.

@@ -61,6 +61,7 @@ import type {
   TimeCorrectionMode,
 } from './components/proxy-path/types'
 import { TransportDialog } from './components/proxy-path/TransportDialog'
+import { AddThirdPartyNodeDialog, ThirdPartyNodesDialog, checkThirdPartyNode, externalProtocolLabel, newThirdPartyNodeDraft, submitThirdPartyNode, type ExternalOutboundCheck, type ThirdPartyNodeDraft } from './components/proxy-path/ThirdPartyNodes'
 import { FamilySplitTemplateEditor } from './components/proxy-path/FamilySplitTemplateEditor'
 import { TrafficForwardingPage } from './components/traffic-forwarding/TrafficForwardingPage'
 import {
@@ -9286,7 +9287,6 @@ function graphEntityPrimaryActionLabel(entity: GraphEntity, step?: ProxyPathStep
   if (entity.type === 'routing') return '编辑'
   return ''
 }
-type ImportedNodeDraft = { content: string; scope: 'global' | 'server'; server_id: number; expose_to_users: boolean; position?: GraphPosition | null }
 type CanvasServerInstance = { instance_id: string; server_id: number }
 type CanvasWARPInstance = { instance_id: string; root_server_id: number }
 type CanvasVPNGateInstance = { instance_id: string; root_server_id: number; pool_id: number }
@@ -9451,7 +9451,12 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
   const [editEntry, setEditEntry] = useState<any | null>(null)
 	const [routingDraft, setRoutingDraft] = useState<RoutingDraft | null>(null)
 	const [routingCanvasTargetID, setRoutingCanvasTargetID] = useState('')
-	const [importDraft, setImportDraft] = useState<ImportedNodeDraft | null>(null)
+	const [thirdPartyOpen, setThirdPartyOpen] = useState(false)
+	const [thirdPartyDraft, setThirdPartyDraft] = useState<ThirdPartyNodeDraft | null>(null)
+	const [thirdPartySubmitting, setThirdPartySubmitting] = useState(false)
+	const [thirdPartyChecks, setThirdPartyChecks] = useState<Record<number, ExternalOutboundCheck>>({})
+	const [thirdPartyChecking, setThirdPartyChecking] = useState<number[]>([])
+	const thirdPartyPosition = useRef<GraphPosition | null>(null)
 	const [configNode, setConfigNode] = useState<ExternalOutbound | null>(null)
 	const [namingPath, setNamingPath] = useState<ProxyPath | null>(null)
 	const [transportRequest, setTransportRequest] = useState<TransportDialogRequest | null>(null)
@@ -11005,20 +11010,44 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       await dialogs.alert({ title: '创建分流失败', message: localizeErrorMessage(e.message || e) })
     }
   }
-	const openImportNode = (position?: GraphPosition) => {
-	  setImportDraft({ content: 'socks5://user:password@example.com:1080#SOCKS-A', scope: 'global', server_id: selected?.id || 0, expose_to_users: false, position: position || null })
+	const openThirdPartyNodes = (position?: GraphPosition) => {
+	  thirdPartyPosition.current = position || null
+	  setThirdPartyOpen(true)
 	}
-	const submitImportNode = async () => {
-	  if (!importDraft) return
+	const addThirdPartyToTopology = (node: ExternalOutbound) => {
+	  setCanvasImportedIDs(ids => ids.includes(node.id) ? ids : [...ids, node.id])
+	  const id = `imported-${node.id}`
+	  if (!positions[id]) placeGraphNode(id, thirdPartyPosition.current || getPreferredViewportNewNodePosition(260, 140))
+	  setThirdPartyOpen(false)
+	}
+	const runThirdPartyCheck = async (node: ExternalOutbound) => {
+	  setThirdPartyChecking(ids => [...ids, node.id])
 	  try {
-		    const result = await client.request('/external-outbounds/import', { method: 'POST', body: JSON.stringify({ content: importDraft.content, scope: importDraft.scope, server_id: importDraft.scope === 'server' && importDraft.server_id ? importDraft.server_id : undefined, expose_to_users: importDraft.expose_to_users }) }) as { external_outbounds?: ExternalOutbound[] }
-		    applyMutationResult(result)
-	    const first = result.external_outbounds?.[0]
-	    if (first?.id && importDraft.position) { setCanvasImportedIDs(ids => ids.includes(first.id) ? ids : [...ids, first.id]); placeGraphNode(`imported-${first.id}`, importDraft.position) }
-	    setImportDraft(null)
-		    reconcileTopology()
+	    const check = await checkThirdPartyNode(client.request, node)
+	    setThirdPartyChecks(current => ({ ...current, [node.id]: check }))
 	  } catch (e: any) {
-	    await dialogs.alert({ title: '导入节点失败', message: localizeErrorMessage(e.message || e) })
+	    setThirdPartyChecks(current => ({ ...current, [node.id]: { external_outbound_id: node.id, status: 'failed', target: `${node.target_address}:${node.target_port}`, error: localizeErrorMessage(e.message || e), checked_at: new Date().toISOString() } }))
+	  } finally {
+	    setThirdPartyChecking(ids => ids.filter(id => id !== node.id))
+	  }
+	}
+	// Agents run one network diagnostic at a time, so a batch check is sequential.
+	const runThirdPartyCheckAll = async (nodes: ExternalOutbound[]) => {
+	  for (const node of nodes) await runThirdPartyCheck(node)
+	}
+	const submitThirdPartyDraft = async () => {
+	  if (!thirdPartyDraft) return
+	  setThirdPartySubmitting(true)
+	  try {
+	    const { result, created } = await submitThirdPartyNode(client.request, thirdPartyDraft)
+	    applyMutationResult(result)
+	    setThirdPartyDraft(null)
+	    reconcileTopology()
+	    for (const node of created) void runThirdPartyCheck(node)
+	  } catch (e: any) {
+	    await dialogs.alert({ title: '添加第三方节点失败', message: localizeErrorMessage(e.message || e) })
+	  } finally {
+	    setThirdPartySubmitting(false)
 	  }
 	}
   const deleteGraphEntity = async (entity: GraphEntity) => {
@@ -11316,7 +11345,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
   const runTool = async (action: ProxyToolAction, position?: GraphPosition) => {
 	  if (action === 'server') return void addServer(position)
 	  if (action === 'entry') return void addEntry(position)
-	  if (action === 'imported') return void openImportNode(position)
+	  if (action === 'imported') return void openThirdPartyNodes(position)
     if (action === 'direct') {
       if (!selected?.id) return
       const instance = newCanvasDirectExitInstance(selected.id, canvasDirectExitSequence.current++)
@@ -11873,7 +11902,20 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
     <AnimatePresence>{editEntry && <EntryDraftDialog notify={notify} mode="edit" draft={editEntry} setDraft={setEditEntry} data={data} servers={servers} client={client} onCancel={() => setEditEntry(null)} onSubmit={submitEditEntry} onPaddingUpdated={applyMutationResult} />}</AnimatePresence>
     <AnimatePresence>{routingDraft && <RoutingRuleDraftDialog draft={routingDraft} setDraft={setRoutingDraft} data={data} client={client} load={load} onCancel={() => { setRoutingDraft(null); setRoutingCanvasTargetID('') }} onSubmit={submitRoutingDraft} onOpenTemplateEditor={templateID => setFamilySplitEditor({ templateID: templateID || undefined, select: true })} />}</AnimatePresence>
     <AnimatePresence>{familySplitEditor && <FamilySplitTemplateEditor data={data} client={client} load={load} chainMethods={proxyPathChainMethods} initialTemplateID={familySplitEditor.templateID} onClose={() => setFamilySplitEditor(null)} onSelect={familySplitEditor.select ? id => { setRoutingDraft(old => old ? { ...old, family_split_template_id: id, action: 'family_split' } : old); setFamilySplitEditor(null) } : undefined} />}</AnimatePresence>
-    <AnimatePresence>{importDraft && <ImportNodeDialog draft={importDraft} setDraft={setImportDraft} servers={servers} onCancel={() => setImportDraft(null)} onSubmit={submitImportNode} />}</AnimatePresence>
+    <AnimatePresence>{thirdPartyOpen && <ThirdPartyNodesDialog
+      nodes={(data.external_outbounds || []).filter((item: ExternalOutbound) => item.enabled !== false && (item.scope === 'global' || !item.server_id || !selected?.id || item.server_id === selected.id))}
+      servers={servers}
+      checks={thirdPartyChecks}
+      checking={thirdPartyChecking}
+      onCheck={node => void runThirdPartyCheck(node)}
+      onCheckAll={nodes => void runThirdPartyCheckAll(nodes)}
+      onAdd={() => setThirdPartyDraft(newThirdPartyNodeDraft(selected?.id || 0))}
+      onAddToTopology={addThirdPartyToTopology}
+      onConnectToEntry={node => { setThirdPartyOpen(false); void addImportedToCurrentEntry(node) }}
+      onInspect={setConfigNode}
+      onClose={() => setThirdPartyOpen(false)}
+    />}</AnimatePresence>
+    <AnimatePresence>{thirdPartyDraft && <AddThirdPartyNodeDialog draft={thirdPartyDraft} setDraft={setThirdPartyDraft} servers={servers} submitting={thirdPartySubmitting} onCancel={() => setThirdPartyDraft(null)} onSubmit={() => void submitThirdPartyDraft()} />}</AnimatePresence>
     <AnimatePresence>{configNode && <ImportedNodeConfigDialog node={configNode} data={data} client={client} load={load} onClose={() => setConfigNode(null)} />}</AnimatePresence>
 	<AnimatePresence>{namingPath && <ProxyPathNameDialog path={namingPath} data={data} client={client} load={load} onClose={() => setNamingPath(null)} />}</AnimatePresence>
 		<AnimatePresence>{transportRequest && <TransportDialog
@@ -12129,7 +12171,7 @@ function proxyPathNamePartKey(part: ProxyPathNamePart) {
 
 const proxyTools: Array<{ id: ProxyToolAction; label: string; desc: string }> = [
   { id: 'entry', label: '入口节点', desc: '新建协议入口' },
-  { id: 'imported', label: '导入节点', desc: 'SS / SOCKS / VLESS' },
+  { id: 'imported', label: '第三方节点', desc: '列表、可用性检测与导入' },
   { id: 'direct', label: '直接出口', desc: '添加本机直出目标' },
   { id: 'warp', label: 'WARP 出口', desc: '由末端服务器自动申请' },
   { id: 'vpngate', label: 'VPNGate 出口', desc: '按地区和运营商自动挑选节点' },
@@ -12338,7 +12380,7 @@ function ProxyGraphNodePicker({ selected, servers, importedNodes, open: nodePick
           <div className="graph-imported-list">
         {filteredImportedNodes.map(node => <div className="graph-palette-item" key={`imported-${node.id}`}>
           <span className="graph-palette-kind imported"><RegionFlag code={nodeRegionCode(node)} size={20} /></span>
-          <span className="graph-palette-copy"><strong>{node.name || `导入节点 ${node.id}`}</strong><small>{labelProtocol(node.protocol)} · {formatHostPort(node.target_address, node.target_port)}</small></span>
+          <span className="graph-palette-copy"><strong>{node.name || `导入节点 ${node.id}`}</strong><small>{externalProtocolLabel(node)} · {formatHostPort(node.target_address, node.target_port)}</small></span>
           <div className="graph-palette-actions">
             <button className="ghost icon-button" onClick={() => onAddImported(node)} title="连接到当前入口" aria-label={`将 ${node.name} 连接到当前入口`}><LinkIcon size={14} /></button>
             <button className="ghost icon-button" onClick={() => onShowImported(node)} title="放入画布" aria-label={`将 ${node.name} 放入画布`}><Plus size={15} /></button>
@@ -13390,25 +13432,6 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
   </MotionDialogPanel>
 }
 
-function ImportNodeDialog({ draft, setDraft, servers, onCancel, onSubmit }: { draft: ImportedNodeDraft; setDraft: React.Dispatch<React.SetStateAction<ImportedNodeDraft | null>>; servers: Server[]; onCancel: () => void; onSubmit: () => Promise<void> }) {
-  const update = (patch: Partial<ImportedNodeDraft>) => setDraft(old => old ? { ...old, ...patch } : old)
-  return <MotionDialogPanel onCancel={onCancel} className="graph-form-dialog">
-      <header className="dialog-head">
-        <div><h2 id="import-node-title">导入第三方节点</h2><p className="muted">粘贴节点链接或出站 JSON。</p></div>
-        <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
-      </header>
-      <div className="dialog-body">
-        <div className="form graph-dialog-form">
-          <FormField label="使用范围"><Select variant="segmented" value={draft.scope} onChange={e => update({ scope: e.target.value as 'global' | 'server' })}><option value="global">全部服务器</option><option value="server">指定服务器</option></Select></FormField>
-          {draft.scope === 'server' && <FormField label="服务器" required><Select value={draft.server_id} onChange={e => update({ server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{servers.map(s => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField>}
-          <FormField label="订阅展示"><Select variant="segmented" value={String(draft.expose_to_users)} onChange={e => update({ expose_to_users: e.target.value === 'true' })}><option value="false">隐藏</option><option value="true">允许授权</option></Select></FormField>
-          <FormField label="链接或 JSON" required hint="每行一个链接。"><textarea value={draft.content} onChange={e => update({ content: e.target.value })} rows={8} /></FormField>
-        </div>
-      </div>
-      <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>取消</button><button onClick={onSubmit}>导入节点</button></footer>
-  </MotionDialogPanel>
-}
-
 function ImportedNodeConfigDialog({ node, data, client, load, onClose }: { node: ExternalOutbound; data: any; client: ReturnType<typeof api>; load: () => Promise<void>; onClose: () => void }) {
   const dialogs = useDialogs()
 	const [regionMode, setRegionMode] = useState<RegionMode>(node.region_mode === 'manual' ? 'manual' : 'auto')
@@ -13433,12 +13456,12 @@ function ImportedNodeConfigDialog({ node, data, client, load, onClose }: { node:
 	}
   return <MotionDialogPanel onCancel={onClose} className="graph-form-dialog">
       <header className="dialog-head">
-        <div><h2 id="imported-node-title">{node.name}</h2><p className="muted">{labelProtocol(node.protocol)} · {formatHostPort(node.target_address, node.target_port)} · {node.scope === 'server' ? '单服务器可用' : '全部服务器可用'}</p></div>
+        <div><h2 id="imported-node-title">{node.name}</h2><p className="muted">{externalProtocolLabel(node)} · {formatHostPort(node.target_address, node.target_port)} · {node.scope === 'server' ? '单服务器可用' : '全部服务器可用'}</p></div>
         <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
       <div className="dialog-body">
         <div className="imported-node-summary">
-          <div><span>协议</span><strong>{labelProtocol(node.protocol)}</strong></div>
+          <div><span>协议</span><strong>{externalProtocolLabel(node)}</strong></div>
           <div><span>地址</span><strong>{formatHostPort(node.target_address, node.target_port)}</strong></div>
           <div><span>订阅</span><strong>{node.expose_to_users ? '可授权展示' : '默认隐藏'}</strong></div>
         </div>
@@ -15368,7 +15391,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
   ;(data.external_outbounds || []).filter((x: ExternalOutbound) => importedIDs.has(x.id)).forEach((x: ExternalOutbound, i: number) => {
     const id = `imported-${x.id}`
     const position = positions[id] || defaultImportedGraphPosition(i)
-    nodes.push({ id, className: 'graph-node imported-graph-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity: { type: 'imported', id: x.id, label: x.name || `导入节点 ${x.id}` } as GraphEntity, label: <GraphNode kind="导入节点" title={x.name} meta={`${labelProtocol(x.protocol)} · ${formatHostPort(x.target_address, x.target_port)} · ${x.expose_to_users ? '可订阅' : '订阅隐藏'}`} pathHandles={continuationByNode.get(id) || []} /> } })
+    nodes.push({ id, className: 'graph-node imported-graph-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity: { type: 'imported', id: x.id, label: x.name || `导入节点 ${x.id}` } as GraphEntity, label: <GraphNode kind="导入节点" title={x.name} meta={`${externalProtocolLabel(x)} · ${formatHostPort(x.target_address, x.target_port)} · ${x.expose_to_users ? '可订阅' : '订阅隐藏'}`} pathHandles={continuationByNode.get(id) || []} /> } })
   })
   let pathStepNodeIndex = 0
   const renderedStepNodeIDs = new Set<string>()
@@ -15469,7 +15492,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
         if (!imported) return
         const importedPathSources = continuationByNode.get(id) || []
         const importedWidth = graphServerNodeWidth(Math.max(1, importedPathSources.length))
-	        nodes.push({ id, className: 'graph-node imported-graph-node proxy-path-instance-node', position, style: { width: importedWidth }, data: { entity, pathIDs: sharedPathIDs, label: <GraphNode kind="导入节点" title={imported.name} meta={`${labelProtocol(imported.protocol)} · ${formatHostPort(imported.target_address, imported.target_port)} · ${sharedCount > 1 ? `${sharedCount} 条路径共享` : pathDisplayName(canonicalPath.id)}`} pathHandles={importedPathSources} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
+	        nodes.push({ id, className: 'graph-node imported-graph-node proxy-path-instance-node', position, style: { width: importedWidth }, data: { entity, pathIDs: sharedPathIDs, label: <GraphNode kind="导入节点" title={imported.name} meta={`${externalProtocolLabel(imported)} · ${formatHostPort(imported.target_address, imported.target_port)} · ${sharedCount > 1 ? `${sharedCount} 条路径共享` : pathDisplayName(canonicalPath.id)}`} pathHandles={importedPathSources} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
         return
       }
       const serverID = graphStepServerID(canonicalStep, inboundByID)
@@ -15611,7 +15634,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
 	      nodes.push({ id, className: 'graph-node warp-graph-node detached-chain-node', position: item.position, style: { width: 220 }, data: { entity, label: <WARPGraphNode title="WARP" meta="未连接链段" /> } })
 	    } else if (step.node_type === 'imported' && step.external_outbound_id) {
 	      const imported = (data.external_outbounds || []).find((candidate: ExternalOutbound) => candidate.id === step.external_outbound_id) as ExternalOutbound | undefined
-	      if (imported) nodes.push({ id, className: 'graph-node imported-graph-node detached-chain-node', position: item.position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, label: <GraphNode kind="导入节点" title={imported.name} meta={`${labelProtocol(imported.protocol)} · 未连接链段`} /> } })
+	      if (imported) nodes.push({ id, className: 'graph-node imported-graph-node detached-chain-node', position: item.position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, label: <GraphNode kind="导入节点" title={imported.name} meta={`${externalProtocolLabel(imported)} · 未连接链段`} /> } })
 	    } else {
 	      const serverID = graphStepServerID(step, inboundByID)
 	      const server = (data.servers || []).find((candidate: Server) => candidate.id === serverID) as Server | undefined
@@ -20585,6 +20608,7 @@ function labelProtocol(p: Protocol | string) {
 	if (p === 'vless') return 'VLESS'
 	if (p === 'ssh') return 'SSH'
 	if (p === 'socks') return 'SOCKS'
+	if (p === 'http') return 'HTTP'
 	return String(p)
 }
 function humanLabel(k: string) {

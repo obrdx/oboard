@@ -969,6 +969,9 @@ func externalOutboundToSingBox(v model.ExternalOutbound, server model.Server, us
 }
 
 func externalOutboundToSingBoxWithTag(v model.ExternalOutbound, server model.Server, user *model.User, outboundTag string) (map[string]any, error) {
+	if v.Protocol == model.ProtocolHTTP {
+		return httpExternalOutboundToSingBox(v, server, outboundTag)
+	}
 	if strings.TrimSpace(v.ConfigJSON) != "" && strings.TrimSpace(v.ConfigJSON) != "{}" {
 		var raw map[string]any
 		if err := json.Unmarshal([]byte(v.ConfigJSON), &raw); err == nil && raw["type"] != nil {
@@ -3690,6 +3693,8 @@ func protocolFromKernelOutboundType(typ string) model.Protocol {
 		return model.ProtocolSnell
 	case "socks":
 		return model.ProtocolSocks
+	case "http":
+		return model.ProtocolHTTP
 	default:
 		return ""
 	}

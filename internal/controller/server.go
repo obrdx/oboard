@@ -9173,6 +9173,15 @@ func (s *Server) externalOutbounds(w http.ResponseWriter, r *http.Request) {
 		s.importExternalOutbounds(w, r)
 		return
 	}
+	if trimmed := strings.TrimSuffix(r.URL.Path, "/check"); trimmed != r.URL.Path {
+		id := idFromPath(trimmed, "/api/v1/external-outbounds/")
+		if id <= 0 {
+			fail(w, errors.New("missing id"), http.StatusBadRequest)
+			return
+		}
+		s.checkExternalOutboundHTTP(w, r, id)
+		return
+	}
 	id := idFromPath(r.URL.Path, "/api/v1/external-outbounds/")
 	switch r.Method {
 	case http.MethodGet:
@@ -9287,6 +9296,24 @@ func (s *Server) validateExternalOutbound(ctx context.Context, v *model.External
 		if err := validateSocksExternalConfig(v.ConfigJSON); err != nil {
 			return err
 		}
+	} else if v.Protocol == model.ProtocolHTTP {
+		if v.ExposeToUsers {
+			return errors.New("HTTP/HTTPS 第三方节点只能作为代理链路出口，不能直接下发到订阅")
+		}
+		var raw map[string]any
+		if json.Unmarshal([]byte(v.ConfigJSON), &raw) == nil && v.TargetAddress == "" {
+			if server, _ := raw["server"].(string); server != "" {
+				v.TargetAddress = server
+			}
+			if port := intFromAnyController(raw["server_port"]); port > 0 {
+				v.TargetPort = port
+			}
+		}
+		normalized, err := core.NormalizeHTTPExternalConfigJSON(v.ConfigJSON)
+		if err != nil {
+			return err
+		}
+		v.ConfigJSON = normalized
 	} else {
 		if _, err := core.AdapterFor(v.Protocol); err != nil {
 			return err
@@ -9367,7 +9394,7 @@ func (s *Server) importExternalOutbounds(w http.ResponseWriter, r *http.Request)
 		if item.Scope == "" {
 			item.Scope = model.ExternalOutboundScopeGlobal
 		}
-		item.ExposeToUsers = req.ExposeToUsers
+		item.ExposeToUsers = req.ExposeToUsers && item.Protocol != model.ProtocolHTTP
 		item.Enabled = true
 		if err := s.validateExternalOutbound(r.Context(), &item); err != nil {
 			fail(w, err, 400)
@@ -9465,6 +9492,9 @@ func parseExternalOutboundLine(line string) ([]model.ExternalOutbound, error) {
 	case "socks", "socks5":
 		item, err := parseSocksImportURI(u)
 		return []model.ExternalOutbound{item}, err
+	case "http", "https":
+		item, err := parseHTTPImportURI(u)
+		return []model.ExternalOutbound{item}, err
 	case "vless":
 		item, err := parseVLESSImportURI(u)
 		return []model.ExternalOutbound{item}, err
@@ -9491,7 +9521,7 @@ func externalOutboundFromRawMap(raw map[string]any, fallbackName string) (model.
 		proto = string(model.ProtocolSS)
 	}
 	switch model.Protocol(proto) {
-	case model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS, model.ProtocolMieru, model.ProtocolSnell, model.ProtocolSocks:
+	case model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS, model.ProtocolMieru, model.ProtocolSnell, model.ProtocolSocks, model.ProtocolHTTP:
 	default:
 		return model.ExternalOutbound{}, fmt.Errorf("unsupported outbound type %q", proto)
 	}
@@ -9674,6 +9704,64 @@ func parseSocksImportURI(u *url.URL) (model.ExternalOutbound, error) {
 		cfg["password"] = password
 	}
 	return externalOutboundFromRawMap(cfg, "socks-import")
+}
+
+// parseHTTPImportURI reads http://[user:pass@]host[:port][#name] and the
+// https:// form with optional sni/insecure query keys. A link with a path or
+// any other query parameter is a web or subscription address, not a proxy.
+func parseHTTPImportURI(u *url.URL) (model.ExternalOutbound, error) {
+	secure := strings.EqualFold(u.Scheme, "https")
+	if u.Opaque != "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" && !secure {
+		return model.ExternalOutbound{}, errors.New("这看起来是网页或订阅地址，不是 HTTP 代理；代理链接格式为 http://用户名:密码@主机:端口")
+	}
+	host := strings.Trim(u.Hostname(), "[]")
+	if host == "" {
+		return model.ExternalOutbound{}, errors.New("invalid http proxy URI: host required")
+	}
+	port := 80
+	if secure {
+		port = 443
+	}
+	if text := u.Port(); text != "" {
+		parsed, err := strconv.Atoi(text)
+		if err != nil {
+			return model.ExternalOutbound{}, err
+		}
+		port = parsed
+	}
+	if err := core.ValidatePort(port); err != nil {
+		return model.ExternalOutbound{}, err
+	}
+	label := "HTTP "
+	cfg := map[string]any{"type": "http", "server": host, "server_port": port}
+	if username := u.User.Username(); username != "" {
+		cfg["username"] = username
+	}
+	if password, ok := u.User.Password(); ok {
+		cfg["password"] = password
+	}
+	if secure {
+		label = "HTTPS "
+		q := u.Query()
+		for key := range q {
+			switch key {
+			case "sni", "peer", "serverName", "insecure", "allowInsecure", "skip-cert-verify":
+			default:
+				return model.ExternalOutbound{}, fmt.Errorf("这看起来是网页或订阅地址，不是 HTTPS 代理（不支持参数 %q）", key)
+			}
+		}
+		tls := map[string]any{"enabled": true}
+		if sni := firstQuery(q, "sni", "peer", "serverName"); sni != "" {
+			tls["server_name"] = sni
+		}
+		switch strings.ToLower(firstQuery(q, "insecure", "allowInsecure", "skip-cert-verify")) {
+		case "1", "true":
+			tls["insecure"] = true
+		}
+		cfg["tls"] = tls
+	}
+	cfg["tag"] = importNodeName(u, label+host)
+	return externalOutboundFromRawMap(cfg, "http-import")
 }
 
 func parseVLESSImportURI(u *url.URL) (model.ExternalOutbound, error) {

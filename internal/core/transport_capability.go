@@ -93,6 +93,7 @@ var protocolTransportCapabilities = map[model.Protocol]TransportCapability{
 	model.ProtocolMieru:  {GenericMux: GenericMuxNone, NativeMux: NativeMuxMieruLevel, TFO: TFOTransportTCP},
 	model.ProtocolSnell:  {GenericMux: GenericMuxNone, NativeMux: NativeMuxSnellReuse, TFO: TFOTCP},
 	model.ProtocolSocks:  {GenericMux: GenericMuxNone, NativeMux: NativeMuxNone, TFO: TFOTCP},
+	model.ProtocolHTTP:   {GenericMux: GenericMuxNone, NativeMux: NativeMuxNone, TFO: TFOTCP},
 	model.ProtocolSSH:    {GenericMux: GenericMuxNone, NativeMux: NativeMuxSSH, TFO: TFOUnsupported},
 }
 

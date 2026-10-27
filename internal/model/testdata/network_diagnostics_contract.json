@@ -1,4 +1,18 @@
 {
+  "monitor.tcp": {
+    "protocol_version": 1,
+    "operation_id": "monitor-3",
+    "origin": "monitor",
+    "run_id": "",
+    "plugin_id": "",
+    "instance_id": 0,
+    "issued_at": "2026-09-30T12:00:00Z",
+    "expires_at": "2026-09-30T12:01:00Z",
+    "host": "proxy.example.com",
+    "port": 8443,
+    "ip_family": "auto",
+    "timeout_ms": 5000
+  },
   "monitor.trace": {
     "protocol_version": 1,
     "operation_id": "monitor-1",

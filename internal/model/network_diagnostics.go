@@ -33,6 +33,10 @@ const (
 	NetworkDiagnosticOriginMonitor   = "monitor"
 	AgentCapabilityRouteMonitor      = "route_monitor_v1"
 	AgentCapabilityGoogleRegionProbe = "google_region_probe_v1"
+	// AgentCapabilityNetworkTCPMonitor is advertised by Agents that accept a
+	// monitor-origin probe_network_tcp, used by Controller availability checks
+	// of third-party nodes without the plugin gate.
+	AgentCapabilityNetworkTCPMonitor = "network_tcp_monitor_v1"
 
 	NetworkFamilyAuto = "auto"
 	NetworkFamilyIPv4 = "ipv4"

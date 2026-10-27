@@ -22,7 +22,7 @@ func externalOutboundDescriptors(positiveID map[string]any, stringValue, boolVal
 	})
 	fields := closedObject(map[string]any{
 		"name":            map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-		"protocol":        map[string]any{"type": "string", "enum": []string{"vless", "hysteria2", "anytls", "shadowsocks", "mieru", "socks"}},
+		"protocol":        map[string]any{"type": "string", "enum": []string{"vless", "hysteria2", "anytls", "shadowsocks", "mieru", "socks", "http"}},
 		"scope":           map[string]any{"type": "string", "enum": []string{"global", "server"}},
 		"server_id":       nullableInteger(),
 		"target_address":  map[string]any{"type": "string", "maxLength": 255},
@@ -45,6 +45,7 @@ func externalOutboundDescriptors(positiveID map[string]any, stringValue, boolVal
 		{"external_outbounds.import", "从订阅文本或节点 URI 批量导入第三方节点", schemaObject(map[string]any{"content": map[string]any{"type": "string", "minLength": 1, "maxLength": 262144}, "scope": map[string]any{"type": "string", "enum": []string{"global", "server"}}, "server_id": nullableInteger(), "expose_to_users": boolValue}, "content"), schemaObject(map[string]any{"external_outbounds": arrayOf(externalOutbound), "created_count": map[string]any{"type": "integer"}}, "created_count"), 2, false},
 		{"external_outbounds.create", "手动创建导入节点", schemaObject(map[string]any{"external_outbound": fields}, "external_outbound"), schemaObject(map[string]any{"external_outbound": externalOutbound}, "external_outbound"), 2, false},
 		{"external_outbounds.update", "修改导入节点", schemaObject(map[string]any{"external_outbound_id": positiveID, "changes": fields}, "external_outbound_id", "changes"), schemaObject(map[string]any{"external_outbound": externalOutbound, "changed_fields": stringArray(1, 32)}, "external_outbound"), 2, false},
+		{"external_outbounds.check", "检测第三方节点可用性：由一台可使用该节点的在线服务器向节点地址发起 TCP 连接并返回延迟；只证明端口可达，不验证代理凭证。UDP 协议（HY2、UDP Mieru）返回 not_applicable。server_id 可选，省略时自动选择", schemaObject(map[string]any{"external_outbound_id": positiveID, "server_id": nullableInteger()}, "external_outbound_id"), schemaObject(map[string]any{"check": closedObject(map[string]any{"external_outbound_id": positiveID, "status": map[string]any{"type": "string", "enum": []string{"reachable", "unreachable", "not_applicable", "failed"}}, "server_id": map[string]any{"type": "integer"}, "server_name": stringValue, "target": stringValue, "resolved_ip": stringValue, "connect_ms": map[string]any{"type": "number"}, "error_class": stringValue, "error": stringValue, "checked_at": stringValue})}, "check"), 1, false},
 		{"external_outbounds.delete", "删除导入节点，并自动从所有订阅套餐移除该节点", schemaObject(map[string]any{"external_outbound_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "external_outbound_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "external_outbound_id": positiveID}, "deleted"), 3, true},
 	}
 	for _, write := range writes {
@@ -73,11 +74,16 @@ func externalOutboundResolver(name string) func(context.Context, any) ([]mcpauth
 		}
 		switch name {
 		case "external_outbounds.import", "external_outbounds.create":
-			nested := object["external_outbound"].(map[string]any)
+			nested, _ := object["external_outbound"].(map[string]any)
 			if name == "external_outbounds.import" {
 				nested = object
 			}
 			addServer(nested)
+		case "external_outbounds.check":
+			if id, ok := int64Value(object["external_outbound_id"]); ok && id > 0 {
+				refs = append(refs, mcpauth.ResourceRef{Type: "external_outbound", ID: strconv.FormatInt(id, 10)})
+			}
+			addServer(object)
 		case "external_outbounds.update":
 			if id, ok := int64Value(object["external_outbound_id"]); ok && id > 0 {
 				refs = append(refs, mcpauth.ResourceRef{Type: "external_outbound", ID: strconv.FormatInt(id, 10)})

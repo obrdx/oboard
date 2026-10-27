@@ -246,7 +246,8 @@ func BuildSubscriptionCandidates(user model.User, servers []model.Server, inboun
 		}
 	}
 	for _, external := range opts.ExternalOutbounds {
-		if !external.Enabled || !external.ExposeToUsers {
+		// HTTP/HTTPS imports are chain exits only and never reach a subscription.
+		if !external.Enabled || !external.ExposeToUsers || external.Protocol == model.ProtocolHTTP {
 			continue
 		}
 		if !opts.EffectiveNodes[NodeKeyOf(model.AssignableNodeExternalOutbound, external.ID)] {
