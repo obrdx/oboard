@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,36 +13,26 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
-	"github.com/OboardProject/oboard/internal/store"
 )
 
-const externalOutboundCheckTimeoutMS = 5000
+const externalOutboundProbeCapability = "external_outbound_probe_v1"
 
-// externalOutboundCheck is the result of one third-party node availability
-// check: a native TCP connect from a server that can dial the node. It proves
-// the node's port is reachable from that server, not that the proxy
-// credentials are accepted; the deployed-branch egress probe covers that.
 type externalOutboundCheck struct {
 	ExternalOutboundID int64     `json:"external_outbound_id"`
 	Status             string    `json:"status"`
 	ServerID           int64     `json:"server_id,omitempty"`
 	ServerName         string    `json:"server_name,omitempty"`
 	Target             string    `json:"target"`
-	ResolvedIP         string    `json:"resolved_ip,omitempty"`
+	ExitIP             string    `json:"exit_ip,omitempty"`
+	RegionCode         string    `json:"region_code,omitempty"`
+	RegionStatus       string    `json:"region_status,omitempty"`
 	ConnectMS          float64   `json:"connect_ms,omitempty"`
-	ErrorClass         string    `json:"error_class,omitempty"`
 	Error              string    `json:"error,omitempty"`
 	CheckedAt          time.Time `json:"checked_at"`
 }
-
-const (
-	externalCheckReachable     = "reachable"
-	externalCheckUnreachable   = "unreachable"
-	externalCheckNotApplicable = "not_applicable"
-	externalCheckFailed        = "failed"
-)
 
 type externalOutboundCheckRequest struct {
 	ExternalOutboundID int64  `json:"external_outbound_id,omitempty"`
@@ -71,205 +62,155 @@ func (s *Server) checkExternalOutboundHTTP(w http.ResponseWriter, r *http.Reques
 	write(w, http.StatusOK, map[string]any{"check": result})
 }
 
-// checkExternalOutbound picks the dialing server and runs the probe. allow
-// narrows the candidate servers for callers bound to a resource boundary.
 func (s *Server) checkExternalOutbound(ctx context.Context, external model.ExternalOutbound, requested *int64, allow func(int64) bool) (externalOutboundCheck, int, error) {
-	result := externalOutboundCheck{ExternalOutboundID: external.ID, Target: net.JoinHostPort(strings.Trim(external.TargetAddress, "[]"), strconv.Itoa(external.TargetPort)), CheckedAt: time.Now().UTC()}
-	if reason := externalOutboundCheckNotApplicable(external); reason != "" {
-		result.Status, result.Error = externalCheckNotApplicable, reason
-		return result, http.StatusOK, nil
-	}
+	result := externalOutboundCheck{ExternalOutboundID: external.ID, Target: net.JoinHostPort(strings.Trim(external.TargetAddress, "[]"), strconv.Itoa(external.TargetPort)), CheckedAt: time.Now().UTC(), Status: "failed"}
 	server, err := s.externalOutboundCheckServer(ctx, external, requested, allow)
 	if err != nil {
 		return result, http.StatusConflict, err
 	}
 	result.ServerID, result.ServerName = server.ID, server.Name
-	operationID, err := security.RandomToken(18)
+	outbound, err := core.ExternalOutboundProbeConfig(external)
 	if err != nil {
-		return result, http.StatusInternalServerError, err
+		return result, http.StatusBadRequest, err
 	}
-	now := time.Now().UTC()
-	payload := model.NetworkTCPProbeTaskPayload{
-		NetworkDiagnosticEnvelope: model.NetworkDiagnosticEnvelope{ProtocolVersion: model.NetworkDiagnosticProtocolVersion, OperationID: operationID, Origin: model.NetworkDiagnosticOriginMonitor, IssuedAt: now, ExpiresAt: now.Add(15 * time.Second)},
-		Host:                      strings.Trim(external.TargetAddress, "[]"),
-		Port:                      external.TargetPort,
-		IPFamily:                  model.NetworkFamilyAuto,
-		TimeoutMS:                 externalOutboundCheckTimeoutMS,
-	}
-	raw, err := s.runExternalOutboundCheckTask(ctx, *server, payload)
+	fingerprint := core.ExternalOutboundFingerprint(external)
+	plan := model.ExternalEgressProbePlan{TimeoutMS: 10000, Standalone: &model.ExternalOutboundProbe{ExternalOutboundID: external.ID, Fingerprint: fingerprint, Outbound: outbound}}
+	raw, _ := json.Marshal(plan)
+	nonce, err := security.RandomToken(12)
 	if err != nil {
-		if errors.Is(err, store.ErrNetworkDiagnosticBusy) {
-			return result, http.StatusConflict, err
+		return result, 500, err
+	}
+	task := model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeProbeExternalEgress, PayloadJSON: string(raw), Status: "pending", ResultJSON: "{}", Nonce: nonce}
+	if err := s.store.CreateExternalOutboundCheckTask(ctx, *server, &task); err != nil {
+		return result, http.StatusConflict, err
+	}
+	s.tasks.wake(server.ID)
+	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	started := time.Now()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		current, err := s.store.GetTask(waitCtx, task.ID)
+		if err != nil {
+			result.Error = "读取检测结果失败"
+			break
 		}
-		result.Status, result.Error = externalCheckFailed, err.Error()
-		return result, http.StatusOK, nil
+		if current.Status == "succeeded" || current.Status == "failed" || current.Status == "superseded" || current.Status == "rollback_failed" {
+			latest, err := s.store.GetExternalOutbound(ctx, external.ID)
+			if err != nil || core.ExternalOutboundFingerprint(*latest) != fingerprint {
+				result.Error = "检测期间节点配置已修改，请重新检测"
+				break
+			}
+			if latest.ProbeTaskID != task.ID {
+				result.Error = "已有更新的检测，请查看最新结果"
+				return result, http.StatusOK, nil
+			}
+			if latest.ProbeStatus == "pending" { // Callback persistence may follow task completion.
+				select {
+				case <-waitCtx.Done():
+					result.Error = "检测超时"
+				case <-ticker.C:
+					continue
+				}
+				break
+			}
+			result.ExitIP, result.RegionCode, result.RegionStatus, result.Error = latest.ProbeExitIP, latest.ProbeRegionCode, latest.ProbeStatus, latest.ProbeError
+			if latest.ProbeExitIP != "" && current.Status == "succeeded" {
+				result.Status = "reachable"
+			} else {
+				result.Status = "unreachable"
+			}
+			result.ConnectMS = float64(time.Since(started).Milliseconds())
+			result.CheckedAt = time.Now().UTC()
+			return result, http.StatusOK, nil
+		}
+		select {
+		case <-waitCtx.Done():
+			result.Error = "检测超时，服务器未返回代理出口结果"
+		case <-ticker.C:
+			continue
+		}
+		break
 	}
-	var probe model.NetworkTCPProbeResult
-	if len(raw) > 4*1024 || json.Unmarshal([]byte(raw), &probe) != nil || probe.OperationID != operationID {
-		result.Status, result.Error = externalCheckFailed, "检测结果与请求不匹配"
-		return result, http.StatusOK, nil
-	}
-	result.ResolvedIP = probe.ResolvedIP
-	if probe.Connected {
-		result.Status, result.ConnectMS = externalCheckReachable, probe.ConnectMS
-		return result, http.StatusOK, nil
-	}
-	result.Status, result.ErrorClass, result.Error = externalCheckUnreachable, probe.ErrorClass, externalCheckErrorText(probe.ErrorClass)
+	cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer stop()
+	_ = s.store.SupersedePendingTask(cleanup, task.ID, "节点检测已结束或超时")
+	_ = s.store.CompleteExternalOutboundProbe(cleanup, external.ID, fingerprint, task.ID, "failed", "", "", result.Error)
 	return result, http.StatusOK, nil
 }
 
-// externalOutboundCheckNotApplicable names protocols whose data path is UDP,
-// where a TCP connect proves nothing.
-func externalOutboundCheckNotApplicable(external model.ExternalOutbound) string {
-	switch external.Protocol {
-	case model.ProtocolHY2:
-		return "HY2 使用 UDP，无法用 TCP 连接检测；部署后可用出口探测确认"
-	case model.ProtocolMieru:
-		var cfg map[string]any
-		if json.Unmarshal([]byte(external.ConfigJSON), &cfg) == nil && strings.EqualFold(stringFromMap(cfg, "transport"), "UDP") {
-			return "UDP 传输的 Mieru 无法用 TCP 连接检测；部署后可用出口探测确认"
-		}
-	}
-	return ""
-}
-
-func externalCheckErrorText(class string) string {
-	switch class {
-	case "timeout":
-		return "连接超时"
-	case "refused":
-		return "端口拒绝连接"
-	case "reset":
-		return "连接被重置"
-	case "unreachable":
-		return "网络不可达"
-	case "nxdomain":
-		return "域名不存在"
-	case "dns_failed":
-		return "域名解析失败"
-	case "":
-		return "连接失败"
-	default:
-		return "连接失败（" + class + "）"
-	}
-}
-
-// externalOutboundCheckServer returns the server that will dial the node: the
-// requested one, the bound server of a server-scoped node, or the first online
-// capable server.
 func (s *Server) externalOutboundCheckServer(ctx context.Context, external model.ExternalOutbound, requested *int64, allow func(int64) bool) (*model.Server, error) {
 	servers, err := s.store.ListServers(ctx)
 	if err != nil {
 		return nil, err
 	}
 	sort.SliceStable(servers, func(i, j int) bool { return servers[i].ID < servers[j].ID })
-	usable := func(server model.Server) bool {
-		if external.ServerID != nil && *external.ServerID != 0 && *external.ServerID != server.ID {
-			return false
-		}
-		return allow == nil || allow(server.ID)
-	}
-	if requested != nil && *requested > 0 {
-		for i := range servers {
-			if servers[i].ID != *requested {
-				continue
-			}
-			if !usable(servers[i]) {
-				return nil, errors.New("该第三方节点只能在绑定的服务器上使用，请选择对应服务器检测")
-			}
-			if err := externalOutboundCheckServerReady(servers[i]); err != nil {
-				return nil, err
-			}
-			return &servers[i], nil
-		}
-		return nil, errors.New("检测服务器不存在")
-	}
 	var firstErr error
 	for i := range servers {
-		if !usable(servers[i]) {
+		server := &servers[i]
+		if requested != nil && *requested > 0 && server.ID != *requested {
 			continue
 		}
-		if err := externalOutboundCheckServerReady(servers[i]); err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
+		if external.ServerID != nil && *external.ServerID != 0 && *external.ServerID != server.ID || allow != nil && !allow(server.ID) {
 			continue
 		}
-		return &servers[i], nil
+		err := externalOutboundCheckServerReady(*server)
+		if err == nil {
+			return server, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
 	}
 	if firstErr != nil {
 		return nil, firstErr
 	}
-	return nil, errors.New("没有可用于检测的服务器")
+	return nil, errors.New("没有可用于检测的授权服务器")
 }
 
 func externalOutboundCheckServerReady(server model.Server) error {
 	if reason := agentTaskImmediateFailure(&server); reason != "" {
 		return fmt.Errorf("服务器 %s：%s", server.Name, reason)
 	}
-	if !serverSupportsCapability(server, model.AgentCapabilityNetworkTCPMonitor) {
-		return fmt.Errorf("服务器 %s 的 Agent 不支持节点可用性检测；请先更新 Agent", server.Name)
+	if !serverSupportsCapability(server, externalOutboundProbeCapability) || !serverSupportsCapability(server, "external_outbound_check_v1") {
+		return fmt.Errorf("服务器 %s 的 Agent/内核不支持独立代理出口检测，请先更新", server.Name)
 	}
 	return nil
 }
 
-// runExternalOutboundCheckTask queues the signed probe and waits for its
-// result JSON. A task that could not finish is superseded on return.
-func (s *Server) runExternalOutboundCheckTask(ctx context.Context, server model.Server, payload model.NetworkTCPProbeTaskPayload) (string, error) {
-	raw, _ := json.Marshal(payload)
-	nonce, err := security.RandomToken(12)
+func (s *Server) applyStandaloneExternalProbe(ctx context.Context, task model.AgentTask, probe model.ExternalOutboundProbe, status string, result model.ExternalEgressProbeResult) error {
+	if probe.ExternalOutboundID <= 0 || len(probe.Fingerprint) != 64 || len(result.Items) > 1 || len(result.Items) == 1 && result.Items[0].ProbeID != probe.Fingerprint {
+		return errors.New("invalid standalone probe result identity")
+	}
+	current, err := s.store.GetExternalOutbound(ctx, probe.ExternalOutboundID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
 	if err != nil {
-		return "", err
+		return err
 	}
-	task := model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeNetworkTCP, PayloadJSON: string(raw), Status: "pending", ResultJSON: "{}", Nonce: nonce}
-	if err = s.store.CreateExternalOutboundCheckTask(ctx, server, &task); err != nil {
-		return "", err
+	if core.ExternalOutboundFingerprint(*current) != probe.Fingerprint {
+		return nil
 	}
-	s.tasks.wake(server.ID)
-	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	defer func() {
-		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-		defer stop()
-		_ = s.store.SupersedePendingTask(cleanup, task.ID, "节点检测已结束或超时")
-	}()
-	ticker := time.NewTicker(300 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		current, err := s.store.GetTask(waitCtx, task.ID)
-		if err != nil {
-			return "", errors.New("读取检测结果失败")
-		}
-		switch current.Status {
-		case "succeeded":
-			return current.ResultJSON, nil
-		case "failed", "superseded", "rollback_failed":
-			return "", externalCheckTaskFailure(current.ResultJSON)
-		}
-		select {
-		case <-waitCtx.Done():
-			return "", errors.New("检测超时，服务器未在 30 秒内返回结果")
-		case <-ticker.C:
+	probeStatus, exitIP, region, message := "failed", "", "", "代理连接或出口查询失败，请检查地址、凭证及 TLS 设置"
+	if len(result.Items) == 1 && result.Items[0].ProbeID == probe.Fingerprint && result.Items[0].Status == "succeeded" && status == "succeeded" {
+		if ip, err := parsePublicEgressIP(result.Items[0].ExitIP); err == nil {
+			exitIP = ip
+			message = "出口 IP 已确认，地区未识别"
+			if s.geoIP != nil {
+				geo, err := s.geoIP.Lookup(ip)
+				if err == nil {
+					region = core.NormalizeRegionCode(geo.CountryCode)
+				}
+			}
+			if region != "" && region != "AQ" {
+				probeStatus, message = "resolved", ""
+			} else {
+				region = ""
+				probeStatus = "incomplete"
+			}
 		}
 	}
-}
-
-func externalCheckTaskFailure(raw string) error {
-	var failure struct {
-		Code  string `json:"code"`
-		Error string `json:"error"`
-	}
-	_ = json.Unmarshal([]byte(raw), &failure)
-	switch failure.Code {
-	case model.NetworkDiagnosticCodeTargetNotAllowed:
-		return errors.New("节点地址解析到私网、回环或保留地址，可用性检测只支持公网节点")
-	case model.NetworkDiagnosticCodeInvalidInput:
-		return errors.New("节点地址无法检测：" + failure.Error)
-	case model.NetworkDiagnosticCodeExpired:
-		return errors.New("服务器忙，检测未能按时开始")
-	case "":
-		return errors.New("检测失败")
-	default:
-		return errors.New("检测失败：" + failure.Error)
-	}
+	return s.store.CompleteExternalOutboundProbe(ctx, probe.ExternalOutboundID, probe.Fingerprint, task.ID, probeStatus, exitIP, region, message)
 }

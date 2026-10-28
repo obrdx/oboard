@@ -74,3 +74,28 @@ func TestGeneratedConfigWithHTTPExitPassesValidation(t *testing.T) {
 		t.Fatalf("http exit missing from generated config: %s", config)
 	}
 }
+
+func TestStandaloneExternalRegionSurvivesLinkingAndInvalidatesOnConfigChange(t *testing.T) {
+	external := model.ExternalOutbound{ID: 2, Protocol: model.ProtocolHTTP, TargetAddress: "1.1.1.1", TargetPort: 8080, ConfigJSON: `{"username":"a","password":"b"}`, Enabled: true, ProbeStatus: "resolved", ProbeExitIP: "8.8.8.8", ProbeRegionCode: "JP"}
+	external.ProbeFingerprint = ExternalOutboundFingerprint(external)
+	_, nodes := ResolveProxyPathExitRegions(nil, nil, nil, nil, []model.ExternalOutbound{external}, nil)
+	if nodes[0].EffectiveRegionCode != "JP" {
+		t.Fatal("unlinked node lost measured region")
+	}
+	inbound := model.Inbound{ID: 10, ServerID: 1, Enabled: true}
+	path := model.ProxyPath{ID: 113, InboundID: 10, Enabled: true}
+	step := model.ProxyPathStep{ID: 1, PathID: 113, Position: 1, NodeType: model.ProxyPathStepImported, ExternalOutboundID: &external.ID}
+	paths, nodes := ResolveProxyPathExitRegions([]model.ProxyPath{path}, []model.ProxyPathStep{step}, []model.Server{{ID: 1}}, []model.Inbound{inbound}, []model.ExternalOutbound{external}, nil)
+	if paths[0].EffectiveExitRegionCode != "JP" || nodes[0].EffectiveRegionCode != "JP" {
+		t.Fatal("link did not reuse measured region")
+	}
+	external.Name = "renamed"
+	if !ExternalOutboundProbeCurrent(external) {
+		t.Fatal("rename invalidated connection probe")
+	}
+	external.ConfigJSON = `{"username":"a","password":"new"}`
+	paths, nodes = ResolveProxyPathExitRegions([]model.ProxyPath{path}, []model.ProxyPathStep{step}, []model.Server{{ID: 1}}, []model.Inbound{inbound}, []model.ExternalOutbound{external}, nil)
+	if nodes[0].RegionStatus != RegionStatusStale || nodes[0].EffectiveRegionCode != "" || paths[0].EffectiveExitRegionCode != "" {
+		t.Fatal("changed credentials retained stale region")
+	}
+}

@@ -977,6 +977,15 @@ table event_outbox
     lease_until TEXT notnull=0 default=- pk=0
     created_at TEXT notnull=1 default=- pk=0
     completed_at TEXT notnull=0 default=- pk=0
+table external_outbound_probe_results
+    external_outbound_id INTEGER notnull=0 default=- pk=1
+    fingerprint TEXT notnull=1 default=- pk=0
+    task_id INTEGER notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    exit_ip TEXT notnull=1 default='' pk=0
+    region_code TEXT notnull=1 default='' pk=0
+    error TEXT notnull=1 default='' pk=0
+    checked_at TEXT notnull=1 default=- pk=0
 table external_outbounds
     id INTEGER notnull=0 default=- pk=1
     server_id INTEGER notnull=0 default=- pk=0
@@ -2032,6 +2041,7 @@ table servers
     kernel_capabilities_json TEXT notnull=1 default='[]' pk=0
     tcp_fastopen_state TEXT notnull=1 default='' pk=0
     tcp_fastopen_value INTEGER notnull=1 default=0 pk=0
+    host_booted_at TEXT notnull=0 default=- pk=0
     connection_audit_enabled INTEGER notnull=1 default=0 pk=0
     display_tags_json TEXT notnull=1 default='[]' pk=0
     last_seen_at TEXT notnull=0 default=- pk=0
@@ -2768,6 +2778,9 @@ trigger routing_rev_access_changes_update on access_changes
 trigger routing_rev_dns_lists_delete on dns_lists
 trigger routing_rev_dns_lists_insert on dns_lists
 trigger routing_rev_dns_lists_update on dns_lists
+trigger routing_rev_external_outbound_probe_results_delete on external_outbound_probe_results
+trigger routing_rev_external_outbound_probe_results_insert on external_outbound_probe_results
+trigger routing_rev_external_outbound_probe_results_update on external_outbound_probe_results
 trigger routing_rev_external_outbounds_delete on external_outbounds
 trigger routing_rev_external_outbounds_insert on external_outbounds
 trigger routing_rev_external_outbounds_update on external_outbounds

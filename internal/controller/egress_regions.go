@@ -172,6 +172,9 @@ func (s *Server) applyExternalEgressTaskResults(ctx context.Context, serverID in
 	if err != nil || plan == nil {
 		return err
 	}
+	if plan.Standalone != nil {
+		return s.applyStandaloneExternalProbe(ctx, task, *plan.Standalone, taskStatus, result)
+	}
 	if len(plan.Targets) == 0 || len(plan.Targets) > maxExternalEgressTargets {
 		return errors.New("invalid external egress probe target count")
 	}

@@ -1488,6 +1488,13 @@ const (
 )
 
 type ExternalOutbound struct {
+	ProbeTaskID         int64                 `json:"-"`
+	ProbeFingerprint    string                `json:"-"`
+	ProbeStatus         string                `json:"-"`
+	ProbeExitIP         string                `json:"-"`
+	ProbeRegionCode     string                `json:"-"`
+	ProbeError          string                `json:"-"`
+	ProbeCheckedAt      *time.Time            `json:"-"`
 	ID                  int64                 `json:"id"`
 	ServerID            *int64                `json:"server_id,omitempty"`
 	Name                string                `json:"name"`
@@ -2251,7 +2258,14 @@ type DeploymentTaskPayload struct {
 	MTUDetection         *MTUDetectionPlan          `json:"mtu_detection,omitempty"`
 }
 
+type ExternalOutboundProbe struct {
+	ExternalOutboundID int64           `json:"external_outbound_id"`
+	Fingerprint        string          `json:"fingerprint"`
+	Outbound           json.RawMessage `json:"outbound"`
+}
+
 type ExternalEgressProbePlan struct {
+	Standalone            *ExternalOutboundProbe      `json:"standalone,omitempty"`
 	Version               int64                       `json:"version"`
 	ExpectedConfigVersion int64                       `json:"expected_config_version,omitempty"`
 	TimeoutMS             int                         `json:"timeout_ms"`

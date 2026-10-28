@@ -4603,6 +4603,21 @@ body:has(.dialog-layer) .main {
 .exit-region-badge.compact .exit-region-emoji { font-size: 13px; }
 .exit-region-probe { width: 32px; min-width: 32px; height: 32px; min-height: 32px; padding: 0; }
 .exit-region-probe .spin { animation: subscription-loading-spin 850ms linear infinite; }
+.dialog.imported-node-dialog { width: min(680px, calc(100vw - 28px)); }
+.imported-node-dialog .dialog-head > div { min-width: 0; }
+.imported-node-dialog .dialog-head p { overflow-wrap: anywhere; }
+.imported-node-body, .imported-node-fields, .imported-node-section { display: grid; gap: 16px; }
+.imported-node-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
+.imported-node-section { min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.imported-node-section h3 { margin: 0; font-size: 14px; }
+.imported-node-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.imported-node-config-input { min-height: 150px; resize: vertical; font-family: var(--font-mono, monospace); }
+.imported-node-dialog .danger-text { overflow-wrap: anywhere; }
+@media (max-width: 540px) {
+  .imported-node-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .imported-node-section { padding: 12px; }
+}
+
 .imported-region-panel { display: grid; gap: 12px; }
 .imported-region-branches { display: grid; gap: 6px; padding-top: 10px; border-top: 1px solid var(--border); }
 .imported-region-branches > div { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; }

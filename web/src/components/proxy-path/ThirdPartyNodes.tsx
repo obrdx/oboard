@@ -9,13 +9,14 @@ import type { ExternalOutbound, Server } from './types'
 
 export type ExternalOutboundCheck = {
   external_outbound_id: number
-  status: 'reachable' | 'unreachable' | 'not_applicable' | 'failed'
+  status: 'reachable' | 'unreachable' | 'failed'
   server_id?: number
   server_name?: string
   target: string
-  resolved_ip?: string
+  exit_ip?: string
+  region_code?: string
+  region_status?: string
   connect_ms?: number
-  error_class?: string
   error?: string
   checked_at: string
 }
@@ -129,7 +130,6 @@ function checkText(check: ExternalOutboundCheck) {
   switch (check.status) {
     case 'reachable': return `可用 · ${Math.round(check.connect_ms || 0)} ms`
     case 'unreachable': return `不可达 · ${check.error || '连接失败'}`
-    case 'not_applicable': return check.error ? `不适用 · ${check.error}` : '不适用'
     default: return check.error ? `检测失败 · ${check.error}` : '检测失败'
   }
 }
@@ -137,8 +137,9 @@ function checkText(check: ExternalOutboundCheck) {
 function CheckBadge({ check, busy }: { check?: ExternalOutboundCheck; busy: boolean }) {
   if (busy) return <span className="third-party-check is-busy">检测中…</span>
   if (!check) return null
-  const title = [check.server_name ? `检测服务器：${check.server_name}` : '', check.resolved_ip ? `解析地址：${check.resolved_ip}` : '', checkText(check)].filter(Boolean).join('\n')
-  return <span className={`third-party-check is-${check.status}`} title={title || undefined}>{checkText(check)}</span>
+  const title = [check.server_name ? `检测服务器：${check.server_name}` : '', check.exit_ip ? `实际出口 IP：${check.exit_ip}` : '', checkText(check)].filter(Boolean).join('\n')
+  const regionText = check.region_code ? `出口 ${check.region_code}` : check.status === 'reachable' ? '出口地区未识别' : ''
+  return <span className={`third-party-check is-${check.status}`} title={title || undefined}>{checkText(check)}{regionText && ` · ${regionText}`}</span>
 }
 
 export function ThirdPartyNodesDialog({
@@ -195,7 +196,7 @@ export function ThirdPartyNodesDialog({
           const isChecking = checking.includes(node.id)
           const scope = node.scope === 'server' && node.server_id ? `仅 ${serverName.get(node.server_id) || `服务器 ${node.server_id}`}` : '全部服务器'
           return <div className="graph-palette-item third-party-item" key={node.id}>
-            <span className="graph-palette-kind imported"><RegionFlag code={node.effective_region_code || node.region_code} size={20} /></span>
+            <span className="graph-palette-kind imported"><RegionFlag code={checks[node.id]?.region_code || node.effective_region_code || node.region_code} size={20} /></span>
             <span className="graph-palette-copy">
               <strong>{node.name || `第三方节点 ${node.id}`}</strong>
               <small>{externalProtocolLabel(node)} · {hostPort(node.target_address, node.target_port)} · {scope}</small>
@@ -210,7 +211,7 @@ export function ThirdPartyNodesDialog({
           </div>
         })}
       </div>}
-      <p className="muted third-party-note">检测由一台可使用该节点的在线服务器发起 TCP 连接，只确认端口可达；代理凭证在部署后由出口探测确认。HY2 等 UDP 协议不适用。</p>
+      <p className="muted third-party-note">检测通过该代理访问 IP 查询服务，验证连接并保存真实出口地区。无需先创建链路，加入链路后直接复用结果；修改连接配置后请重新检测。</p>
     </div>
     <footer className="dialog-actions"><button type="button" className="ghost" onClick={onClose}>完成</button></footer>
   </MotionDialogPanel>

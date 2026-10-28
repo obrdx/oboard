@@ -85,6 +85,7 @@ var routingRevisionTables = []string{
 	"user_plan_bindings",
 	"user_node_exceptions",
 	"proxy_path_egress_results",
+	"external_outbound_probe_results",
 	"proxy_credentials",
 }
 

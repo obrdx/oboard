@@ -11014,6 +11014,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	  try {
 	    const check = await checkThirdPartyNode(client.request, node)
 	    setThirdPartyChecks(current => ({ ...current, [node.id]: check }))
+	    await load()
 	  } catch (e: any) {
 	    setThirdPartyChecks(current => ({ ...current, [node.id]: { external_outbound_id: node.id, status: 'failed', target: `${node.target_address}:${node.target_port}`, error: localizeErrorMessage(e.message || e), checked_at: new Date().toISOString() } }))
 	  } finally {
@@ -11905,7 +11906,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       onClose={() => setThirdPartyOpen(false)}
     />}</AnimatePresence>
     <AnimatePresence>{thirdPartyDraft && <AddThirdPartyNodeDialog draft={thirdPartyDraft} setDraft={setThirdPartyDraft} servers={servers} submitting={thirdPartySubmitting} onCancel={() => setThirdPartyDraft(null)} onSubmit={() => void submitThirdPartyDraft()} />}</AnimatePresence>
-    <AnimatePresence>{configNode && <ImportedNodeConfigDialog node={configNode} data={data} client={client} load={load} onClose={() => setConfigNode(null)} />}</AnimatePresence>
+    <AnimatePresence>{configNode && <ImportedNodeConfigDialog node={configNode} data={data} client={client} load={load} onClose={() => { setThirdPartyChecks(current => { const next = { ...current }; delete next[configNode.id]; return next }); setConfigNode(null) }} />}</AnimatePresence>
 	<AnimatePresence>{namingPath && <ProxyPathNameDialog path={namingPath} data={data} client={client} load={load} onClose={() => setNamingPath(null)} />}</AnimatePresence>
 		<AnimatePresence>{transportRequest && <TransportDialog
 	  target={transportRequest.target}
@@ -13421,63 +13422,77 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
   </MotionDialogPanel>
 }
 
-function ImportedNodeConfigDialog({ node, data, client, load, onClose }: { node: ExternalOutbound; data: any; client: ReturnType<typeof api>; load: () => Promise<void>; onClose: () => void }) {
-  const dialogs = useDialogs()
-	const [regionMode, setRegionMode] = useState<RegionMode>(node.region_mode === 'manual' ? 'manual' : 'auto')
-	const [regionCode, setRegionCode] = useState(node.region_code || node.effective_region_code || 'CN')
-	const [savingRegion, setSavingRegion] = useState(false)
-	const linkedPaths = proxyPathsEndingAtExternal(data, node.id)
-  const raw = safePrettyJSON(node.config_json)
-  const toggleExpose = async () => {
-	await client.request(`/external-outbounds/${node.id}`, { method: 'PATCH', body: JSON.stringify({ expose_to_users: !node.expose_to_users }) })
+export function ImportedNodeConfigDialog({ node, data, client, load, onClose }: { node: ExternalOutbound; data: any; client: ReturnType<typeof api>; load: () => Promise<void>; onClose: () => void }) {
+  const [draft, setDraft] = useState(() => ({
+    name: node.name, protocol: node.protocol, target_address: node.target_address,
+    target_port: node.target_port, config_json: safePrettyJSON(node.config_json),
+    expose_to_users: node.expose_to_users, enabled: node.enabled,
+    region_mode: node.region_mode === 'manual' ? 'manual' as const : 'auto' as const,
+    region_code: node.region_code || node.effective_region_code || 'CN',
+  }))
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const update = (patch: Partial<typeof draft>) => { setDraft(current => ({ ...current, ...patch })); setError('') }
+  const linkedPaths = proxyPathsEndingAtExternal(data, node.id)
+  const linkedPathIDs = new Set(((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.external_outbound_id === node.id).map(step => step.path_id))
+  const close = () => { if (!saving) onClose() }
+  const save = async () => {
+    setError('')
+    let config: unknown
+    try { config = JSON.parse(draft.config_json) } catch { setError('配置必须是有效的 JSON 对象。'); return }
+    if (!config || typeof config !== 'object' || Array.isArray(config)) { setError('配置必须是 JSON 对象。'); return }
+    if (!draft.name.trim() || !draft.target_address.trim() || !Number.isInteger(draft.target_port) || draft.target_port < 1 || draft.target_port > 65535) {
+      setError('请填写名称、目标地址和 1–65535 之间的整数端口。'); return
+    }
+    setSaving(true)
+    try {
+      await client.request(`/external-outbounds/${node.id}`, { method: 'PATCH', body: JSON.stringify({
+        ...draft, name: draft.name.trim(), target_address: draft.target_address.trim(),
+        config_json: JSON.stringify(config), region_code: draft.region_mode === 'manual' ? draft.region_code : '',
+        expose_to_users: draft.protocol === 'http' ? false : draft.expose_to_users,
+      }) })
+    } catch (error: any) {
+      setError(localizeErrorMessage(error.message || error)); setSaving(false); return
+    }
+    try { await load() } catch {
+      setError('配置已保存，但页面刷新失败，请关闭后刷新页面。'); setSaving(false); return
+    }
+    setSaving(false)
     onClose()
   }
-	const saveRegion = async () => {
-	  setSavingRegion(true)
-	  try {
-		await client.request(`/external-outbounds/${node.id}`, { method: 'PATCH', body: JSON.stringify({ region_mode: regionMode, region_code: regionMode === 'manual' ? regionCode : '' }) })
-		onClose()
-	  } catch (error: any) {
-		await dialogs.alert({ title: '保存出口地区失败', message: localizeErrorMessage(error.message || error) })
-	  } finally {
-		setSavingRegion(false)
-	  }
-	}
-  return <MotionDialogPanel onCancel={onClose} className="graph-form-dialog">
-      <header className="dialog-head">
-        <div><h2 id="imported-node-title">{node.name}</h2><p className="muted">{externalProtocolLabel(node)} · {formatHostPort(node.target_address, node.target_port)} · {node.scope === 'server' ? '单服务器可用' : '全部服务器可用'}</p></div>
-        <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
-      </header>
-      <div className="dialog-body">
-        <div className="imported-node-summary">
-          <div><span>协议</span><strong>{externalProtocolLabel(node)}</strong></div>
-          <div><span>地址</span><strong>{formatHostPort(node.target_address, node.target_port)}</strong></div>
-          <div><span>订阅</span><strong>{node.expose_to_users ? '可授权展示' : '默认隐藏'}</strong></div>
-        </div>
-		<div className="compact-panel imported-region-panel">
-		  <div className="section-toolbar"><div><h3>出口地区</h3><p className="muted">自动模式汇总所有使用该节点的分支；分支自己的设置优先。</p></div><button type="button" onClick={() => void saveRegion()} disabled={savingRegion}>{savingRegion ? '保存中...' : '保存地区'}</button></div>
-		  <ExitRegionEditor
-			mode={regionMode}
-			manualCode={regionCode}
-			effectiveCode={node.effective_region_code}
-			status={node.region_status}
-			error={node.region_error}
-			probedAt={node.region_probed_at}
-			servers={data.servers || []}
-			onModeChange={next => { setRegionMode(next); if (next === 'manual' && !normalizeRegionCode(regionCode)) setRegionCode(node.effective_region_code || 'CN') }}
-			onCodeChange={setRegionCode}
-		  />
-		  {regionMode === 'auto' && <div className="imported-region-branches">
-			{linkedPaths.length ? linkedPaths.map(path => <div key={path.id}><span>{path.name || `路径 ${path.id}`}</span><ExitRegionBadge code={path.effective_exit_region_code} status={path.exit_region_status} compact /></div>) : <span className="muted">连接到代理拓扑后会自动探测。</span>}
-		  </div>}
-		</div>
-        <div className="compact-panel">
-          <h3>配置</h3>
-          <p className="muted">列表里默认隐藏密钥；这里用于排查和复制原始配置。</p>
-          <CopyBlock value={raw} />
-        </div>
-      </div>
-      <footer className="dialog-actions"><button className="ghost" onClick={toggleExpose}>{node.expose_to_users ? '从订阅隐藏' : '允许订阅授权'}</button><button onClick={onClose}>完成</button></footer>
+  return <MotionDialogPanel onCancel={close} className="graph-form-dialog imported-node-dialog" aria-labelledby="imported-node-title">
+    <header className="dialog-head">
+      <div><h2 id="imported-node-title">编辑第三方节点</h2><p className="muted">{node.name} · {node.scope === 'server' ? '单服务器可用' : '全部服务器可用'}</p></div>
+      <button type="button" className="ghost dialog-close icon-button" onClick={close} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button>
+    </header>
+    <div className="dialog-body imported-node-body">
+      <p className="muted">{linkedPathIDs.size ? `已被 ${linkedPathIDs.size} 条链路引用。保存后将自动同步到已有链路，并由相关服务器应用新配置。` : '保存后，后续引用此节点的链路将使用新配置。'}</p>
+      <fieldset className="imported-node-fields" disabled={saving} aria-label="节点配置">
+        <section className="imported-node-section">
+          <h3>连接配置</h3>
+          <div className="imported-node-form-grid">
+            <FormField label="名称" required><input aria-label="名称" value={draft.name} onChange={e => update({ name: e.target.value })} /></FormField>
+            <FormField label="协议" required><Select aria-label="协议" value={draft.protocol} onChange={e => update({ protocol: e.target.value as ExternalProtocol })}>{([...externalProtocols, 'http'] as ExternalProtocol[]).map(protocol => <option key={protocol} value={protocol}>{labelProtocol(protocol)}</option>)}</Select></FormField>
+            <FormField label="目标地址" required><input aria-label="目标地址" value={draft.target_address} onChange={e => update({ target_address: e.target.value })} /></FormField>
+            <FormField label="目标端口" required><input aria-label="目标端口" type="number" min={1} max={65535} value={draft.target_port} onChange={e => update({ target_port: Number(e.target.value) })} /></FormField>
+          </div>
+          <FormField label="协议配置（JSON）" hint={draft.protocol === 'http' ? 'HTTP CONNECT 使用 http 协议；HTTPS 通过 tls.enabled 开启。可修改用户名、密码、TLS 等配置。' : '可修改认证信息及协议参数；保存前会校验配置。'}>
+            <textarea aria-label="协议配置（JSON）" className="imported-node-config-input" spellCheck={false} rows={7} value={draft.config_json} onChange={e => update({ config_json: e.target.value })} />
+          </FormField>
+          <FormField label="状态"><Select aria-label="状态" variant="segmented" value={String(draft.enabled)} onChange={e => update({ enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select></FormField>
+          {draft.protocol === 'http' ? <p className="muted">HTTP / HTTPS 节点仅用于链路出站，不直接加入订阅。</p> : <FormField label="订阅展示"><Select aria-label="订阅展示" variant="segmented" value={String(draft.expose_to_users)} onChange={e => update({ expose_to_users: e.target.value === 'true' })}><option value="false">默认隐藏</option><option value="true">允许订阅授权</option></Select></FormField>}
+        </section>
+        <section className="imported-node-section imported-region-panel">
+          <div><h3>出口地区</h3><p className="muted">自动模式使用节点可用性检测确认的出口地区；分支手动设置优先。</p></div>
+          <ExitRegionEditor mode={draft.region_mode} manualCode={draft.region_code} effectiveCode={node.effective_region_code} status={node.region_status} error={node.region_error} probedAt={node.region_probed_at} servers={data.servers || []} onModeChange={region_mode => update({ region_mode })} onCodeChange={region_code => update({ region_code })} />
+          {draft.region_mode === 'auto' && <div className="imported-region-branches">
+            {linkedPaths.length ? linkedPaths.map(path => <div key={path.id}><span title={path.name}>{path.name || `路径 ${path.id}`}</span><ExitRegionBadge code={path.effective_exit_region_code} status={path.exit_region_status} compact /></div>) : <span className="muted">在第三方节点列表点击“检测可用性”即可识别出口地区。</span>}
+          </div>}
+        </section>
+      </fieldset>
+      {error && <p className="danger-text" role="alert">{error}</p>}
+    </div>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={close} disabled={saving}>取消</button><button type="button" onClick={() => void save()} disabled={saving}>{saving ? '保存中…' : '保存并同步'}</button></footer>
   </MotionDialogPanel>
 }
 
@@ -16404,6 +16419,7 @@ function RoutingRules({ data, client, load }: any) {
 
 function ExternalOutbounds({ data, client, load }: any) {
   const dialogs = useDialogs()
+  const [editingNode, setEditingNode] = useState<ExternalOutbound | null>(null)
   const [f, setF] = useState({ server_id: 0, name: 'imported-node', protocol: 'vless' as ExternalProtocol, scope: 'global', target_address: '', target_port: 443, config_json: '{}', expose_to_users: false, enabled: true })
   const [content, setContent] = useState('socks5://user:password@example.com:1080#SOCKS-A')
   const payload = () => ({ ...f, server_id: f.scope === 'server' && f.server_id ? f.server_id : undefined })
@@ -16437,7 +16453,8 @@ function ExternalOutbounds({ data, client, load }: any) {
     <h3>导入链接 / JSON</h3>
     <textarea value={content} onChange={e => setContent(e.target.value)} rows={6} />
     <button onClick={async () => { await client.request('/external-outbounds/import', { method: 'POST', body: JSON.stringify(importPayload()) }) }}>导入</button>
-    <Table rows={(data.external_outbounds || []).map((x: ExternalOutbound) => ({ id: x.id, name: x.name, protocol: x.protocol, scope: x.scope, target_address: x.target_address, target_port: x.target_port, expose_to_users: x.expose_to_users, enabled: x.enabled, _raw: x }))} actions={(r: any) => <><button onClick={() => dialogs.alert({ title: r.name, message: <CopyBlock value={safePrettyJSON(r._raw.config_json)} /> })}>查看配置</button><button onClick={() => remove(client, `/external-outbounds/${r.id}`, load, dialogs, r)}>删除</button></>} />
+    <Table rows={(data.external_outbounds || []).map((x: ExternalOutbound) => ({ id: x.id, name: x.name, protocol: x.protocol, scope: x.scope, target_address: x.target_address, target_port: x.target_port, expose_to_users: x.expose_to_users, enabled: x.enabled, _raw: x }))} actions={(r: any) => <><button onClick={() => setEditingNode(r._raw)}>编辑配置</button><button onClick={() => remove(client, `/external-outbounds/${r.id}`, load, dialogs, r)}>删除</button></>} />
+    <AnimatePresence>{editingNode && <ImportedNodeConfigDialog key={editingNode.id} node={editingNode} data={data} client={client} load={load} onClose={() => setEditingNode(null)} />}</AnimatePresence>
   </Panel>
 }
 

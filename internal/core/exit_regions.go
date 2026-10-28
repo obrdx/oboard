@@ -308,6 +308,21 @@ func ResolveProxyPathExitRegions(paths []model.ProxyPath, steps []model.ProxyPat
 					}
 				}
 			}
+			if terminal.ExternalOutboundID != nil {
+				external := externalByID[*terminal.ExternalOutboundID]
+				if external.ProbeFingerprint != "" {
+					path.ExitRegionSource = RegionSourceProbe
+					if ExternalOutboundProbeCurrent(external) {
+						path.ExitRegionStatus, path.ExitRegionError, path.ExitRegionProbedAt = external.ProbeStatus, external.ProbeError, external.ProbeCheckedAt
+						path.DetectedExitRegionCode, path.EffectiveExitRegionCode = external.ProbeRegionCode, external.ProbeRegionCode
+					} else {
+						path.DetectedExitRegionCode, path.EffectiveExitRegionCode = "", ""
+						path.ExitRegionStatus = RegionStatusStale
+						path.ExitRegionError = "节点配置已修改，请重新检测可用性"
+					}
+					continue
+				}
+			}
 			target, targetOK := targetByPath[path.ID]
 			result, resultOK := resultByPath[path.ID]
 			if targetOK {
@@ -383,6 +398,18 @@ func ResolveProxyPathExitRegions(paths []model.ProxyPath, steps []model.ProxyPat
 		}
 		external.RegionMode = "auto"
 		external.RegionCode = ""
+		if external.ProbeFingerprint != "" {
+			external.RegionSource = RegionSourceProbe
+			if ExternalOutboundProbeCurrent(*external) {
+				external.RegionStatus, external.RegionError, external.RegionProbedAt = external.ProbeStatus, external.ProbeError, external.ProbeCheckedAt
+				external.DetectedRegionCode, external.EffectiveRegionCode = external.ProbeRegionCode, external.ProbeRegionCode
+			} else {
+				external.DetectedRegionCode, external.EffectiveRegionCode = "", ""
+				external.RegionStatus = RegionStatusStale
+				external.RegionError = "节点配置已修改，请重新检测可用性"
+			}
+			continue
+		}
 		linked := pathsByExternal[external.ID]
 		if len(linked) == 0 {
 			external.RegionSource = RegionSourceUnresolved

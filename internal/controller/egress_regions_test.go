@@ -60,7 +60,7 @@ func newExternalEgressControllerFixture(t *testing.T) externalEgressControllerFi
 	return externalEgressControllerFixture{db: db, server: server, inbound: inbound, external: external, path: path, step: step, srv: newTestServer(db, "test-secret", "")}
 }
 
-func TestFullDeploymentAddsExternalEgressPlanAndManualProbeReusesActiveTask(t *testing.T) {
+func TestDeploymentSkipsAutomaticExternalProbeAndManualProbeReusesActiveTask(t *testing.T) {
 	fixture := newExternalEgressControllerFixture(t)
 	handler := fixture.srv.Handler()
 	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
@@ -76,15 +76,8 @@ func TestFullDeploymentAddsExternalEgressPlanAndManualProbeReusesActiveTask(t *t
 	if err := json.Unmarshal([]byte(taskMap["payload_json"].(string)), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.ExternalEgressProbe == nil || len(payload.ExternalEgressProbe.Targets) != 1 {
-		t.Fatalf("deployment egress probe = %#v", payload.ExternalEgressProbe)
-	}
-	target := payload.ExternalEgressProbe.Targets[0]
-	if target.PathID != fixture.path.ID || target.ExternalOutboundID != fixture.external.ID || target.OwnerServerID != fixture.server.ID || target.OutboundTag != "path-"+strconv.FormatInt(fixture.path.ID, 10)+"-step-1" {
-		t.Fatalf("deployment egress target = %#v", target)
-	}
-	if payload.ExternalEgressProbe.ExpectedConfigVersion != int64(deployment["config_version"].(float64)) {
-		t.Fatalf("egress config version = %d, deployment = %v", payload.ExternalEgressProbe.ExpectedConfigVersion, deployment["config_version"])
+	if payload.ExternalEgressProbe != nil {
+		t.Fatal("linking a third-party node must not repeat its availability probe")
 	}
 
 	deployedDigest, err := core.SemanticConfigDigest(payload.Config.Config)

@@ -13433,32 +13433,7 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 	} else if expandTransparentScope && effectiveScope != 0 && groupedServers[effectiveScope] {
 		effectiveScope = 0
 	}
-	externalEgressTargetsByServer := map[int64][]model.ExternalEgressProbeTarget{}
-	if effectiveScope == 0 {
-		targets := core.ExternalEgressProbeTargets(data.ProxyPaths, data.ProxyPathSteps, servers, in, data.ExternalOutbounds)
-		if len(targets) > maxExternalEgressTargets {
-			return nil, 0, deploymentFail(http.StatusBadRequest, fmt.Errorf("第三方出口探测分支过多，单次最多支持 %d 个", maxExternalEgressTargets))
-		}
-		for _, target := range targets {
-			if allowedServerIDs != nil && !allowedServerIDs[target.OwnerServerID] {
-				continue
-			}
-			externalEgressTargetsByServer[target.OwnerServerID] = append(externalEgressTargetsByServer[target.OwnerServerID], target)
-		}
-		for serverID, targets := range externalEgressTargetsByServer {
-			if len(targets) == 0 {
-				continue
-			}
-			server, ok := serverByID(servers, serverID)
-			if !ok || !agentBuildSupportsTask(server.AgentBuild, agentBuildMinExternalEgress) {
-				name := fmt.Sprintf("#%d", serverID)
-				if ok {
-					name = server.Name
-				}
-				return nil, 0, serverDeploymentFail(serverID, http.StatusConflict, fmt.Errorf("服务器 %s 的 Agent 不支持第三方节点出口探测；请先更新 Agent", name))
-			}
-		}
-	}
+
 	warpServerIDs, err := core.ProxyPathWARPServerIDs(data.ProxyPaths, data.ProxyPathSteps, in)
 	if err != nil {
 		return nil, 0, deploymentFail(400, err)
@@ -13659,10 +13634,7 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 			return nil, 0, deploymentFail(500, err)
 		}
 		timePlan := model.TimeCheckPlan{Version: version, CorrectionMode: server.TimeCorrectionMode, ThresholdSeconds: timeCheckThresholdSeconds, NTPServers: timeCheckNTPServers(settings), Force: true}
-		var externalEgressProbe *model.ExternalEgressProbePlan
-		if targets := externalEgressTargetsByServer[server.ID]; len(targets) > 0 {
-			externalEgressProbe = &model.ExternalEgressProbePlan{Version: version, ExpectedConfigVersion: version, TimeoutMS: externalEgressTimeoutMS, Targets: targets}
-		}
+
 		payload := model.DeploymentTaskPayload{
 			Version:              version,
 			Config:               model.ApplyCoreConfigTaskPayload{Config: cfg, Assets: managedAssets},
@@ -13675,7 +13647,6 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 			InboundProbe:         inboundProbe,
 			ExternalInboundProbe: externalInboundProbe,
 			PortForwardProbe:     forwardProbe,
-			ExternalEgressProbe:  externalEgressProbe,
 			Tunnels:              tunnelPlan,
 			SSHInbounds:          sshInboundPlan,
 			DNSBenchmark:         dnsPlan,
