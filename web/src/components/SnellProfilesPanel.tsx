@@ -75,7 +75,6 @@ export function SnellProfileCards({ profiles, editingID, onEdit, onDelete, busy 
 }
 
 export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, saving, hideTitle }: { title: string; draft: SnellDraft; setDraft: (draft: SnellDraft) => void; onSave: () => void; onCancel: () => void; saving: boolean; hideTitle?: boolean }) {
-  const [showPSK, setShowPSK] = useState(false)
   const isV6 = Number(draft.version) === 6
   return <div className={`snell-profile-editor${hideTitle ? ' is-dialog' : ''}`}>
     {!hideTitle && <h4>{title}</h4>}
@@ -88,11 +87,8 @@ export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, s
           {versions.map(version => <option key={version} value={String(version)}>v{version}</option>)}
         </Select>
       </SettingsRow>
-      <SettingsRow label="PSK" description={isV6 ? 'v6 要求 12-255 字节。留空时入口会使用绑定用户的代理密码。' : '至少 8 字符。留空时入口会使用绑定用户的代理密码。'}>
-        <div className="settings-secret-field">
-          <input aria-label="PSK" type={showPSK ? 'text' : 'password'} value={draft.psk} onChange={event => setDraft({ ...draft, psk: event.target.value })} placeholder="留空 = 使用用户密码" autoComplete="new-password" spellCheck={false} />
-          <button type="button" className="ghost" aria-label={showPSK ? '隐藏 PSK' : '显示 PSK'} aria-pressed={showPSK} onClick={() => setShowPSK(value => !value)}>{showPSK ? '隐藏' : '显示'}</button>
-        </div>
+      <SettingsRow label="身份认证" description="入口为每个授权身份使用独立 PSK；预设只控制传输参数，不改变用户凭据或保证抗 DPI 效果。">
+        <span>独立 PSK</span>
       </SettingsRow>
       {!isV6 && <>
         <SettingsRow label="混淆模式" description="HTTP 混淆；Host 留空时客户端使用默认 bing.com。">

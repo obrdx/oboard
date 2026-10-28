@@ -89,17 +89,15 @@ describe('node and Snell preset settings', () => {
     expect(request).toHaveBeenCalledWith('/node-presets/restore-system', { method: 'POST', body: '{}' })
   })
 
-  it('keeps referenced Snell profiles undeletable and masks PSK without changing its payload', async () => {
+  it('keeps referenced Snell profiles undeletable and preserves stored PSK without offering an ineffective control', async () => {
     const profile = { ...emptySnellDraft(6), id: 2, name: 'Snell v6', psk: 'test-profile-psk', builtin: false, usage_count: 3 }
     const request = vi.fn(async () => ({}))
     await render(<SnellProfilesPanel data={{ snell_profiles: [profile] }} client={{ request }} load={load} notify={notify} />)
     expect(host.textContent).not.toContain(profile.psk)
     expect(button('删除 Snell v6').disabled).toBe(true)
     await click('编辑 Snell v6')
-    const psk = document.querySelector<HTMLInputElement>('[aria-label="PSK"]')!
-    expect(psk.type).toBe('password')
-    await click('显示 PSK')
-    expect(psk.type).toBe('text')
+    expect(document.querySelector('[aria-label="PSK"]')).toBeNull()
+    expect(document.body.textContent).toContain('独立 PSK')
     expect(document.querySelector('[aria-label="混淆模式"]')).toBeNull()
     expect(document.querySelector('[aria-label="v6 传输模式"]')).not.toBeNull()
     await click('保存预设')
