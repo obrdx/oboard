@@ -113,8 +113,39 @@ describe('ProxyOverview canvas behavior', () => {
     expect(document.body.textContent).not.toContain('预览切换')
     expect(document.querySelector('[aria-describedby="snell-mode-status"]')).toBeNull()
     await act(async () => button('保存').click())
-    expect(request.mock.calls.map(call => (call as any[])[0])).toEqual(['/inbounds/10'])
+    expect(request.mock.calls.filter(call => (call as any[])[1]?.method === 'PATCH').map(call => (call as any[])[0])).toEqual(['/inbounds/10'])
     expect(alert).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { name: 'old public port', mode: 'controller_external', endpoint: '203.0.113.1:32001', version: 12, status: '等待端口探测' },
+    { name: 'old local port', mode: 'agent_listener', endpoint: '127.0.0.1:32001', version: 12, status: '等待端口探测' },
+    { name: 'old public address', mode: 'controller_external', endpoint: '203.0.113.9:443', version: 12, status: '等待端口探测' },
+    { name: 'old configuration', mode: 'controller_external', endpoint: '203.0.113.1:443', version: 11, status: '等待端口探测' },
+    { name: 'current public failure', mode: 'controller_external', endpoint: '203.0.113.1:443', version: 12, status: '公网端口异常' },
+    { name: 'current local failure', mode: 'agent_listener', endpoint: '127.0.0.1:6160', version: 12, status: '本机监听异常' },
+  ])('shows Snell endpoint and checks $name', async ({ mode, endpoint, version, status }) => {
+    const inbound = { ...inbounds[0], protocol: 'snell', port: 6160, advertise_port: 443, snell_config_version: 12 } as Inbound
+    await render(1, { ...data, inbounds: [inbound], inbound_probes: [{
+      inbound_id: inbound.id, config_version: version, mode, endpoint, available: false, confirmed: true,
+      sample_count: 5, success_count: 0, transport: 'tcp', created_at: '2026-10-28T00:00:00Z',
+    }] } as any)
+    const details = nodes().find(node => node.id === 'entry-10')!.data.label.props.entryDetails
+    expect(details.address).toBe('203.0.113.1:443（监听 6160）')
+    expect(details.probe).toBe(status)
+  })
+
+  it('does not let retired Snell ports override a successful current probe', async () => {
+    const inbound = { ...inbounds[0], protocol: 'snell', port: 6160 } as Inbound
+    const probe = { inbound_id: inbound.id, config_version: 12, mode: 'controller_external', confirmed: true,
+      sample_count: 5, success_count: 5, transport: 'tcp', created_at: '2026-10-28T00:00:00Z' }
+    await render(1, { ...data, inbounds: [inbound], inbound_probes: [
+      { ...probe, endpoint: '203.0.113.1:32001', available: false, success_count: 0 },
+      { ...probe, endpoint: '203.0.113.1:6160', available: true },
+    ] } as any)
+    const details = nodes().find(node => node.id === 'entry-10')!.data.label.props.entryDetails
+    expect(details.address).toBe('203.0.113.1:6160')
+    expect(details.probe).toBe('入口端口正常')
   })
 
   it('offers create actions from a right click on the empty canvas and on a server node', async () => {

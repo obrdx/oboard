@@ -13522,9 +13522,6 @@ function formatInboundDisplayEndpoint(data: any, inbound: any): string {
   const displayPort = inboundDisplayPort(inbound)
   const listenPort = inboundListenPort(inbound)
   const records = String(inbound?.dns_record_types || '').toLowerCase()
-  if (inbound?.protocol === 'snell') {
-    return inbound.snell_active_mode === 'shared_port' && inbound.snell_active_port === inbound.port ? formatHostPort(addr, displayPort) : '共享端口等待运行确认'
-  }
   const base = formatHostPort(addr, displayPort)
   const hostLabel = inbound?.dns_sync_enabled && inbound?.dns_domain && records && records !== 'auto'
     ? `${base} (${records})`
@@ -14072,7 +14069,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             {protocol !== 'ssh' && protocol !== 'anytls' && <InboundNodePresetPicker presetID={presetID} config={cfg} updateConfig={updateConfig} nodePresets={data.node_presets || []} />}
             {protocol === 'ssh' && <div className="access-note warning"><strong>SSH 暴露确认</strong><span>使用代理密码认证，仅允许本地/动态转发；不提供 shell、SFTP、远程转发或主机账户。保存时仍需再次确认。</span></div>}
             {protocol !== 'ssh' && inboundPresetHasFields(presetID) && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} showTLSServerName={!certificateRequired} onRotateRealityKey={() => update({ __rotate_reality_key: true })} realityKeyRotationPending={Boolean(draft.__rotate_reality_key)} createMode={mode === 'create'} mieruUDPAllowed={!server || !server.udp_inbound_mode || server.udp_inbound_mode === 'allow'} snellProfiles={data.snell_profiles || []} nodePresets={data.node_presets || []} />}
-            {protocol === 'snell' && <p id="snell-mode-status" className="field-hint">Snell v{Number(cfg.version || 4)} · {snellReady ? '共享端口，每个授权身份独立 PSK，最多 64 个' : '共享端口等待 Agent / 内核升级'} · {(server as any)?.users_confirmed ? '凭据已确认' : '等待凭据同步'} · {(server as any)?.authorization_confirmed ? '授权已确认' : '等待授权确认'}</p>}
+            {protocol === 'snell' && <p id="snell-mode-status" className="field-hint">Snell v{Number(cfg.version || 4)} · {snellReady ? '每个授权身份使用独立 PSK，最多 64 个' : '请升级 Agent / 内核以支持多用户认证'} · {(server as any)?.users_confirmed ? '凭据已确认' : '等待凭据同步'} · {(server as any)?.authorization_confirmed ? '授权已确认' : '等待授权确认'}</p>}
             {protocol === 'snell' && cfg.mode === 'unsafe-raw' && <p role="alert" className="field-hint warning-text">unsafe-raw 没有 PSK 加密认证，禁止用于 Snell 入口。</p>}
           </EntryEditorSection>
 
@@ -14624,7 +14621,15 @@ function inboundAccessSummary(data: any, entry: Inbound) {
 }
 
 function latestInboundProbeSummary(data: any, inboundID: number) {
-  const probes: InboundProbeResult[] = (data.inbound_probes || []).filter((x: InboundProbeResult) => x.inbound_id === inboundID)
+  const inbound = (data.inbounds || []).find((item: Inbound) => item.id === inboundID)
+  const probes: InboundProbeResult[] = (data.inbound_probes || []).filter((probe: InboundProbeResult) => {
+    if (probe.inbound_id !== inboundID) return false
+    if (inbound?.protocol !== 'snell') return true
+    if (probe.config_version < Number(inbound.snell_config_version || 0)) return false
+    if (probe.mode === 'agent_listener') return probe.endpoint.endsWith(`:${inboundListenPort(inbound)}`)
+    if (probe.mode.startsWith('controller_external')) return probe.endpoint === formatHostPort(inboundEntryAddress(data, inbound), inboundDisplayPort(inbound))
+    return false
+  })
   if (!probes.length) return { tone: 'pending', label: '等待端口探测', detail: '下发后自动检测', probe: undefined }
   const latestVersion = Math.max(...probes.map(probe => Number(probe.config_version || 0)))
   const current = probes.filter(probe => Number(probe.config_version || 0) === latestVersion)
