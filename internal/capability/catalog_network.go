@@ -78,18 +78,28 @@ func networkDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		"auto_test":             map[string]any{"type": "string", "enum": []string{"never", "first_apply", "periodic"}},
 		"test_interval_seconds": map[string]any{"type": "integer", "minimum": 60},
 	})
+	snellShaping := closedObject(map[string]any{
+		"padding_style": map[string]any{"type": "string", "enum": []string{"bit_biased", "utf8_like", "bcd_like", "motif"}, "description": "填充字节风格；对应 v6 由 PSK 派生的填充生成器"},
+		"max_padding":   map[string]any{"type": "integer", "minimum": 0, "maximum": 730, "description": "单条记录随机填充上限 pad_max，0 表示不限制，否则 184-730"},
+		"first_record_density": closedObject(map[string]any{
+			"mode": map[string]any{"type": "string", "enum": []string{"inside", "outside"}},
+			"min":  map[string]any{"type": "number", "minimum": 0, "maximum": 1},
+			"max":  map[string]any{"type": "number", "minimum": 0, "maximum": 1},
+		}, "mode", "min", "max"),
+	})
+	snellShaping["description"] = "仅 v6 且 mode=default。整形参数由 PSK 派生，主控据此为每个授权身份挑选满足策略的 PSK，内核与客户端无需额外参数；修改策略会轮换不满足新策略的身份 PSK，客户端需更新订阅。first_record_density 按所有请求大小计算首记录 1 位占比的期望值，inside 要求落在 [min,max]，outside 要求避开该区间。接受率低于 1/4000 的组合以 snell_shaping_infeasible 拒绝"
 	snellProfile := closedObject(map[string]any{
 		"id": positiveID, "name": stringValue, "version": map[string]any{"type": "integer", "enum": []int{4, 6}},
 		"psk": stringValue, "obfs_mode": map[string]any{"type": "string", "enum": []string{"none", "http"}},
-		"obfs_host": stringValue, "mode": map[string]any{"type": "string", "enum": []string{"default", "unshaped", "unsafe-raw"}},
-		"reuse": boolValue, "tcp_fast_open": boolValue, "remark": stringValue, "builtin": boolValue, "enabled": boolValue,
+		"obfs_host": stringValue, "mode": map[string]any{"type": "string", "enum": []string{"default", "unshaped"}},
+		"reuse": boolValue, "tcp_fast_open": boolValue, "shaping": snellShaping, "remark": stringValue, "builtin": boolValue, "enabled": boolValue,
 		"usage_count": map[string]any{"type": "integer"},
 	})
 	snellProfileFields := closedObject(map[string]any{
 		"name": stringValue, "version": map[string]any{"type": "integer", "enum": []int{4, 6}},
 		"psk": stringValue, "obfs_mode": map[string]any{"type": "string", "enum": []string{"none", "http"}},
-		"obfs_host": stringValue, "mode": map[string]any{"type": "string", "enum": []string{"default", "unshaped", "unsafe-raw"}},
-		"reuse": boolValue, "tcp_fast_open": boolValue, "remark": stringValue, "enabled": boolValue,
+		"obfs_host": stringValue, "mode": map[string]any{"type": "string", "enum": []string{"default", "unshaped"}},
+		"reuse": boolValue, "tcp_fast_open": boolValue, "shaping": snellShaping, "remark": stringValue, "enabled": boolValue,
 	}, "name", "version", "psk")
 	nodePresetKinds := []string{"vless-reality", "vless-ws", "vless-tcp", "hy2-tls", "hy2-salamander", "anytls-basic", "anytls-large-padding", "ss-aes-128-gcm", "ss-aes-256-gcm", "ss-2022-128", "ss-2022-256", "mieru-basic", "socks5-auth"}
 	nodePreset := closedObject(map[string]any{

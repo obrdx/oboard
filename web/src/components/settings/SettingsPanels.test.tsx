@@ -104,6 +104,22 @@ describe('node and Snell preset settings', () => {
     expect(request).toHaveBeenCalledWith('/snell-profiles/2', { method: 'PUT', body: JSON.stringify(emptyPayload(profile)) })
     expect(notify).toHaveBeenCalledWith('预设已更新，引用入口将在下次部署时生效', 'success')
   })
+
+  it('edits a v6 shaping policy, keeps the max padding typed and never offers unsafe-raw', async () => {
+    const profile = { ...emptySnellDraft(6), id: 3, name: 'Snell v6 shaped', builtin: false, usage_count: 0 }
+    const request = vi.fn(async () => ({}))
+    await render(<SnellProfilesPanel data={{ snell_profiles: [profile] }} client={{ request }} load={load} notify={notify} />)
+    await click('编辑 Snell v6 shaped')
+    expect(document.body.textContent).not.toContain('unsafe-raw')
+    await click('DPI 避让推荐')
+    expect((document.querySelector('[aria-label="密度区间下限"]') as HTMLInputElement).value).toBe('0.36')
+    await fill('单记录填充上限', '400')
+    expect((document.querySelector('[aria-label="单记录填充上限"]') as HTMLInputElement).value).toBe('400')
+    await click('保存预设')
+    const [path, options] = request.mock.calls[0] as unknown as [string, { method: string; body: string }]
+    expect(path).toBe('/snell-profiles/3')
+    expect(JSON.parse(options.body)).toEqual({ ...emptyPayload(profile), shaping: { max_padding: 400, first_record_density: { mode: 'outside', min: 0.36, max: 0.65 } } })
+  })
 })
 function emptyPayload(profile: ReturnType<typeof emptySnellDraft> & { id: number; builtin: boolean; usage_count: number }) {
   const { id, builtin, usage_count, ...draft } = profile

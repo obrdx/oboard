@@ -313,7 +313,13 @@ func mapInboundError(err error) []formValidationError {
 	code := "validation_failed"
 	path := ""
 	// Map known Snell errors to codes
-	if strings.Contains(msg, "unsupported snell version") {
+	if strings.Contains(msg, "snell_shaping_infeasible") {
+		code = "snell_shaping_infeasible"
+		path = "config_json.shaping"
+	} else if strings.Contains(msg, "snell shaping") {
+		code = "invalid_snell_shaping"
+		path = "config_json.shaping"
+	} else if strings.Contains(msg, "unsupported snell version") {
 		code = "invalid_snell_version"
 		path = "config_json.version"
 	} else if strings.Contains(msg, "managed_field") {

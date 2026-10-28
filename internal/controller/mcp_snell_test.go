@@ -3,9 +3,11 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/automation"
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 )
 
@@ -45,5 +47,58 @@ func TestSnellProfileAutomationLifecycle(t *testing.T) {
 	applyAutomationChangeset(t, server, adminPrincipal, "snell-profile-delete", automation.OperationRequest{Capability: "snell_profiles.delete", Input: deleteInput})
 	if _, err := db.GetSnellProfile(ctx, profile.ID); err == nil {
 		t.Fatal("profile not deleted")
+	}
+}
+
+func TestSnellProfileShapingLifecycle(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	admin := &model.User{Username: "root", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "22222222-2222-4222-8222-222222222222", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	adminPrincipal := userAutomationPrincipal(t, db, admin.ID)
+	createInput := json.RawMessage(`{"snell_profile":{"name":"v6 避让","version":6,"psk":"","mode":"default","enabled":true,"shaping":{"first_record_density":{"mode":"outside","min":0.36,"max":0.65}}}}`)
+	applyAutomationChangeset(t, server, adminPrincipal, "snell-profile-shaping", automation.OperationRequest{Capability: "snell_profiles.create", Input: createInput})
+	profiles, err := db.ListSnellProfiles(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var profile *model.SnellProfile
+	for index := range profiles {
+		if profiles[index].Name == "v6 避让" {
+			profile = &profiles[index]
+		}
+	}
+	want := model.SnellShapingPolicy{FirstRecordDensity: model.SnellDensityBand{Mode: "outside", Min: 0.36, Max: 0.65}}
+	if profile == nil || profile.Shaping != want {
+		t.Fatalf("shaping not stored: %#v", profile)
+	}
+
+	inbound := model.Inbound{Protocol: model.ProtocolSnell, ConfigJSON: fmt.Sprintf(`{"version":6,"snell_profile_id":%d}`, profile.ID)}
+	if err := server.resolveSnellProfileIntoInbound(ctx, &inbound); err != nil {
+		t.Fatal(err)
+	}
+	if got := core.InboundSnellShaping(inbound); got != want {
+		t.Fatalf("inbound did not inherit shaping: %s", inbound.ConfigJSON)
+	}
+	inbound.ConfigJSON = fmt.Sprintf(`{"version":6,"snell_profile_id":%d,"shaping":{"padding_style":"bit_biased"}}`, profile.ID)
+	if err := server.resolveSnellProfileIntoInbound(ctx, &inbound); err != nil {
+		t.Fatal(err)
+	}
+	if got := core.InboundSnellShaping(inbound); got != (model.SnellShapingPolicy{PaddingStyle: "bit_biased"}) {
+		t.Fatalf("inbound shaping was overridden by the profile: %s", inbound.ConfigJSON)
+	}
+
+	for name, candidate := range map[string]model.SnellProfile{
+		"unsafe-raw": {Name: "raw", Version: 6, Mode: "unsafe-raw"},
+		"v4":         {Name: "v4", Version: 4, Shaping: want},
+		"unshaped":   {Name: "unshaped", Version: 6, Mode: "unshaped", Shaping: want},
+		"infeasible": {Name: "strict", Version: 6, Shaping: model.SnellShapingPolicy{PaddingStyle: "utf8_like", FirstRecordDensity: model.SnellDensityBand{Mode: "outside", Min: 0.425, Max: 0.573}}},
+	} {
+		if err := validateSnellProfile(candidate); err == nil {
+			t.Fatalf("%s profile accepted", name)
+		}
 	}
 }

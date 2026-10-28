@@ -2100,6 +2100,7 @@ table snell_profiles
     mode TEXT notnull=1 default='default' pk=0
     reuse INTEGER notnull=1 default=0 pk=0
     tcp_fast_open INTEGER notnull=1 default=1 pk=0
+    shaping_json TEXT notnull=1 default='' pk=0
     remark TEXT notnull=1 default='' pk=0
     builtin INTEGER notnull=1 default=0 pk=0
     enabled INTEGER notnull=1 default=1 pk=0

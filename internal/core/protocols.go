@@ -4380,6 +4380,9 @@ func validateSnellOptions(extra map[string]any, side transportSide) error {
 	if _, err := normalizeSnellV6Mode(stringValue(extra, "mode", "default")); err != nil {
 		return err
 	}
+	if err := validateSnellShaping(extra, version, side); err != nil {
+		return err
+	}
 	if raw, exists := extra["reuse"]; exists {
 		if _, ok := raw.(bool); !ok {
 			return errors.New("snell reuse must be boolean")

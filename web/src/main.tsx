@@ -10,6 +10,7 @@ import { Panel } from './shared/Panel'
 import { cell, formatTableTime, labelValue, formatBytes, formatDate, timeCorrectionModeLabel } from './shared/presentation'
 import { parseJSONLoose } from './shared/parse-json'
 import { MatrixLogoLoader } from './components/MatrixLogoLoader'
+import { SnellShapingFields, normalizeSnellShaping, type SnellShapingPolicy } from './components/SnellShapingFields'
 import { userAccountDisplay, userPlanDisplay, userUsageDisplay } from './components/users/user-display'
 import { useUserAction } from './components/users/useUserAction'
 import { connectivityLatencyLabel, serverMonitoring } from './server-monitoring'
@@ -14465,6 +14466,7 @@ function SnellPresetFields({ config, updateConfig, version, snellProfiles }: { c
       mode: profile.mode && profile.mode !== 'default' ? profile.mode : undefined,
       reuse: profile.reuse || undefined,
       tcp_fast_open: profile.tcp_fast_open || undefined,
+      shaping: profile.version === 6 ? normalizeSnellShaping(profile.shaping) : undefined,
     })
   }
   if (version === 4) return <div className={`preset-fields${snellPresetActive ? ' is-preset' : ''}`}>
@@ -14478,7 +14480,8 @@ function SnellPresetFields({ config, updateConfig, version, snellProfiles }: { c
     <div className="form-section-title"><Key size={14} aria-hidden="true" />Snell v6 设置</div>
     <div className="access-note compact"><strong>v6 说明</strong><span>v6 不支持混淆；订阅输出仅 Surge / sing-box 支持，mihomo 等客户端暂不支持 v6。</span></div>
     {profiles.length > 0 && <FormField label="套用参数预设" hint="多个服务器入口可共享同一套参数；修改预设后需重新部署"><Select value={currentID || ''} onChange={event => applyProfile(Number(event.target.value))}><option value="">不使用预设</option>{profiles.map(p => <option key={p.id} value={p.id}>{p.name}{p.usage_count > 0 ? `（${p.usage_count} 个入口）` : ''}</option>)}</Select></FormField>}
-    <FormField label="传输模式" className={snellFieldClass} hint={snellHint || undefined}><Select value={String(config.mode || 'default')} onChange={event => updateConfig({ mode: event.target.value })}><option value="default">默认</option><option value="unshaped">无整形</option><option value="unsafe-raw">unsafe-raw</option></Select></FormField>
+    <FormField label="传输模式" className={snellFieldClass} hint={snellHint || undefined}><Select value={String(config.mode || 'default')} onChange={event => updateConfig({ mode: event.target.value, shaping: event.target.value === 'default' ? config.shaping : undefined })}><option value="default">默认</option><option value="unshaped">无整形</option></Select></FormField>
+    {String(config.mode || 'default') === 'default' && <SnellShapingFields value={config.shaping} onChange={shaping => updateConfig({ shaping })} row={({ label, hint, children }) => <FormField label={label} className={snellFieldClass} hint={snellPresetActive ? `${hint}${snellHint}` : hint}>{children}</FormField>} />}
     <div className={`switch-form-row${snellFieldClass}`} style={snellPresetActive ? { opacity: 0.56 } : undefined}><span className="switch-form-label">连接复用（reuse）</span><Switch checked={Boolean(config.reuse)} onChange={checked => updateConfig({ reuse: checked || undefined })} ariaLabel="Snell 连接复用" /></div>
   </div>
 }
@@ -20020,7 +20023,7 @@ function NotificationChannelDialog({
 type ProtocolAuth = { username: string; uuid: string; password: string; method: string }
 
 // SnellProfile mirrors model.SnellProfile from the Controller REST contract.
-type SnellProfile = { id: number; name: string; version: number; psk: string; obfs_mode: string; obfs_host: string; mode: string; reuse: boolean; tcp_fast_open: boolean; remark: string; builtin: boolean; enabled: boolean; usage_count: number }
+type SnellProfile = { id: number; name: string; version: number; psk: string; obfs_mode: string; obfs_host: string; mode: string; reuse: boolean; tcp_fast_open: boolean; shaping?: SnellShapingPolicy; remark: string; builtin: boolean; enabled: boolean; usage_count: number }
 
 type InboundPreset = { id: string; protocol: Protocol; label: string; description: string; defaultPort: number }
 

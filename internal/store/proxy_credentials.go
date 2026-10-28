@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
 )
@@ -107,6 +108,10 @@ func (s *Store) reconcileProxyCredentialsAt(ctx context.Context, secret string, 
 		scopes[credentialScope(c)] = c
 		authorized[credentialScope(c)] = true
 	}
+	shapedPasswords, err := s.prepareShapedSnellPasswords(ctx, secret, scopes)
+	if err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -175,9 +180,17 @@ func (s *Store) reconcileProxyCredentialsAt(ctx context.Context, secret string, 
 			}
 		}
 		scope := credentialScope(c)
-		if _, ok := scopes[scope]; ok {
-			delete(scopes, scope)
-			continue
+		if wanted, ok := scopes[scope]; ok {
+			// A Snell PSK that no longer meets its inbound's shaping policy is
+			// rotated; a held account keeps its material until review ends.
+			meets, err := credentialMeetsSnellShaping(ctx, tx, secret, c.ID, wanted.SnellShaping)
+			if err != nil {
+				return err
+			}
+			if meets || held[c.UserID] {
+				delete(scopes, scope)
+				continue
+			}
 		}
 		if _, err = tx.ExecContext(ctx, `update proxy_credentials set status='revoked',material_encrypted='',revoked_at=? where id=?`, now(), c.ID); err != nil {
 			return err
@@ -190,6 +203,15 @@ func (s *Store) reconcileProxyCredentialsAt(ctx context.Context, secret string, 
 		id, material, err := newProxyCredentialMaterial()
 		if err != nil {
 			return err
+		}
+		if !c.SnellShaping.IsZero() {
+			psk, ok := shapedPasswords[credentialScope(c)]
+			if !ok {
+				if psk, err = core.NewShapedSnellPSK(c.SnellShaping); err != nil {
+					return err
+				}
+			}
+			material.Password = psk
 		}
 		payload, err := json.Marshal(material)
 		if err != nil {

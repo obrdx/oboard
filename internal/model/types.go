@@ -261,9 +261,12 @@ type ProxyCredential struct {
 	CredentialEpoch         int64    `json:"credential_epoch"`
 	Protocol                Protocol `json:"protocol"`
 	Status                  string   `json:"status"`
-	Username                string   `json:"-"`
-	Password                string   `json:"-"`
-	UUID                    string   `json:"-"`
+	// SnellShaping is the policy a new or kept Snell PSK must meet; it is
+	// desired state for reconciliation and is never persisted.
+	SnellShaping SnellShapingPolicy `json:"-"`
+	Username     string             `json:"-"`
+	Password     string             `json:"-"`
+	UUID         string             `json:"-"`
 }
 
 type UserDevice struct {
@@ -1751,13 +1754,16 @@ type SnellProfile struct {
 	// TCPFastOpen enables the TCP Fast Open socket option on the Snell
 	// listener and on generated Snell client parameters. Snell always runs
 	// over TCP, including its UDP relay.
-	TCPFastOpen bool      `json:"tcp_fast_open"`
-	Remark      string    `json:"remark"`
-	Builtin     bool      `json:"builtin"`
-	Enabled     bool      `json:"enabled"`
-	UsageCount  int64     `json:"usage_count"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	TCPFastOpen bool `json:"tcp_fast_open"`
+	// Shaping is copied into referencing v6 default-mode inbounds; it selects
+	// each identity's PSK there and is never sent to a node.
+	Shaping    SnellShapingPolicy `json:"shaping,omitzero"`
+	Remark     string             `json:"remark"`
+	Builtin    bool               `json:"builtin"`
+	Enabled    bool               `json:"enabled"`
+	UsageCount int64              `json:"usage_count"`
+	CreatedAt  time.Time          `json:"created_at"`
+	UpdatedAt  time.Time          `json:"updated_at"`
 }
 
 // NodePreset is a reusable inbound configuration template for protocols

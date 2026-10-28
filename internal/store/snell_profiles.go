@@ -3,19 +3,25 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 )
 
 // CreateSnellProfile inserts a reusable Snell parameter set. Builtin status is
 // assigned by the caller (seeded profiles are protected from deletion).
 func (s *Store) CreateSnellProfile(ctx context.Context, v *model.SnellProfile) error {
+	shaping, err := encodeSnellShaping(&v.Shaping)
+	if err != nil {
+		return err
+	}
 	ts := now()
-	res, err := s.db.ExecContext(ctx, `insert into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,tcp_fast_open,remark,builtin,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		strings.TrimSpace(v.Name), v.Version, v.PSK, normalizeSnellObfsMode(v.ObfsMode), v.ObfsHost, normalizeSnellV6Mode(v.Mode), boolInt(v.Reuse), boolInt(v.TCPFastOpen), v.Remark, boolInt(v.Builtin), boolInt(v.Enabled), ts, ts)
+	res, err := s.db.ExecContext(ctx, `insert into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,tcp_fast_open,shaping_json,remark,builtin,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		strings.TrimSpace(v.Name), v.Version, v.PSK, normalizeSnellObfsMode(v.ObfsMode), v.ObfsHost, normalizeSnellV6Mode(v.Mode), boolInt(v.Reuse), boolInt(v.TCPFastOpen), shaping, v.Remark, boolInt(v.Builtin), boolInt(v.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -34,13 +40,26 @@ func normalizeSnellObfsMode(mode string) string {
 	}
 }
 
+// Shared Snell inbounds reject unsafe-raw, so parameter sets never store it.
 func normalizeSnellV6Mode(mode string) string {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "unshaped", "unsafe-raw":
-		return strings.ToLower(strings.TrimSpace(mode))
-	default:
-		return "default"
+	if strings.EqualFold(strings.TrimSpace(mode), "unshaped") {
+		return "unshaped"
 	}
+	return "default"
+}
+
+// encodeSnellShaping canonicalizes the policy in place and returns its stored form.
+func encodeSnellShaping(policy *model.SnellShapingPolicy) (string, error) {
+	if policy.IsZero() {
+		return "", nil
+	}
+	normalized, err := core.NormalizeSnellShapingPolicy(*policy)
+	if err != nil {
+		return "", err
+	}
+	*policy = normalized
+	encoded, err := json.Marshal(normalized)
+	return string(encoded), err
 }
 
 // UpdateSnellProfile updates a profile. Builtin profiles keep their protected
@@ -54,10 +73,14 @@ func (s *Store) UpdateSnellProfile(ctx context.Context, v *model.SnellProfile) (
 	}
 	defer tx.Rollback()
 	var builtin, oldEnabled int
-	var oldPSK, oldObfsMode, oldObfsHost, oldMode string
+	var oldPSK, oldObfsMode, oldObfsHost, oldMode, oldShaping string
 	var oldVersion int
 	var oldReuse, oldTCPFastOpen int
-	if err := tx.QueryRowContext(ctx, `select builtin,enabled,version,psk,obfs_mode,obfs_host,mode,reuse,tcp_fast_open from snell_profiles where id=?`, v.ID).Scan(&builtin, &oldEnabled, &oldVersion, &oldPSK, &oldObfsMode, &oldObfsHost, &oldMode, &oldReuse, &oldTCPFastOpen); err != nil {
+	if err := tx.QueryRowContext(ctx, `select builtin,enabled,version,psk,obfs_mode,obfs_host,mode,reuse,tcp_fast_open,shaping_json from snell_profiles where id=?`, v.ID).Scan(&builtin, &oldEnabled, &oldVersion, &oldPSK, &oldObfsMode, &oldObfsHost, &oldMode, &oldReuse, &oldTCPFastOpen, &oldShaping); err != nil {
+		return false, err
+	}
+	shaping, err := encodeSnellShaping(&v.Shaping)
+	if err != nil {
 		return false, err
 	}
 	v.Builtin = builtin == 1
@@ -65,8 +88,8 @@ func (s *Store) UpdateSnellProfile(ctx context.Context, v *model.SnellProfile) (
 		v.Enabled = true
 	}
 	ts := now()
-	if _, err := tx.ExecContext(ctx, `update snell_profiles set name=?,version=?,psk=?,obfs_mode=?,obfs_host=?,mode=?,reuse=?,tcp_fast_open=?,remark=?,enabled=?,updated_at=? where id=?`,
-		strings.TrimSpace(v.Name), v.Version, v.PSK, normalizeSnellObfsMode(v.ObfsMode), v.ObfsHost, normalizeSnellV6Mode(v.Mode), boolInt(v.Reuse), boolInt(v.TCPFastOpen), v.Remark, boolInt(v.Enabled), ts, v.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `update snell_profiles set name=?,version=?,psk=?,obfs_mode=?,obfs_host=?,mode=?,reuse=?,tcp_fast_open=?,shaping_json=?,remark=?,enabled=?,updated_at=? where id=?`,
+		strings.TrimSpace(v.Name), v.Version, v.PSK, normalizeSnellObfsMode(v.ObfsMode), v.ObfsHost, normalizeSnellV6Mode(v.Mode), boolInt(v.Reuse), boolInt(v.TCPFastOpen), shaping, v.Remark, boolInt(v.Enabled), ts, v.ID); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -76,14 +99,14 @@ func (s *Store) UpdateSnellProfile(ctx context.Context, v *model.SnellProfile) (
 	v.UpdatedAt = parseTime(ts)
 	changed := oldVersion != v.Version || oldPSK != v.PSK || oldObfsMode != normalizeSnellObfsMode(v.ObfsMode) ||
 		oldObfsHost != v.ObfsHost || oldMode != normalizeSnellV6Mode(v.Mode) || oldReuse != boolInt(v.Reuse) ||
-		oldTCPFastOpen != boolInt(v.TCPFastOpen)
+		oldTCPFastOpen != boolInt(v.TCPFastOpen) || oldShaping != shaping
 	return changed, nil
 }
 
 // ListSnellProfiles returns all reusable Snell parameter sets with the number
 // of inbounds referencing each one.
 func (s *Store) ListSnellProfiles(ctx context.Context) ([]model.SnellProfile, error) {
-	query := `select p.id,p.name,p.version,p.psk,p.obfs_mode,p.obfs_host,p.mode,p.reuse,p.tcp_fast_open,p.remark,p.builtin,p.enabled,p.created_at,p.updated_at,
+	query := `select p.id,p.name,p.version,p.psk,p.obfs_mode,p.obfs_host,p.mode,p.reuse,p.tcp_fast_open,p.shaping_json,p.remark,p.builtin,p.enabled,p.created_at,p.updated_at,
 		(select count(*) from inbounds i where i.protocol='snell' and i.config_json like '%"snell_profile_id":'||p.id||'%' or (i.protocol='snell' and i.config_json like '%"snell_profile_id": '||p.id||'%'))
 		from snell_profiles p order by p.builtin desc,p.enabled desc,p.name,p.id`
 	rows, err := s.db.QueryContext(ctx, query)
@@ -94,11 +117,16 @@ func (s *Store) ListSnellProfiles(ctx context.Context) ([]model.SnellProfile, er
 	var out []model.SnellProfile
 	for rows.Next() {
 		var item model.SnellProfile
-		var created, updated string
+		var created, updated, shaping string
 		var enabled, builtin, reuse, tcpFastOpen int
-		if err := rows.Scan(&item.ID, &item.Name, &item.Version, &item.PSK, &item.ObfsMode, &item.ObfsHost, &item.Mode, &reuse, &tcpFastOpen, &item.Remark, &builtin, &enabled, &created, &updated, &item.UsageCount); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Version, &item.PSK, &item.ObfsMode, &item.ObfsHost, &item.Mode, &reuse, &tcpFastOpen, &shaping, &item.Remark, &builtin, &enabled, &created, &updated, &item.UsageCount); err != nil {
 			return nil, err
 		}
+		policy, err := core.DecodeSnellShapingPolicy([]byte(shaping))
+		if err != nil {
+			return nil, fmt.Errorf("snell profile %d: %w", item.ID, err)
+		}
+		item.Shaping = policy
 		item.Enabled = enabled == 1
 		item.Builtin = builtin == 1
 		item.Reuse = reuse == 1

@@ -686,13 +686,12 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists snell_listener_runtime(inbound_id integer primary key references inbounds(id) on delete cascade, server_id integer not null, listener_mode text not null, port integer not null, protocol_version integer not null, config_version integer not null, updated_at text not null)`,
 		`create table if not exists snell_runtime_confirmations (server_id integer primary key references servers(id) on delete cascade, config_version integer not null, digest text not null)`,
 
-		`create table if not exists snell_profiles (id integer primary key autoincrement, name text not null unique, version integer not null default 4, psk text not null default '', obfs_mode text not null default 'none', obfs_host text not null default '', mode text not null default 'default', reuse integer not null default 0, tcp_fast_open integer not null default 1, remark text not null default '', builtin integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create table if not exists snell_profiles (id integer primary key autoincrement, name text not null unique, version integer not null default 4, psk text not null default '', obfs_mode text not null default 'none', obfs_host text not null default '', mode text not null default 'default', reuse integer not null default 0, tcp_fast_open integer not null default 1, shaping_json text not null default '', remark text not null default '', builtin integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create index if not exists idx_snell_profiles_name on snell_profiles(name)`,
 		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) values('Snell v4 标准',4,'','none','','default',0,'Snell v4 参数模板。Server PSK 由入口独立持有；未指定时创建入口时自动生成并持久化。每个用户的 UserKey 来自其代理凭据。',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
 		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) values('Snell v4 HTTP 混淆',4,'','http','','default',0,'v4 搭配 HTTP 型混淆，需填写混淆 Host',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
 		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) select 'Snell v6 标准',6,'','none','','default',0,'v6 默认整形模式；每个授权身份使用独立 PSK，整形特征随该凭据变化。预设不保证抗 DPI 效果。',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z' where not exists (select 1 from snell_profiles where builtin=1 and name='Snell v6 标准（测试）')`,
 		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) select 'Snell v6 unshaped',6,'','none','','unshaped',0,'v6 无整形模式；每个授权身份使用独立 PSK。',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z' where not exists (select 1 from snell_profiles where builtin=1 and name='Snell v6 unshaped（测试）')`,
-		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) select 'Snell v6 unsafe-raw',6,'','none','','unsafe-raw',0,'v6 不安全原始模式；明文首包，任何 DPI 线路均不可用',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z' where not exists (select 1 from snell_profiles where builtin=1 and name='Snell v6 unsafe-raw（测试）')`,
 		`create table if not exists node_presets (id integer primary key autoincrement, name text not null unique, protocol text not null, kind text not null, config_json text not null default '{}', default_port integer not null default 443, remark text not null default '', builtin integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create index if not exists idx_node_presets_protocol_kind on node_presets(protocol,kind)`,
 		`create table if not exists server_dns_policies (server_id integer primary key references servers(id) on delete cascade, encrypted_list_id integer references dns_lists(id) on delete restrict, bootstrap_list_id integer not null references dns_lists(id) on delete restrict, revision integer not null default 1, strategy text not null default 'auto', auto_test text not null default 'first_apply', test_interval_seconds integer not null default 3600, encrypted_selected_json text not null default '[]', bootstrap_selected_json text not null default '[]', encrypted_selection_revision integer not null default 0, bootstrap_selection_revision integer not null default 0, last_attempt_at text, last_success_at text, last_error text not null default '', needs_benchmark integer not null default 1, created_at text not null, updated_at text not null)`,
@@ -981,6 +980,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		{"server_latency_probe_results", "task_id", `alter table server_latency_probe_results add column task_id integer not null default 0`},
 		{"server_latency_probe_results", "task_name", `alter table server_latency_probe_results add column task_name text not null default ''`},
 		{"snell_profiles", "tcp_fast_open", `alter table snell_profiles add column tcp_fast_open integer not null default 0`},
+		{"snell_profiles", "shaping_json", `alter table snell_profiles add column shaping_json text not null default ''`},
 		{"servers", "tcp_fastopen_state", `alter table servers add column tcp_fastopen_state text not null default ''`},
 		{"servers", "tcp_fastopen_value", `alter table servers add column tcp_fastopen_value integer not null default 0`},
 	} {
@@ -1372,6 +1372,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.migrateSnellV6IdentityProfiles(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateSnellV6ShapingProfiles(ctx); err != nil {
 		return err
 	}
 	// The legacy authorization tables are removed after the plan revision

@@ -7896,6 +7896,9 @@ func (s *Server) resolveSnellProfileIntoInbound(ctx context.Context, v *model.In
 		if _, exists := cfg["tcp_fast_open"]; !exists || cfg["tcp_fast_open"] == nil {
 			cfg["tcp_fast_open"] = profile.TCPFastOpen
 		}
+		if _, exists := cfg["shaping"]; !exists && !profile.Shaping.IsZero() {
+			cfg["shaping"] = profile.Shaping
+		}
 	}
 	if psk, _ := cfg["psk"].(string); strings.TrimSpace(psk) == "" {
 		secret, err := security.RandomToken(24)
@@ -12733,12 +12736,14 @@ func validateSnellProfile(v model.SnellProfile) error {
 	switch strings.ToLower(strings.TrimSpace(v.Mode)) {
 	case "", "default":
 		v.Mode = "default"
-	case "unshaped", "unsafe-raw":
-		v.Mode = strings.ToLower(strings.TrimSpace(v.Mode))
+	case "unshaped":
+		v.Mode = "unshaped"
+	case "unsafe-raw":
+		return core.ErrSnellUnsafeMode
 	default:
 		return fmt.Errorf("unsupported snell v6 mode %q", v.Mode)
 	}
-	return nil
+	return core.ValidateSnellShaping(v.Version, v.Mode, v.Shaping)
 }
 
 func (s *Server) queuePeriodicDNSBenchmarksForList(ctx context.Context, list model.DNSList) {

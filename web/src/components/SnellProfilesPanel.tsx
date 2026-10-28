@@ -5,6 +5,7 @@ import { Dialog } from './ui/dialog'
 import { Select } from './ui/select'
 import { SettingsGroup, SettingsRow } from './settings/SettingsLayout'
 import { useSettingsEditorClose } from './settings/useSettingsEditorClose'
+import { SnellShapingFields, normalizeSnellShaping, snellShapingSummary, type SnellShapingPolicy } from './SnellShapingFields'
 
 export interface SnellProfilesPanelProps {
   data: any
@@ -13,11 +14,11 @@ export interface SnellProfilesPanelProps {
   notify: (message: string, tone?: 'success' | 'warning' | 'danger' | 'error' | 'info') => void
 }
 
-export type SnellProfile = { id: number; name: string; version: number; psk: string; obfs_mode: string; obfs_host: string; mode: string; reuse: boolean; tcp_fast_open: boolean; remark: string; builtin: boolean; enabled: boolean; usage_count: number }
+export type SnellProfile = { id: number; name: string; version: number; psk: string; obfs_mode: string; obfs_host: string; mode: string; reuse: boolean; tcp_fast_open: boolean; shaping?: SnellShapingPolicy; remark: string; builtin: boolean; enabled: boolean; usage_count: number }
 
 const versions = [4, 6]
 const obfsModes = ['none', 'http']
-const v6Modes = ['default', 'unshaped', 'unsafe-raw']
+const v6Modes = ['default', 'unshaped']
 
 export type SnellDraft = {
   name: string
@@ -28,6 +29,7 @@ export type SnellDraft = {
   mode: string
   reuse: boolean
   tcp_fast_open: boolean
+  shaping?: SnellShapingPolicy
   remark: string
   enabled: boolean
 }
@@ -35,7 +37,7 @@ export type SnellDraft = {
 export const emptySnellDraft = (version = 4): SnellDraft => ({ name: '', version, psk: '', obfs_mode: 'none', obfs_host: '', mode: 'default', reuse: false, tcp_fast_open: true, remark: '', enabled: true })
 
 export function snellDraftFromProfile(profile: SnellProfile): SnellDraft {
-  return { name: profile.name, version: profile.version, psk: profile.psk, obfs_mode: profile.obfs_mode, obfs_host: profile.obfs_host, mode: profile.mode, reuse: profile.reuse, tcp_fast_open: Boolean(profile.tcp_fast_open), remark: profile.remark, enabled: profile.enabled }
+  return { name: profile.name, version: profile.version, psk: profile.psk, obfs_mode: profile.obfs_mode, obfs_host: profile.obfs_host, mode: profile.mode, reuse: profile.reuse, tcp_fast_open: Boolean(profile.tcp_fast_open), shaping: normalizeSnellShaping(profile.shaping), remark: profile.remark, enabled: profile.enabled }
 }
 
 function profileMeta(profile: SnellProfile) {
@@ -46,6 +48,8 @@ function profileMeta(profile: SnellProfile) {
   if (profile.version === 6 && profile.mode && profile.mode !== 'default') {
     parts.push(profile.mode === 'unshaped' ? '无整形' : profile.mode)
   }
+  const shaping = profile.version === 6 ? snellShapingSummary(profile.shaping) : ''
+  if (shaping) parts.push(shaping)
   if (profile.reuse) parts.push('复用')
   if (profile.tcp_fast_open) parts.push('TFO')
   parts.push(profile.usage_count > 0 ? `${profile.usage_count} 个入口` : '未使用')
@@ -83,7 +87,7 @@ export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, s
         <input autoFocus value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="例如 机房 A 通用 v4" />
       </SettingsRow>
       <SettingsRow label="Snell 版本" description="v4 参数简单；v6 仅部分客户端支持。">
-        <Select value={String(draft.version)} onChange={event => setDraft({ ...draft, version: Number(event.target.value), obfs_mode: Number(event.target.value) === 6 ? 'none' : draft.obfs_mode, mode: Number(event.target.value) === 4 ? 'default' : draft.mode })} aria-label="Snell 版本">
+        <Select value={String(draft.version)} onChange={event => setDraft({ ...draft, version: Number(event.target.value), obfs_mode: Number(event.target.value) === 6 ? 'none' : draft.obfs_mode, mode: Number(event.target.value) === 4 ? 'default' : draft.mode, shaping: Number(event.target.value) === 4 ? undefined : draft.shaping })} aria-label="Snell 版本">
           {versions.map(version => <option key={version} value={String(version)}>v{version}</option>)}
         </Select>
       </SettingsRow>
@@ -100,11 +104,12 @@ export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, s
           <input value={draft.obfs_host} onChange={event => setDraft({ ...draft, obfs_host: event.target.value })} placeholder="例如 bing.com" />
         </SettingsRow>}
       </>}
-      {isV6 && <SettingsRow label="传输模式" description="v6 协议形态；unsafe-raw 特征最弱但可能影响兼容性。">
-        <Select value={draft.mode} onChange={event => setDraft({ ...draft, mode: event.target.value })} aria-label="v6 传输模式">
-          {v6Modes.map(mode => <option key={mode} value={mode}>{mode === 'default' ? '默认' : mode === 'unshaped' ? '无整形' : 'unsafe-raw'}</option>)}
+      {isV6 && <SettingsRow label="传输模式" description="默认模式按 PSK 派生的特征整形流量；无整形模式不填充。">
+        <Select value={draft.mode} onChange={event => setDraft({ ...draft, mode: event.target.value, shaping: event.target.value === 'default' ? draft.shaping : undefined })} aria-label="v6 传输模式">
+          {v6Modes.map(mode => <option key={mode} value={mode}>{mode === 'default' ? '默认' : '无整形'}</option>)}
         </Select>
       </SettingsRow>}
+      {isV6 && draft.mode === 'default' && <SnellShapingFields value={draft.shaping} onChange={shaping => setDraft({ ...draft, shaping })} row={({ label, hint, children }) => <SettingsRow label={label} description={hint}>{children}</SettingsRow>} />}
       <SettingsRow label="连接复用（reuse）" description="复用已建立的连接，减少重复握手。">
         <input type="checkbox" checked={draft.reuse} onChange={event => setDraft({ ...draft, reuse: event.target.checked })} />
       </SettingsRow>

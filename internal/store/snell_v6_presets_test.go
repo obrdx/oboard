@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -90,14 +91,28 @@ func TestSnellV6LegacyTestTagRename(t *testing.T) {
 				if err := db.db.QueryRowContext(ctx, `select count(*) from snell_profiles`).Scan(&count); err != nil {
 					t.Fatal(err)
 				}
-				wantCount := 5
-				if state != "previous-release" {
-					wantCount += 3
-				}
+				// The built-in unsafe-raw set is retired and the shaping preset seeded;
+				// a custom set that took the unsafe-raw name survives.
+				wantCount := map[string]int{"previous-release": 5, "failed-upgrade": 7, "custom-name-collision": 8}[state]
 				if count != wantCount {
 					t.Fatalf("profile count = %d, want %d", count, wantCount)
 				}
-				for _, name := range names {
+				retired := "Snell v6 unsafe-raw"
+				if _, err := db.GetSnellProfile(ctx, ids[retired]); err == nil {
+					t.Fatal("built-in unsafe-raw profile survived")
+				}
+				var retiredReference sql.NullInt64
+				if err := db.db.QueryRowContext(ctx, `select json_extract(config_json,'$.snell_profile_id') from inbounds where name=?`, retired).Scan(&retiredReference); err != nil || retiredReference.Valid {
+					t.Fatalf("retired reference kept: %v %v", retiredReference, err)
+				}
+				var customCount int
+				if err := db.db.QueryRowContext(ctx, `select count(*) from snell_profiles where name=? and builtin=0 and psk='collision-test-psk'`, retired).Scan(&customCount); err != nil {
+					t.Fatal(err)
+				}
+				if want := map[bool]int{true: 1, false: 0}[state == "custom-name-collision"]; customCount != want {
+					t.Fatalf("custom unsafe-raw rows = %d, want %d", customCount, want)
+				}
+				for _, name := range names[:2] {
 					profile, err := db.GetSnellProfile(ctx, ids[name])
 					if err != nil {
 						t.Fatal(err)

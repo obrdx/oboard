@@ -132,7 +132,7 @@ func ProxyCredentialScopes(users []model.User, inbounds []model.Inbound, opts Co
 		if user.DeviceIDHash != "" && UserCredentialForRoute(user, inbound.ID, pathID, inbound.Protocol).AuthorizationKey == "" {
 			return
 		}
-		c := model.ProxyCredential{UserID: user.ID, InboundID: inbound.ID, PathID: pathID, DeviceIDHash: user.DeviceIDHash, CredentialEpoch: user.CredentialEpoch, Protocol: inbound.Protocol}
+		c := model.ProxyCredential{UserID: user.ID, InboundID: inbound.ID, PathID: pathID, DeviceIDHash: user.DeviceIDHash, CredentialEpoch: user.CredentialEpoch, Protocol: inbound.Protocol, SnellShaping: InboundSnellShaping(inbound)}
 		if !seen[c] {
 			seen[c] = true
 			out = append(out, c)
