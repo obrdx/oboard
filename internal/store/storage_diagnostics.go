@@ -44,6 +44,7 @@ type StorageDiagnostics struct {
 	AnalyzedAt                      time.Time             `json:"analyzed_at"`
 	HistoryAvailable                bool                  `json:"history_available"`
 	TableSpaceAvailable             bool                  `json:"table_space_available"`
+	TableSpacePending               bool                  `json:"table_space_pending"`
 	Core                            DatabaseHealth        `json:"core"`
 	History                         DatabaseHealth        `json:"history"`
 	Tables                          []HistoryTableSpace   `json:"tables"`
@@ -126,7 +127,7 @@ func (s *Store) GetStorageDiagnostics(ctx context.Context) (StorageDiagnostics, 
 	if !s.historyOpenedAt.IsZero() {
 		out.History.OpenedAt = s.historyOpenedAt.Format(time.RFC3339Nano)
 	}
-	out.Tables, out.TableSpaceAvailable = s.collectTableSpace(ctx)
+	out.Tables, out.TableSpaceAvailable, out.TableSpacePending = s.tableSpaceSnapshot()
 	out.Performance = []DatabasePerformance{s.databasePerformance("core", s.db), s.databasePerformance("history", s.history)}
 	return out, nil
 }

@@ -309,5 +309,5 @@ func storageDiagnosticsSchema() map[string]any {
 	}
 	operation := schemaObject(map[string]any{"role": text, "kind": text, "count": integer, "sample_count": integer, "window_start": text, "window_end": text, "avg_ms": number, "p50_ms": number, "p95_ms": number, "p99_ms": number, "max_ms": number})
 	performance := map[string]any{"type": "object", "properties": map[string]any{"role": text, "traffic_ledger": schemaObject(fields), "operations": map[string]any{"type": "array", "items": operation}}, "additionalProperties": true}
-	return map[string]any{"type": "object", "properties": map[string]any{"performance": map[string]any{"type": "array", "items": performance}}, "additionalProperties": true}
+	return map[string]any{"type": "object", "properties": map[string]any{"performance": map[string]any{"type": "array", "items": performance}, "table_space_available": map[string]any{"type": "boolean"}, "table_space_pending": map[string]any{"type": "boolean"}}, "additionalProperties": true}
 }

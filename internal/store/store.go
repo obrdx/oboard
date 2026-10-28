@@ -41,12 +41,15 @@ type Store struct {
 	historyLastError               string
 	historyLastErrorAt             time.Time
 	historyOpenedAt                time.Time
-	historySpaceMu                 sync.Mutex
-	historySpaceAt                 time.Time
-	historySpace                   []HistoryTableSpace
-	coreSpaceAt                    time.Time
-	coreSpace                      []HistoryTableSpace
+	tableSpaceMu                   sync.Mutex
+	tableSpaceAt                   time.Time
+	tableSpace                     []HistoryTableSpace
 	tableSpaceAvailable            bool
+	tableSpaceRefreshing           bool
+	tableSpaceClosed               bool
+	tableSpaceCtx                  context.Context
+	tableSpaceCancel               context.CancelFunc
+	tableSpaceWG                   sync.WaitGroup
 	metricSamples                  metricSampleAdmission
 	latencyPlanVersionMu           sync.Mutex
 	latencyHistoryMu               sync.Mutex
@@ -209,6 +212,7 @@ func openPairWithOptions(path, historyPath string, opts SQLiteOptions, restore, 
 		}
 	}
 	s := &Store{db: newCountingDB(db), path: strings.TrimSpace(path), historyPath: strings.TrimSpace(historyPath)}
+	s.tableSpaceCtx, s.tableSpaceCancel = context.WithCancel(context.Background())
 	s.databaseMetrics = newDatabaseMetrics()
 	s.db.role = "core"
 	s.db.metrics = s.databaseMetrics
@@ -499,6 +503,13 @@ func secureSQLiteFile(path string) error {
 }
 
 func (s *Store) Close() error {
+	s.tableSpaceMu.Lock()
+	s.tableSpaceClosed = true
+	s.tableSpaceMu.Unlock()
+	if s.tableSpaceCancel != nil {
+		s.tableSpaceCancel()
+	}
+	s.tableSpaceWG.Wait()
 	var historyErr error
 	if s.history != nil {
 		historyErr = s.history.Close()

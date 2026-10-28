@@ -8,7 +8,10 @@ import (
 	"time"
 )
 
-const tableSpaceCacheTTL = 5 * time.Minute
+const (
+	tableSpaceCacheTTL       = time.Hour
+	tableSpaceRefreshTimeout = 10 * time.Minute
+)
 
 type DatabaseHealth struct {
 	Role              string         `json:"role"`
@@ -87,24 +90,49 @@ func (s *Store) databaseGrowth24h(ctx context.Context, role string, current int6
 	return current - baseline
 }
 
-func (s *Store) collectTableSpace(ctx context.Context) ([]HistoryTableSpace, bool) {
-	s.historySpaceMu.Lock()
-	defer s.historySpaceMu.Unlock()
-	if !s.coreSpaceAt.IsZero() && time.Since(s.coreSpaceAt) < tableSpaceCacheTTL {
-		out := append([]HistoryTableSpace(nil), s.coreSpace...)
-		out = append(out, s.historySpace...)
-		return out, s.tableSpaceAvailable
+// tableSpaceSnapshot returns the last dbstat table-space scan without running
+// one. dbstat walks every B-tree page, which takes seconds on a large database,
+// so a stale or missing snapshot only schedules one background refresh and the
+// caller keeps the previous result. pending is true until the first scan of
+// this process has finished.
+func (s *Store) tableSpaceSnapshot() (tables []HistoryTableSpace, available, pending bool) {
+	s.tableSpaceMu.Lock()
+	defer s.tableSpaceMu.Unlock()
+	if !s.tableSpaceClosed && !s.tableSpaceRefreshing && (s.tableSpaceAt.IsZero() || time.Since(s.tableSpaceAt) >= tableSpaceCacheTTL) {
+		s.tableSpaceRefreshing = true
+		s.tableSpaceWG.Add(1)
+		go s.refreshTableSpace()
 	}
+	return append([]HistoryTableSpace(nil), s.tableSpace...), s.tableSpaceAvailable, s.tableSpaceAt.IsZero()
+}
+
+func (s *Store) refreshTableSpace() {
+	defer s.tableSpaceWG.Done()
+	base := s.tableSpaceCtx
+	if base == nil {
+		base = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(base, tableSpaceRefreshTimeout)
+	defer cancel()
+	out, available := s.scanTableSpace(ctx)
+	s.tableSpaceMu.Lock()
+	defer s.tableSpaceMu.Unlock()
+	s.tableSpaceRefreshing = false
+	if base.Err() != nil {
+		return
+	}
+	s.tableSpace = out
+	s.tableSpaceAvailable = available
+	s.tableSpaceAt = time.Now()
+}
+
+func (s *Store) scanTableSpace(ctx context.Context) ([]HistoryTableSpace, bool) {
 	core, coreOK := collectDatabaseTableSpace(ctx, s.db, "core")
 	history := []HistoryTableSpace{}
 	historyOK := false
 	if s.history != nil {
 		history, historyOK = collectDatabaseTableSpace(ctx, s.history, "history")
 	}
-	s.coreSpace = core
-	s.historySpace = history
-	s.coreSpaceAt = time.Now()
-	s.tableSpaceAvailable = coreOK && (s.history == nil || historyOK)
 	out := append([]HistoryTableSpace(nil), core...)
 	out = append(out, history...)
 	s.recordTableSpaceSnapshot(ctx, "core", core)
@@ -117,7 +145,7 @@ func (s *Store) collectTableSpace(ctx context.Context) ([]HistoryTableSpace, boo
 	if len(out) > 30 {
 		out = out[:30]
 	}
-	return out, s.tableSpaceAvailable
+	return out, coreOK && (s.history == nil || historyOK)
 }
 
 func (s *Store) recordTableSpaceSnapshot(ctx context.Context, role string, tables []HistoryTableSpace) {

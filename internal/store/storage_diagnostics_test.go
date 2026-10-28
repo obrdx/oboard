@@ -54,3 +54,61 @@ func TestGetStorageDiagnostics(t *testing.T) {
 		t.Fatalf("database performance = %#v", diag.Performance)
 	}
 }
+
+// TestStorageDiagnosticsTableSpaceRunsInBackground guards the page-data hot
+// path: dbstat walks every B-tree page, so a diagnostics read must return the
+// previous snapshot at once and leave the scan to one background refresh.
+func TestStorageDiagnosticsTableSpaceRunsInBackground(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "diag.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+
+	first, err := s.GetStorageDiagnostics(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.TableSpacePending || len(first.Tables) != 0 {
+		t.Fatalf("first read scanned synchronously: pending=%v tables=%d", first.TableSpacePending, len(first.Tables))
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	var diag StorageDiagnostics
+	for {
+		diag, err = s.GetStorageDiagnostics(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !diag.TableSpacePending {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("background table-space refresh never finished")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !diag.TableSpaceAvailable || len(diag.Tables) == 0 {
+		t.Fatalf("table space = available:%v tables:%d", diag.TableSpaceAvailable, len(diag.Tables))
+	}
+
+	s.tableSpaceMu.Lock()
+	s.tableSpaceAt = time.Now().Add(-2 * tableSpaceCacheTTL)
+	s.tableSpaceMu.Unlock()
+	stale, err := s.GetStorageDiagnostics(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stale.TableSpacePending || len(stale.Tables) != len(diag.Tables) {
+		t.Fatalf("stale read dropped the previous snapshot: pending=%v tables=%d", stale.TableSpacePending, len(stale.Tables))
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s.tableSpaceMu.Lock()
+	refreshing := s.tableSpaceRefreshing
+	s.tableSpaceMu.Unlock()
+	if refreshing {
+		t.Fatal("Close returned while a table-space refresh was still running")
+	}
+}

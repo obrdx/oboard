@@ -1902,9 +1902,11 @@ func (s *Server) cachedStorageDiagnostics(ctx context.Context) (store.StorageDia
 	if err != nil {
 		return store.StorageDiagnostics{}, err
 	}
+	// Keep asking the store while its first table-space scan is still running
+	// in the background, so the result appears as soon as it is ready.
 	s.storageDiagnostics = diagnostics
 	s.storageDiagnosticsAt = time.Now()
-	s.storageDiagnosticsOK = true
+	s.storageDiagnosticsOK = !diagnostics.TableSpacePending
 	return diagnostics, nil
 }
 

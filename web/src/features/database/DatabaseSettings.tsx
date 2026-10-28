@@ -70,6 +70,7 @@ type Performance = {
 type Diagnostics = {
   history_available?: boolean
   table_space_available?: boolean
+  table_space_pending?: boolean
   core?: Health
   history?: Health
   tables?: TableSpace[]
@@ -180,8 +181,8 @@ export function DatabaseSettingsPanel({ client, notify, data }: { client: APICli
     </section>
     <div className="database-health-grid"><HealthCard health={diagnostics.core} /><HealthCard health={diagnostics.history} /></div>
     <section className="settings-card">
-      <div className="settings-card-head"><div className="settings-heading"><h3>数据表空间</h3><p>按文件占用排序；行数为 rowid 估算值，不执行全表 COUNT。</p></div>{diagnostics.table_space_available ? <Database size={18} /> : <AlertTriangle size={18} />}</div>
-      {!diagnostics.table_space_available ? <div className="backup-inline-error" role="status">当前 SQLite 构建不提供 dbstat，仅显示文件级指标。</div> :
+      <div className="settings-card-head"><div className="settings-heading"><h3>数据表空间</h3><p>按文件占用排序；行数为 rowid 估算值，不执行全表 COUNT。</p></div>{diagnostics.table_space_available || diagnostics.table_space_pending ? <Database size={18} /> : <AlertTriangle size={18} />}</div>
+      {diagnostics.table_space_pending ? <div className="muted" role="status">正在后台统计数据表空间，稍后刷新查看。</div> : !diagnostics.table_space_available ? <div className="backup-inline-error" role="status">当前 SQLite 构建不提供 dbstat，仅显示文件级指标。</div> :
         <div className="table-wrap"><table><thead><tr><th>数据库</th><th>数据表</th><th>数据</th><th>索引</th><th>行数</th><th>24h 增长</th></tr></thead><tbody>
           {tables.map(item => <tr key={`${item.database}-${item.table}`}><td>{item.database === 'history' ? '历史' : '核心'}</td><td><code>{item.table}</code></td><td>{bytes(item.data_bytes)}</td><td>{bytes(item.index_bytes)}</td><td>≈ {item.row_count}</td><td>{growth(item.growth_24h_bytes)}</td></tr>)}
         </tbody></table></div>}
