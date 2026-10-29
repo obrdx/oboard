@@ -35,3 +35,8 @@ func (s *Store) CompleteExternalOutboundProbe(ctx context.Context, id int64, fin
 	_, err := s.db.ExecContext(ctx, `update external_outbound_probe_results set status=?,exit_ip=?,region_code=?,error=?,checked_at=? where external_outbound_id=? and fingerprint=? and task_id=?`, status, ip, region, message, now(), id, fingerprint, taskID)
 	return err
 }
+
+func (s *Store) BeginControllerExternalOutboundProbe(ctx context.Context, id int64, fingerprint string) error {
+	_, err := s.db.ExecContext(ctx, `insert into external_outbound_probe_results(external_outbound_id,fingerprint,task_id,status,checked_at) values(?,?,0,'pending',?) on conflict(external_outbound_id) do update set fingerprint=excluded.fingerprint,task_id=0,status='pending',exit_ip='',region_code='',error='',checked_at=excluded.checked_at`, id, fingerprint, now())
+	return err
+}

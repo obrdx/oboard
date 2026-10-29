@@ -11021,7 +11021,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	    setThirdPartyChecking(ids => ids.filter(id => id !== node.id))
 	  }
 	}
-	// Agents run one network diagnostic at a time, so a batch check is sequential.
+	// Controller runs one isolated proxy check at a time.
 	const runThirdPartyCheckAll = async (nodes: ExternalOutbound[]) => {
 	  for (const node of nodes) await runThirdPartyCheck(node)
 	}
@@ -11033,7 +11033,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	    applyMutationResult(result)
 	    setThirdPartyDraft(null)
 	    reconcileTopology()
-	    for (const node of created) void runThirdPartyCheck(node)
+	    await runThirdPartyCheckAll(created)
 	  } catch (e: any) {
 	    await dialogs.alert({ title: '添加第三方节点失败', message: localizeErrorMessage(e.message || e) })
 	  } finally {
@@ -11893,7 +11893,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
     <AnimatePresence>{routingDraft && <RoutingRuleDraftDialog draft={routingDraft} setDraft={setRoutingDraft} data={data} client={client} load={load} onCancel={() => { setRoutingDraft(null); setRoutingCanvasTargetID('') }} onSubmit={submitRoutingDraft} onOpenTemplateEditor={templateID => setFamilySplitEditor({ templateID: templateID || undefined, select: true })} />}</AnimatePresence>
     <AnimatePresence>{familySplitEditor && <FamilySplitTemplateEditor data={data} client={client} load={load} chainMethods={proxyPathChainMethods} initialTemplateID={familySplitEditor.templateID} onClose={() => setFamilySplitEditor(null)} onSelect={familySplitEditor.select ? id => { setRoutingDraft(old => old ? { ...old, family_split_template_id: id, action: 'family_split' } : old); setFamilySplitEditor(null) } : undefined} />}</AnimatePresence>
     <AnimatePresence>{thirdPartyOpen && <ThirdPartyNodesDialog
-      nodes={(data.external_outbounds || []).filter((item: ExternalOutbound) => item.enabled !== false && (item.scope === 'global' || !item.server_id || !selected?.id || item.server_id === selected.id))}
+      nodes={(data.external_outbounds || []).filter((item: ExternalOutbound) => (item.scope === 'global' || !item.server_id || !selected?.id || item.server_id === selected.id))}
       servers={servers}
       checks={thirdPartyChecks}
       checking={thirdPartyChecking}
@@ -11903,6 +11903,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       onAddToTopology={addThirdPartyToTopology}
       onConnectToEntry={node => { setThirdPartyOpen(false); void addImportedToCurrentEntry(node) }}
       onInspect={setConfigNode}
+      onDelete={node => remove(client, `/external-outbounds/${node.id}`, load, dialogs, node)}
       onClose={() => setThirdPartyOpen(false)}
     />}</AnimatePresence>
     <AnimatePresence>{thirdPartyDraft && <AddThirdPartyNodeDialog draft={thirdPartyDraft} setDraft={setThirdPartyDraft} servers={servers} submitting={thirdPartySubmitting} onCancel={() => setThirdPartyDraft(null)} onSubmit={() => void submitThirdPartyDraft()} />}</AnimatePresence>
@@ -11927,7 +11928,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 
 type ProxyPathNameReference = { key: string; label: string; part: ProxyPathNamePart }
 
-function ProxyPathNameDialog({ path, data, client, load, onClose }: { path: ProxyPath; data: any; client: ReturnType<typeof api>; load: () => Promise<void>; onClose: () => void }) {
+export function ProxyPathNameDialog({ path, data, client, load, onClose }: { path: ProxyPath; data: any; client: ReturnType<typeof api>; load: () => Promise<void>; onClose: () => void }) {
   const dialogs = useDialogs()
   const references = useMemo(() => proxyPathNameReferences(data, path), [data.servers, data.inbounds, data.external_outbounds, data.proxy_path_steps, path.id])
   const initialTemplate = path.name_template?.length ? path.name_template : defaultProxyPathNameTemplate(references)
@@ -11937,10 +11938,10 @@ function ProxyPathNameDialog({ path, data, client, load, onClose }: { path: Prox
 	const [exitRegionCode, setExitRegionCode] = useState(path.exit_region_code || path.effective_exit_region_code || 'CN')
   const [saving, setSaving] = useState(false)
 	const [probing, setProbing] = useState(false)
-	const [probeQueued, setProbeQueued] = useState(false)
+	const [probeResult, setProbeResult] = useState<ExternalOutboundCheck | null>(null)
   const chain = proxyPathChainLabels(data, path)
 	const pathSteps = ((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.path_id === path.id).slice().sort((a, b) => (a.position - b.position) || (a.id - b.id))
-	const terminalImported = pathSteps[pathSteps.length - 1]?.node_type === 'imported'
+	const terminalNode = (data.external_outbounds || []).find((node: ExternalOutbound) => node.id === pathSteps[pathSteps.length - 1]?.external_outbound_id) as ExternalOutbound | undefined
   const preview = mode === 'auto'
     ? (path.name_mode === 'auto' ? path.name : chain.join('｜'))
     : renderProxyPathNameTemplate(parts, data)
@@ -12036,8 +12037,8 @@ function ProxyPathNameDialog({ path, data, client, load, onClose }: { path: Prox
 	const probe = async () => {
 	  setProbing(true)
 	  try {
-		await client.request(`/proxy-paths/${path.id}/probe-egress`, { method: 'POST', body: '{}' })
-		setProbeQueued(true)
+		if (!terminalNode) return
+		setProbeResult(await checkThirdPartyNode(client.request, terminalNode))
 		await load()
 	  } catch (error: any) {
 		await dialogs.alert({ title: '出口地区探测未开始', message: localizeErrorMessage(error.message || error) })
@@ -12083,18 +12084,18 @@ function ProxyPathNameDialog({ path, data, client, load, onClose }: { path: Prox
       </>}
 	  </section>
 	  <section className="proxy-path-setting-section">
-		<div className="proxy-path-setting-heading"><div><h3>出口地区</h3><p className="muted">订阅节点会使用这里的国旗；自动模式按最后一级出口识别。</p></div>{probeQueued || path.exit_region_status === 'pending' ? <span className="status-pill warning">等待 Agent</span> : null}</div>
+		<div className="proxy-path-setting-heading"><div><h3>出口地区</h3><p className="muted">订阅节点会使用这里的国旗；自动模式按最后一级出口识别，第三方出口复用主控检测结果。</p></div>{probing ? <span className="status-pill warning">主控检测中</span> : null}</div>
 		<ExitRegionEditor
 		  mode={exitRegionMode}
 		  manualCode={exitRegionCode}
-		  effectiveCode={path.effective_exit_region_code}
-		  status={probeQueued ? 'pending' : path.exit_region_status}
-		  error={path.exit_region_error}
-		  probedAt={path.exit_region_probed_at}
+		  effectiveCode={terminalNode?.region_mode === 'manual' ? terminalNode.region_code : probeResult ? probeResult.region_code : path.effective_exit_region_code}
+		  status={probing ? 'pending' : probeResult?.region_status || path.exit_region_status}
+		  error={probeResult ? probeResult.error : path.exit_region_error}
+		  probedAt={probeResult?.checked_at || path.exit_region_probed_at}
 		  servers={data.servers || []}
 		  onModeChange={next => { setExitRegionMode(next); if (next === 'manual' && !normalizeRegionCode(exitRegionCode)) setExitRegionCode(path.effective_exit_region_code || 'CN') }}
 		  onCodeChange={setExitRegionCode}
-		  action={terminalImported ? <button type="button" className="ghost icon-button exit-region-probe" onClick={() => void probe()} disabled={probing} aria-label="重新探测出口地区" title="重新探测出口地区"><RefreshCw size={15} className={probing ? 'spin' : ''} /></button> : undefined}
+		  action={terminalNode ? <button type="button" className="ghost icon-button exit-region-probe" onClick={() => void probe()} disabled={probing} aria-label="重新探测出口地区" title="重新探测出口地区"><RefreshCw size={15} className={probing ? 'spin' : ''} /></button> : undefined}
 		/>
 	  </section>
     </div>

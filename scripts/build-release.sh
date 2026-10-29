@@ -91,6 +91,7 @@ package_controller() {
   for f in "$OUT_DIR"/agent-release/oboard-agent-* "$OUT_DIR"/agent-release/oboard-sb-* "$OUT_DIR"/agent-release/oboard-realm-*; do
     if [ -f "$f" ]; then cp "$f" "$stage/downloads/"; fi
   done
+  chmod 0755 "$stage/downloads/oboard-sb-linux-amd64" "$stage/downloads/oboard-sb-linux-arm64"
   cp "$OUT_DIR"/relay-release/oboard-subscription-relay-*.tar.gz "$stage/downloads/"
   cp "$OUT_DIR/relay-release/subscription-relay-sha256s.txt" "$stage/downloads/"
   cp "$CONTROLLER_DIR/deploy/systemd/oboard-controller.service" "$stage/deploy/systemd/"

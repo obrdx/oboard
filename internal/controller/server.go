@@ -89,6 +89,8 @@ type Server struct {
 	vpngate                    vpngateRuntime
 	ipData                     ipDataRuntime
 	runtimeSecurityReports     sync.Map
+	externalCheckMu            sync.Mutex
+	externalCheckRunner        func(context.Context, json.RawMessage) (string, error)
 	proxyDSCPMu                sync.Mutex
 	runtimeSecurityQueueMu     sync.Mutex
 	proxyCredentialMu          sync.Mutex

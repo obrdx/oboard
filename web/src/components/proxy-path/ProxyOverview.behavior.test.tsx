@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { LazyMotion, domAnimation } from 'motion/react'
 import type { Connection, Edge, Node, ReactFlowProps } from 'reactflow'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ProxyOverview } from '../../main'
+import { ProxyOverview, ProxyPathNameDialog } from '../../main'
 import { DialogContext } from '../ui/dialog-context'
 import type { Inbound, Server } from './types'
 
@@ -214,6 +214,30 @@ describe('ProxyOverview canvas behavior', () => {
     await act(async () => flow.props.onConnect!(connection))
     expect(provisional()).toHaveLength(1)
     await cancel()
+  })
+
+  it('checks a shared third-party node from path region settings on the Controller', async () => {
+    const external = { id: 5, name: 'Imported', protocol: 'http', scope: 'global', enabled: true }
+    const path = { id: 9, inbound_id: 10, name: 'Test path', enabled: true }
+    const step = { id: 77, path_id: 9, position: 1, node_type: 'imported', external_outbound_id: 5 }
+    request.mockResolvedValueOnce({ check: { external_outbound_id: 5, status: 'reachable', region_status: 'resolved', region_code: 'JP', checked_at: '2026-10-29T00:00:00Z' } } as any)
+    await act(async () => root.render(<LazyMotion features={domAnimation}><DialogContext.Provider value={{ confirm: async () => true, alert, prompt: async () => null }}>
+      <ProxyPathNameDialog path={path as any} data={{ ...data, external_outbounds: [external], proxy_paths: [path], proxy_path_steps: [step] }} client={{ request }} load={async () => undefined} onClose={() => undefined} />
+    </DialogContext.Provider></LazyMotion>))
+    await act(async () => button('重新探测出口地区').click())
+    expect(request).toHaveBeenCalledWith('/external-outbounds/5/check', { method: 'POST', body: '{}' })
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(container.textContent).not.toContain('等待 Agent')
+  })
+
+  it('deletes a disabled imported node from the third-party manager', async () => {
+    const external = { id: 5, name: 'Imported', protocol: 'http', scope: 'global', target_address: '1.1.1.1', target_port: 8080, config_json: '{}', enabled: false }
+    await render(1, { ...data, external_outbounds: [external] } as any)
+    const event = { clientX: 200, clientY: 160, preventDefault: () => undefined, stopPropagation: () => undefined } as unknown as React.MouseEvent
+    await act(async () => flow.props.onPaneContextMenu!(event))
+    await act(async () => Array.from(document.querySelectorAll<HTMLButtonElement>('[aria-label="画布操作"] button')).find(item => item.textContent?.trim() === '第三方节点')!.click())
+    await act(async () => button('删除 Imported').click())
+    expect(request).toHaveBeenCalledWith('/external-outbounds/5', { method: 'DELETE' })
   })
 
   it('replaces a placed third-party card with the path node once an entry connects to it', async () => {

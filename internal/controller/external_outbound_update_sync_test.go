@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/core"
@@ -113,56 +112,13 @@ func TestStandaloneExternalCheckPersistsRegionWithoutAnyPath(t *testing.T) {
 			if err := f.db.Delete(ctx, "proxy_paths", f.path.ID); err != nil {
 				t.Fatal(err)
 			}
-			f.server.KernelCapabilities = []string{"external_outbound_check_v1", externalOutboundProbeCapability}
-			if err := f.db.UpdateServer(ctx, f.server); err != nil {
-				t.Fatal(err)
-			}
 			f.srv.geoIP = &fakeConnectionAuditGeoResolver{geo: model.IPGeography{CountryCode: "JP", Revision: "test-geo"}}
-			workerCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			defer cancel()
-			done := make(chan error, 1)
-			go func() {
-				ticker := time.NewTicker(10 * time.Millisecond)
-				defer ticker.Stop()
-				for {
-					tasks, err := f.db.ListTasksByServer(workerCtx, f.server.ID, 20)
-					if err != nil {
-						done <- err
-						return
-					}
-					for _, task := range tasks {
-						if task.Type != model.AgentTaskTypeProbeExternalEgress || task.Status != "pending" {
-							continue
-						}
-						var plan model.ExternalEgressProbePlan
-						if err := json.Unmarshal([]byte(task.PayloadJSON), &plan); err != nil {
-							done <- err
-							return
-						}
-						if plan.Standalone == nil || len(plan.Targets) != 0 || plan.ExpectedConfigVersion != 0 {
-							done <- fmt.Errorf("not an independent probe")
-							return
-						}
-						raw, _ := json.Marshal(model.ExternalEgressProbeResult{Items: []model.ExternalEgressProbeItem{{ProbeID: plan.Standalone.Fingerprint, Status: "succeeded", ExitIP: "8.8.8.8"}}})
-						if err := f.srv.applyExternalEgressTaskResults(workerCtx, f.server.ID, task, "succeeded", string(raw)); err != nil {
-							done <- err
-							return
-						}
-						done <- f.db.CompleteTask(workerCtx, task.ID, "succeeded", string(raw))
-						return
-					}
-					select {
-					case <-workerCtx.Done():
-						done <- workerCtx.Err()
-						return
-					case <-ticker.C:
-					}
-				}
-			}()
+			f.srv.externalCheckRunner = func(context.Context, json.RawMessage) (string, error) { return "8.8.8.8", nil }
 			if surface == "web" {
 				handler := f.srv.Handler()
 				request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 				token := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+				request(t, handler, http.MethodPost, fmt.Sprintf("/api/v1/ui/external-outbounds/%d/check", f.external.ID), token, map[string]any{"server_id": f.server.ID}, http.StatusBadRequest)
 				response := request(t, handler, http.MethodPost, fmt.Sprintf("/api/v1/ui/external-outbounds/%d/check", f.external.ID), token, map[string]any{}, http.StatusOK)
 				check := response["check"].(map[string]any)
 				if check["status"] != "reachable" || check["exit_ip"] != "8.8.8.8" || check["region_code"] != "JP" {
@@ -178,9 +134,9 @@ func TestStandaloneExternalCheckPersistsRegionWithoutAnyPath(t *testing.T) {
 				input, _ := json.Marshal(map[string]any{"external_outbound_id": f.external.ID})
 				applyAutomationChangeset(t, f.srv, principal, "external-check", automation.OperationRequest{Capability: "external_outbounds.check", Input: input})
 			}
-			cancel()
-			if err := <-done; err != nil {
-				t.Fatal(err)
+			tasks, err := f.db.ListTasksByServer(ctx, f.server.ID, 20)
+			if err != nil || len(tasks) != 0 {
+				t.Fatalf("controller probe queued Agent tasks: %v %v", tasks, err)
 			}
 			saved, err := f.db.GetExternalOutbound(ctx, f.external.ID)
 			if err != nil || saved.ProbeRegionCode != "JP" || saved.ProbeExitIP != "8.8.8.8" {
@@ -194,20 +150,15 @@ func TestStandaloneExternalCheckPersistsRegionWithoutAnyPath(t *testing.T) {
 	}
 }
 
-func TestStandaloneExternalCheckRejectsMissingCapabilityAndUnauthorizedServer(t *testing.T) {
+func TestControllerExternalCheckDoesNotRequireOnlineAgent(t *testing.T) {
 	f := newExternalEgressControllerFixture(t)
-	if _, _, err := f.srv.checkExternalOutbound(context.Background(), *f.external, nil, nil); err == nil {
-		t.Fatal("old Agent/kernel accepted")
-	}
-	f.server.KernelCapabilities = []string{"external_outbound_check_v1", externalOutboundProbeCapability}
+	f.srv.externalCheckRunner = func(context.Context, json.RawMessage) (string, error) { return "8.8.8.8", nil }
+	f.server.Status = "offline"
 	if err := f.db.UpdateServer(context.Background(), f.server); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := f.srv.checkExternalOutbound(context.Background(), *f.external, nil, func(int64) bool { return false }); err == nil {
-		t.Fatal("resource boundary ignored")
-	}
-	tasks, err := f.db.ListTasksByServer(context.Background(), f.server.ID, 20)
-	if err != nil || len(tasks) != 0 {
-		t.Fatal("unauthorized check queued a task")
+	result, status, err := f.srv.checkExternalOutbound(context.Background(), *f.external)
+	if err != nil || status != 200 || result.Status != "reachable" {
+		t.Fatalf("%#v %d %v", result, status, err)
 	}
 }

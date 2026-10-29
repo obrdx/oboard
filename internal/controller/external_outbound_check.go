@@ -1,30 +1,30 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"io"
 	"net"
 	"net/http"
-	"sort"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
-	"github.com/OboardProject/oboard/internal/security"
 )
 
-const externalOutboundProbeCapability = "external_outbound_probe_v1"
+var errControllerProbeUnavailable = errors.New("controller probe executable unavailable")
 
 type externalOutboundCheck struct {
 	ExternalOutboundID int64     `json:"external_outbound_id"`
 	Status             string    `json:"status"`
-	ServerID           int64     `json:"server_id,omitempty"`
-	ServerName         string    `json:"server_name,omitempty"`
 	Target             string    `json:"target"`
 	ExitIP             string    `json:"exit_ip,omitempty"`
 	RegionCode         string    `json:"region_code,omitempty"`
@@ -35,8 +35,7 @@ type externalOutboundCheck struct {
 }
 
 type externalOutboundCheckRequest struct {
-	ExternalOutboundID int64  `json:"external_outbound_id,omitempty"`
-	ServerID           *int64 `json:"server_id,omitempty"`
+	ExternalOutboundID int64 `json:"external_outbound_id,omitempty"`
 }
 
 func (s *Server) checkExternalOutboundHTTP(w http.ResponseWriter, r *http.Request, id int64) {
@@ -45,15 +44,21 @@ func (s *Server) checkExternalOutboundHTTP(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req externalOutboundCheckRequest
-	if r.ContentLength != 0 && !decode(w, r, &req) {
-		return
+	if r.ContentLength != 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, 1024)
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&req); err != nil {
+			fail(w, errors.New("invalid node check request"), http.StatusBadRequest)
+			return
+		}
 	}
 	external, err := s.store.GetExternalOutbound(r.Context(), id)
 	if err != nil {
 		fail(w, err, http.StatusNotFound)
 		return
 	}
-	result, status, err := s.checkExternalOutbound(r.Context(), *external, req.ServerID, nil)
+	result, status, err := s.checkExternalOutbound(r.Context(), *external)
 	if err != nil {
 		fail(w, err, status)
 		return
@@ -62,121 +67,91 @@ func (s *Server) checkExternalOutboundHTTP(w http.ResponseWriter, r *http.Reques
 	write(w, http.StatusOK, map[string]any{"check": result})
 }
 
-func (s *Server) checkExternalOutbound(ctx context.Context, external model.ExternalOutbound, requested *int64, allow func(int64) bool) (externalOutboundCheck, int, error) {
+func (s *Server) checkExternalOutbound(ctx context.Context, external model.ExternalOutbound) (externalOutboundCheck, int, error) {
 	result := externalOutboundCheck{ExternalOutboundID: external.ID, Target: net.JoinHostPort(strings.Trim(external.TargetAddress, "[]"), strconv.Itoa(external.TargetPort)), CheckedAt: time.Now().UTC(), Status: "failed"}
-	server, err := s.externalOutboundCheckServer(ctx, external, requested, allow)
-	if err != nil {
-		return result, http.StatusConflict, err
+	if !s.externalCheckMu.TryLock() {
+		return result, http.StatusConflict, errors.New("主控正在检测第三方节点，请稍后再试")
 	}
-	result.ServerID, result.ServerName = server.ID, server.Name
+	defer s.externalCheckMu.Unlock()
 	outbound, err := core.ExternalOutboundProbeConfig(external)
 	if err != nil {
 		return result, http.StatusBadRequest, err
 	}
 	fingerprint := core.ExternalOutboundFingerprint(external)
-	plan := model.ExternalEgressProbePlan{TimeoutMS: 10000, Standalone: &model.ExternalOutboundProbe{ExternalOutboundID: external.ID, Fingerprint: fingerprint, Outbound: outbound}}
-	raw, _ := json.Marshal(plan)
-	nonce, err := security.RandomToken(12)
-	if err != nil {
+	if err := s.store.BeginControllerExternalOutboundProbe(ctx, external.ID, fingerprint); err != nil {
 		return result, 500, err
 	}
-	task := model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeProbeExternalEgress, PayloadJSON: string(raw), Status: "pending", ResultJSON: "{}", Nonce: nonce}
-	if err := s.store.CreateExternalOutboundCheckTask(ctx, *server, &task); err != nil {
-		return result, http.StatusConflict, err
-	}
-	s.tasks.wake(server.ID)
-	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
 	started := time.Now()
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		current, err := s.store.GetTask(waitCtx, task.ID)
-		if err != nil {
-			result.Error = "读取检测结果失败"
-			break
-		}
-		if current.Status == "succeeded" || current.Status == "failed" || current.Status == "superseded" || current.Status == "rollback_failed" {
-			latest, err := s.store.GetExternalOutbound(ctx, external.ID)
-			if err != nil || core.ExternalOutboundFingerprint(*latest) != fingerprint {
-				result.Error = "检测期间节点配置已修改，请重新检测"
-				break
-			}
-			if latest.ProbeTaskID != task.ID {
-				result.Error = "已有更新的检测，请查看最新结果"
-				return result, http.StatusOK, nil
-			}
-			if latest.ProbeStatus == "pending" { // Callback persistence may follow task completion.
-				select {
-				case <-waitCtx.Done():
-					result.Error = "检测超时"
-				case <-ticker.C:
-					continue
-				}
-				break
-			}
-			result.ExitIP, result.RegionCode, result.RegionStatus, result.Error = latest.ProbeExitIP, latest.ProbeRegionCode, latest.ProbeStatus, latest.ProbeError
-			if latest.ProbeExitIP != "" && current.Status == "succeeded" {
-				result.Status = "reachable"
-			} else {
-				result.Status = "unreachable"
-			}
-			result.ConnectMS = float64(time.Since(started).Milliseconds())
-			result.CheckedAt = time.Now().UTC()
-			return result, http.StatusOK, nil
-		}
-		select {
-		case <-waitCtx.Done():
-			result.Error = "检测超时，服务器未返回代理出口结果"
-		case <-ticker.C:
-			continue
-		}
-		break
+	run := s.externalCheckRunner
+	if run == nil {
+		run = s.runControllerOutboundProbe
 	}
-	cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-	defer stop()
-	_ = s.store.SupersedePendingTask(cleanup, task.ID, "节点检测已结束或超时")
-	_ = s.store.CompleteExternalOutboundProbe(cleanup, external.ID, fingerprint, task.ID, "failed", "", "", result.Error)
+	exitIP, probeErr := run(ctx, outbound)
+	latest, err := s.store.GetExternalOutbound(ctx, external.ID)
+	if err != nil || core.ExternalOutboundFingerprint(*latest) != fingerprint {
+		return result, http.StatusConflict, errors.New("检测期间节点已删除或配置已修改，请重新检测")
+	}
+	result.Status, result.RegionStatus, result.Error = "unreachable", "failed", "主控未能通过代理获取出口 IP，请检查节点配置和主控网络"
+	if errors.Is(probeErr, errControllerProbeUnavailable) {
+		result.Status, result.Error = "failed", "主控检测程序不可用，请更新主控后重试"
+	}
+	if probeErr == nil {
+		if ip, err := parsePublicEgressIP(exitIP); err == nil {
+			result.ExitIP, result.Status, result.RegionStatus, result.Error = ip, "reachable", "incomplete", "出口 IP 已确认，地区未识别"
+			if s.geoIP != nil {
+				geo, err := s.geoIP.Lookup(ip)
+				code := core.NormalizeRegionCode(geo.CountryCode)
+				if err == nil && code != "" && code != "AQ" {
+					result.RegionCode, result.RegionStatus, result.Error = code, "resolved", ""
+				}
+			}
+		}
+	}
+	result.CheckedAt, result.ConnectMS = time.Now().UTC(), float64(time.Since(started).Milliseconds())
+	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if err := s.store.CompleteExternalOutboundProbe(saveCtx, external.ID, fingerprint, 0, result.RegionStatus, result.ExitIP, result.RegionCode, result.Error); err != nil {
+		return result, 500, err
+	}
 	return result, http.StatusOK, nil
 }
 
-func (s *Server) externalOutboundCheckServer(ctx context.Context, external model.ExternalOutbound, requested *int64, allow func(int64) bool) (*model.Server, error) {
-	servers, err := s.store.ListServers(ctx)
+func (s *Server) runControllerOutboundProbe(ctx context.Context, outbound json.RawMessage) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	binary, err := filepath.Abs(filepath.Join(downloadsDir(s.staticDir), "oboard-sb-"+runtime.GOOS+"-"+runtime.GOARCH))
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	sort.SliceStable(servers, func(i, j int) bool { return servers[i].ID < servers[j].ID })
-	var firstErr error
-	for i := range servers {
-		server := &servers[i]
-		if requested != nil && *requested > 0 && server.ID != *requested {
-			continue
+	cmd := exec.CommandContext(ctx, binary, "-check-outbound")
+	cmd.Stdin = bytes.NewReader(outbound)
+	cmd.Stderr = io.Discard
+	cmd.WaitDelay = time.Second
+	output := &boundedProbeOutput{}
+	cmd.Stdout = output
+	if err := cmd.Run(); err != nil {
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) {
+			return "", errControllerProbeUnavailable
 		}
-		if external.ServerID != nil && *external.ServerID != 0 && *external.ServerID != server.ID || allow != nil && !allow(server.ID) {
-			continue
-		}
-		err := externalOutboundCheckServerReady(*server)
-		if err == nil {
-			return server, nil
-		}
-		if firstErr == nil {
-			firstErr = err
-		}
+		return "", errors.New("controller proxy probe failed")
 	}
-	if firstErr != nil {
-		return nil, firstErr
+	var result struct {
+		ExitIP string `json:"exit_ip"`
 	}
-	return nil, errors.New("没有可用于检测的授权服务器")
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		return "", errors.New("invalid proxy probe output")
+	}
+	return parsePublicEgressIP(result.ExitIP)
 }
 
-func externalOutboundCheckServerReady(server model.Server) error {
-	if reason := agentTaskImmediateFailure(&server); reason != "" {
-		return fmt.Errorf("服务器 %s：%s", server.Name, reason)
+type boundedProbeOutput struct{ bytes.Buffer }
+
+func (b *boundedProbeOutput) Write(p []byte) (int, error) {
+	if b.Len()+len(p) > 1024 {
+		return 0, errors.New("proxy probe output too large")
 	}
-	if !serverSupportsCapability(server, externalOutboundProbeCapability) || !serverSupportsCapability(server, "external_outbound_check_v1") {
-		return fmt.Errorf("服务器 %s 的 Agent/内核不支持独立代理出口检测，请先更新", server.Name)
-	}
-	return nil
+	return b.Buffer.Write(p)
 }
 
 func (s *Server) applyStandaloneExternalProbe(ctx context.Context, task model.AgentTask, probe model.ExternalOutboundProbe, status string, result model.ExternalEgressProbeResult) error {

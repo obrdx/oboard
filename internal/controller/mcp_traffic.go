@@ -801,9 +801,6 @@ func (s *Server) registerExternalOutboundCheck() {
 		if request.ExternalOutboundID <= 0 {
 			return nil, request, errors.New("external_outbound_id must be a positive integer")
 		}
-		if request.ServerID != nil && *request.ServerID > 0 && !principal.AllowsInt64("server_ids", *request.ServerID) {
-			return nil, request, errors.New("server is outside the authorized server boundary")
-		}
 		current, err := s.store.GetExternalOutbound(ctx, request.ExternalOutboundID)
 		if err != nil {
 			return nil, request, err
@@ -828,11 +825,11 @@ func (s *Server) registerExternalOutboundCheck() {
 		return map[string]string{"external_outbound:" + strconv.FormatInt(current.ID, 10): current.UpdatedAt.UTC().Format(time.RFC3339Nano)}, nil
 	})
 	s.automation.Register(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
-		current, request, err := boundary(ctx, principal, input)
+		current, _, err := boundary(ctx, principal, input)
 		if err != nil {
 			return nil, err
 		}
-		result, _, err := s.checkExternalOutbound(ctx, *current, request.ServerID, func(id int64) bool { return principal.AllowsInt64("server_ids", id) })
+		result, _, err := s.checkExternalOutbound(ctx, *current)
 		if err != nil {
 			return nil, err
 		}

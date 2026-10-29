@@ -1100,7 +1100,7 @@ func extractControllerArchive(archivePath, stage string) error {
 			return err
 		}
 		mode := os.FileMode(0o644)
-		if strings.HasPrefix(name, "bin/") {
+		if strings.HasPrefix(name, "bin/") || name == "downloads/oboard-sb-linux-amd64" || name == "downloads/oboard-sb-linux-arm64" {
 			mode = 0o755
 		}
 		out, err := stageRoot.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)

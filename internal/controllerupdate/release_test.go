@@ -138,6 +138,7 @@ func TestSelfUpdateAssetModesIgnoreRestrictiveUmask(t *testing.T) {
 		{name: "web/dist/index.html", content: "web"},
 		{name: "web/dist/assets/app.js", content: "asset"},
 		{name: "downloads/release-manifest.json", content: "{}"},
+		{name: "downloads/oboard-sb-linux-amd64", content: "kernel"},
 		{name: "downloads/geoip/manifest.json", content: "{}"},
 		{name: "downloads/geoip/ip2region_v4.xdb", content: "v4"},
 		{name: "downloads/geoip/ip2region_v6.xdb", content: "v6"},
@@ -157,6 +158,7 @@ func TestSelfUpdateAssetModesIgnoreRestrictiveUmask(t *testing.T) {
 	assertFileMode(t, filepath.Join(stage, "web/dist/index.html"), 0o644)
 	assertFileMode(t, filepath.Join(stage, "web/dist/assets/app.js"), 0o644)
 	assertFileMode(t, filepath.Join(stage, "downloads/release-manifest.json"), 0o644)
+	assertFileMode(t, filepath.Join(stage, "downloads/oboard-sb-linux-amd64"), 0o755)
 	assertFileMode(t, filepath.Join(stage, "downloads/geoip/ip2region_v4.xdb"), 0o644)
 
 	installRoot := t.TempDir()
@@ -186,6 +188,7 @@ func TestSelfUpdateAssetModesIgnoreRestrictiveUmask(t *testing.T) {
 	assertFileMode(t, filepath.Join(installRoot, "web/assets/app.js"), 0o644)
 	assertFileMode(t, filepath.Join(installRoot, "downloads"), 0o755)
 	assertFileMode(t, filepath.Join(installRoot, "downloads/release-manifest.json"), 0o644)
+	assertFileMode(t, filepath.Join(installRoot, "downloads/oboard-sb-linux-amd64"), 0o755)
 }
 
 func assertFileMode(t *testing.T, path string, want os.FileMode) {

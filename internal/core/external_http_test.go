@@ -89,6 +89,14 @@ func TestStandaloneExternalRegionSurvivesLinkingAndInvalidatesOnConfigChange(t *
 	if paths[0].EffectiveExitRegionCode != "JP" || nodes[0].EffectiveRegionCode != "JP" {
 		t.Fatal("link did not reuse measured region")
 	}
+	secondPath, secondStep := path, step
+	secondPath.ID, secondStep.PathID = 114, 114
+	shared, _ := ResolveProxyPathExitRegions([]model.ProxyPath{path, secondPath}, []model.ProxyPathStep{step, secondStep}, []model.Server{{ID: 1}}, []model.Inbound{inbound}, []model.ExternalOutbound{external}, nil)
+	for _, item := range shared {
+		if item.EffectiveExitRegionCode != "JP" {
+			t.Fatal("shared path did not reuse node result")
+		}
+	}
 	external.Name = "renamed"
 	if !ExternalOutboundProbeCurrent(external) {
 		t.Fatal("rename invalidated connection probe")

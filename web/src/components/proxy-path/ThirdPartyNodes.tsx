@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react'
-import { Activity, Link as LinkIcon, Plus, Search, Settings as SettingsIcon, X } from 'lucide-react'
+import { Activity, Link as LinkIcon, Plus, Search, Settings as SettingsIcon, Trash2, X } from 'lucide-react'
 import { MotionDialogPanel } from '../ui/motion'
 import { FormField } from '../ui/form-field'
 import { Select } from '../ui/select'
@@ -10,8 +10,6 @@ import type { ExternalOutbound, Server } from './types'
 export type ExternalOutboundCheck = {
   external_outbound_id: number
   status: 'reachable' | 'unreachable' | 'failed'
-  server_id?: number
-  server_name?: string
   target: string
   exit_ip?: string
   region_code?: string
@@ -137,7 +135,7 @@ function checkText(check: ExternalOutboundCheck) {
 function CheckBadge({ check, busy }: { check?: ExternalOutboundCheck; busy: boolean }) {
   if (busy) return <span className="third-party-check is-busy">检测中…</span>
   if (!check) return null
-  const title = [check.server_name ? `检测服务器：${check.server_name}` : '', check.exit_ip ? `实际出口 IP：${check.exit_ip}` : '', checkText(check)].filter(Boolean).join('\n')
+  const title = ['检测位置：主控', check.exit_ip ? `实际出口 IP：${check.exit_ip}` : '', checkText(check)].filter(Boolean).join('\n')
   const regionText = check.region_code ? `出口 ${check.region_code}` : check.status === 'reachable' ? '出口地区未识别' : ''
   return <span className={`third-party-check is-${check.status}`} title={title || undefined}>{checkText(check)}{regionText && ` · ${regionText}`}</span>
 }
@@ -153,6 +151,7 @@ export function ThirdPartyNodesDialog({
   onAddToTopology,
   onConnectToEntry,
   onInspect,
+  onDelete,
   onClose,
 }: {
   nodes: ExternalOutbound[]
@@ -165,14 +164,22 @@ export function ThirdPartyNodesDialog({
   onAddToTopology: (node: ExternalOutbound) => void
   onConnectToEntry: (node: ExternalOutbound) => void
   onInspect: (node: ExternalOutbound) => void
+  onDelete: (node: ExternalOutbound) => Promise<void>
   onClose: () => void
 }) {
   const [query, setQuery] = useState('')
+  const [deleting, setDeleting] = useState<number | null>(null)
+  const [deleteError, setDeleteError] = useState('')
+  const deleteNode = async (node: ExternalOutbound) => {
+    setDeleteError('')
+    setDeleting(node.id)
+    try { await onDelete(node) } catch (error) { setDeleteError(error instanceof Error ? error.message : '删除失败，请重试') } finally { setDeleting(null) }
+  }
   const serverName = useMemo(() => new Map(servers.map(server => [server.id, server.name])), [servers])
   const normalized = query.trim().toLowerCase()
   const filtered = useMemo(() => nodes.filter(node => !normalized || [node.name, node.protocol, externalProtocolLabel(node), node.target_address, String(node.target_port), node.effective_region_code]
     .some(value => String(value || '').toLowerCase().includes(normalized))), [nodes, normalized])
-  const busy = checking.length > 0
+  const busy = checking.length > 0 || deleting !== null
   return <MotionDialogPanel onCancel={onClose} className="graph-node-picker-dialog third-party-nodes-dialog" placement="right" drawerSize="wide" ariaLabel="第三方节点">
     <header className="dialog-head">
       <div><h2>第三方节点</h2><p className="muted">导入的第三方出口。可检测连通性、放入拓扑或连接到当前入口。</p></div>
@@ -188,6 +195,7 @@ export function ThirdPartyNodesDialog({
         <button type="button" className="ghost" onClick={() => onCheckAll(filtered)} disabled={busy || !filtered.length}><Activity size={14} aria-hidden="true" />全部检测</button>
         <button type="button" onClick={onAdd}><Plus size={14} aria-hidden="true" />添加节点</button>
       </div>
+      {deleteError && <p role="alert" className="error">{deleteError}</p>}
       {!nodes.length ? <div className="graph-palette-empty third-party-empty">
         <p>还没有第三方节点。</p>
         <button type="button" onClick={onAdd}><Plus size={14} aria-hidden="true" />添加第一个节点</button>
@@ -199,19 +207,20 @@ export function ThirdPartyNodesDialog({
             <span className="graph-palette-kind imported"><RegionFlag code={checks[node.id]?.region_code || node.effective_region_code || node.region_code} size={20} /></span>
             <span className="graph-palette-copy">
               <strong>{node.name || `第三方节点 ${node.id}`}</strong>
-              <small>{externalProtocolLabel(node)} · {hostPort(node.target_address, node.target_port)} · {scope}</small>
+              <small>{externalProtocolLabel(node)} · {hostPort(node.target_address, node.target_port)} · {scope}{node.enabled === false ? ' · 已禁用' : ''}</small>
               <CheckBadge check={checks[node.id]} busy={isChecking} />
             </span>
             <div className="graph-palette-actions">
               <button type="button" className="ghost icon-button" onClick={() => onCheck(node)} disabled={busy} title="检测可用性" aria-label={`检测 ${node.name} 可用性`}><Activity size={14} /></button>
-              <button type="button" className="ghost icon-button" onClick={() => onConnectToEntry(node)} title="连接到当前入口" aria-label={`将 ${node.name} 连接到当前入口`}><LinkIcon size={14} /></button>
-              <button type="button" className="ghost icon-button" onClick={() => onAddToTopology(node)} title="添加到拓扑" aria-label={`将 ${node.name} 添加到拓扑`}><Plus size={15} /></button>
+              <button type="button" className="ghost icon-button" onClick={() => onConnectToEntry(node)} disabled={node.enabled === false || deleting === node.id} title="连接到当前入口" aria-label={`将 ${node.name} 连接到当前入口`}><LinkIcon size={14} /></button>
+              <button type="button" className="ghost icon-button" onClick={() => onAddToTopology(node)} disabled={node.enabled === false || deleting === node.id} title="添加到拓扑" aria-label={`将 ${node.name} 添加到拓扑`}><Plus size={15} /></button>
               <button type="button" className="ghost icon-button" onClick={() => onInspect(node)} title="节点设置" aria-label={`${node.name} 设置`}><SettingsIcon size={14} /></button>
+              <button type="button" className="ghost icon-button" onClick={() => void deleteNode(node)} disabled={busy} title="删除节点" aria-label={`删除 ${node.name}`}><Trash2 size={14} aria-hidden="true" /></button>
             </div>
           </div>
         })}
       </div>}
-      <p className="muted third-party-note">检测通过该代理访问 IP 查询服务，验证连接并保存真实出口地区。无需先创建链路，加入链路后直接复用结果；修改连接配置后请重新检测。</p>
+      <p className="muted third-party-note">主控通过该代理访问 IP 查询服务，验证连接并保存真实出口地区。无需先创建链路，加入链路后直接复用结果；修改连接配置后请重新检测。</p>
     </div>
     <footer className="dialog-actions"><button type="button" className="ghost" onClick={onClose}>完成</button></footer>
   </MotionDialogPanel>
