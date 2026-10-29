@@ -14956,58 +14956,136 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .subscription-audit-recent > div { grid-template-columns: minmax(115px, .8fr) minmax(100px, .8fr) minmax(120px, 1fr) minmax(90px, .7fr) minmax(85px, .7fr) 130px; }
 
 .audit-settings-body {
-  display: grid;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
   gap: 16px;
 }
-.audit-settings-body > .settings-card { min-width: 0; }
-.audit-policy-settings fieldset {
-  display: grid;
+.audit-config-section {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 16px;
   min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-xs);
+}
+.audit-config-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.audit-config-head > div { display: grid; gap: 4px; min-width: 0; }
+.audit-config-head h3 { margin: 0; color: var(--text-strong); font-size: 15px; font-weight: 600; }
+.audit-config-head p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.audit-config-head > button { flex: 0 0 auto; }
+.audit-config-tag {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 18px;
+}
+.audit-config-muted { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.audit-config-rows { display: grid; border-block: 1px solid var(--border); }
+.audit-config-rows > .audit-config-row { padding-block: 14px; }
+.audit-config-rows > .audit-config-row + .audit-config-row { border-top: 1px solid var(--border); }
+.audit-config-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-width: 0;
+}
+.audit-config-row.is-disabled .audit-config-row-text { opacity: .6; }
+.audit-config-row-text { display: grid; gap: 3px; min-width: 0; }
+.audit-config-row-text strong { color: var(--text-strong); font-size: 14px; font-weight: 500; }
+.audit-config-row-text span { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.audit-config-row > :not(.audit-config-row-text) { flex: 0 0 auto; }
+.audit-config-row > input { width: 180px; }
+.audit-config-group {
+  display: grid;
   gap: 12px;
-  margin: 0 20px;
-  padding: 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.audit-config-group > legend { float: left; width: 100%; padding: 0; color: var(--text-strong); font-size: 14px; font-weight: 600; }
+.audit-config-group > legend + * { clear: both; }
+.audit-config-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.audit-config-group-head strong { color: var(--text-strong); font-size: 14px; font-weight: 600; }
+.audit-config-group-head span { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.audit-config-list { display: grid; margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.audit-config-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 6px 6px 6px 12px; font-size: 13px; }
+.audit-config-list li + li { border-top: 1px solid var(--border); }
+.audit-config-list time { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.audit-config-empty { margin: 0; padding: 12px; border: 1px dashed var(--border); border-radius: var(--radius-sm); color: var(--muted); font-size: 13px; text-align: center; }
+.audit-diagnostic-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+.audit-diagnostic-form label,
+.audit-grouping-grid label { display: grid; gap: 6px; min-width: 0; color: var(--text-secondary); font-size: 13px; }
+.audit-diagnostic-form :is(input, select),
+.audit-grouping-grid input,
+.audit-threshold-row input { width: 100%; min-width: 0; }
+.audit-threshold-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) repeat(2, minmax(96px, 1fr));
+  column-gap: 12px;
+  row-gap: 8px;
+  align-items: center;
+}
+.audit-threshold-row { display: contents; }
+.audit-threshold-row strong { color: var(--text-strong); font-size: 13px; font-weight: 500; }
+.audit-threshold-head { color: var(--muted); font-size: 12px; }
+.audit-grouping-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.audit-config-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.audit-config-stats > div { display: grid; gap: 2px; min-width: 0; margin: 0; padding: 10px 12px; }
+.audit-config-stats > div + div { border-left: 1px solid var(--border); }
+.audit-config-stats dt { color: var(--muted); font-size: 12px; }
+.audit-config-stats dd { margin: 0; color: var(--text-strong); font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.audit-config-callout {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-strong) 3%, transparent);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
 }
-.audit-policy-settings fieldset legend { padding: 0 6px; font-weight: 600; }
-.audit-policy-settings fieldset > .audit-console-toolbar {
-  grid-template-columns: minmax(180px, 2fr) repeat(2, minmax(120px, 1fr));
-  gap: 12px;
-  min-width: 0;
-  padding: 0 0 12px;
-  border-bottom: 1px solid var(--border);
-}
-.audit-policy-settings fieldset > .audit-console-toolbar strong { align-self: center; }
-.audit-policy-settings fieldset > .audit-console-toolbar label,
-.audit-collection-settings .audit-console-toolbar label {
-  display: grid;
-  min-width: 0;
-  gap: 5px;
-}
-.audit-policy-settings fieldset > .audit-console-toolbar input,
-.audit-collection-settings .audit-console-toolbar :is(input, select) { width: 100%; min-width: 0; }
-.audit-policy-settings fieldset > label {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(140px, 220px);
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-.audit-policy-settings fieldset > label input { width: 100%; min-width: 0; }
-.audit-collection-settings .audit-console-toolbar {
-  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
-  align-items: end;
-  padding: 0;
-}
+.audit-config-callout strong { color: var(--text-strong); font-weight: 600; }
+.audit-config-callout p { margin: 0; }
+.audit-config-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.audit-retirement .audit-config-group { gap: 10px; }
+.audit-retirement .audit-config-group :is(label, textarea) { display: grid; gap: 6px; width: 100%; }
+.audit-retirement .audit-config-group button { justify-self: start; margin-inline-end: 8px; }
 @media (max-width: 640px) {
-  .audit-policy-settings fieldset > .audit-console-toolbar {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .audit-policy-settings fieldset > .audit-console-toolbar strong { grid-column: 1 / -1; }
-  .audit-policy-settings fieldset > label { grid-template-columns: minmax(0, 1fr); }
-  .audit-collection-settings .audit-console-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .audit-collection-settings .audit-console-toolbar button { grid-column: 1 / -1; }
+  .audit-config-section { padding: 16px; }
+  .audit-config-head { flex-direction: column; }
+  .audit-config-row { flex-direction: column; align-items: stretch; gap: 10px; }
+  .audit-config-rows > .audit-config-row { flex-direction: row; align-items: center; }
+  .audit-config-row > input { width: 100%; }
+  .audit-diagnostic-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .audit-diagnostic-form button { grid-column: 1 / -1; }
+  .audit-threshold-grid { grid-template-columns: minmax(0, 1fr) repeat(2, minmax(72px, 1fr)); }
+  .audit-grouping-grid { grid-template-columns: minmax(0, 1fr); }
+  .audit-config-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .audit-config-stats > div:nth-child(3) { border-left: 0; }
+  .audit-config-stats > div:nth-child(n + 3) { border-top: 1px solid var(--border); }
 }
 
 .audit-log-intro {

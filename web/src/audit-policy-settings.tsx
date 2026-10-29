@@ -46,24 +46,43 @@ export function AuditPolicySettings({ client }: { client: AuditClient }) {
     try { await applyAuditChange(client, prepared.id, prepared.reason); refresh(n => n + 1) }
     catch (e) { setError(e instanceof Error ? e.message : '保存失败，请重新读取并校验') } finally { setBusy(false) }
   }
-  return <section className="settings-card audit-policy-settings"><h3>账号判定规则</h3>
-    <p className="muted">与采集档位独立管理。阈值只用于观察与提醒，不自动封禁，不修改配额。修改后产生新策略版本，已保存的历史判断不被改写。</p>
+  return <section className="audit-config-section" aria-labelledby="audit-policy-title">
+    <header className="audit-config-head"><div><h3 id="audit-policy-title">账号判定规则</h3><p>与采集档位独立管理。阈值只用于观察与提醒，不自动封禁，不修改配额。修改后产生新策略版本，已保存的历史判断不被改写。</p></div>{config && <span className="audit-config-tag">{config.policy.version}</span>}</header>
     {error && <p role="alert" className="form-error">{error}</p>}
-    {!config ? <p role="status">正在读取判定规则…</p> : <>
-      <p className="muted">策略版本：{config.policy.version} · 来源容量：32</p>
-      <fieldset disabled={busy}><legend>风险阈值</legend>
-        {(['activity_sources', 'activity_minutes', 'exposure_sources'] as const).map((key, i) => <div key={key} className="audit-console-toolbar"><strong>{['共同活跃来源规模', '累计达到规模的分钟', '重复新来源数'][i]}</strong>{(['start', 'full'] as const).map(bound => <label key={bound}>{bound === 'start' ? '开始计分' : '贡献上限'}<input aria-label={`${['共同活跃来源规模', '累计分钟', '重复新来源数'][i]}${bound === 'start' ? '开始计分' : '贡献上限'}`} type="number" min={bound === 'start' ? 0 : 1} max={i === 1 ? 30 : 32} step="1" value={config.policy[key][bound]} onChange={e => mutate({ ...config, policy: { ...config.policy, [key]: { ...config.policy[key], [bound]: Number(e.target.value) } } })} /></label>)}</div>)}
-        <label>每来源每分钟最低有效流量（字节）<input type="number" min="1" max={2 ** 40} step="1" value={config.policy.minimum_bytes} onChange={e => mutate({ ...config, policy: { ...config.policy, minimum_bytes: Number(e.target.value) } })} /></label>
-        <label>每来源最低活跃片数（每片5秒）<input type="number" min="1" max="12" step="1" value={config.policy.minimum_slices} onChange={e => mutate({ ...config, policy: { ...config.policy, minimum_slices: Number(e.target.value) } })} /></label>
+    {!config ? <p role="status" className="audit-config-muted">正在读取判定规则…</p> : <>
+      <fieldset className="audit-config-group" disabled={busy}><legend>风险阈值</legend>
+        <p className="audit-config-muted">来源容量 32。达到“开始计分”后计入风险，达到“贡献上限”时贡献封顶。</p>
+        <div className="audit-threshold-grid" role="group" aria-label="风险阈值">
+          <span className="audit-threshold-head">指标</span><span className="audit-threshold-head">开始计分</span><span className="audit-threshold-head">贡献上限</span>
+          {(['activity_sources', 'activity_minutes', 'exposure_sources'] as const).map((key, i) => <div key={key} className="audit-threshold-row"><strong>{policyLabels[i]}</strong>{(['start', 'full'] as const).map(bound => <input key={bound} aria-label={`${policyShortLabels[i]}${boundLabel(bound)}`} type="number" min={bound === 'start' ? 0 : 1} max={i === 1 ? 30 : 32} step="1" value={config.policy[key][bound]} onChange={e => mutate({ ...config, policy: { ...config.policy, [key]: { ...config.policy[key], [bound]: Number(e.target.value) } } })} />)}</div>)}
+        </div>
+        <label className="audit-config-row"><span className="audit-config-row-text"><strong>最低有效流量</strong><span>每来源每分钟，单位字节</span></span><input type="number" min="1" max={2 ** 40} step="1" value={config.policy.minimum_bytes} onChange={e => mutate({ ...config, policy: { ...config.policy, minimum_bytes: Number(e.target.value) } })} /></label>
+        <label className="audit-config-row"><span className="audit-config-row-text"><strong>最低活跃片数</strong><span>每来源每分钟，每片 5 秒，最多 12</span></span><input type="number" min="1" max="12" step="1" value={config.policy.minimum_slices} onChange={e => mutate({ ...config, policy: { ...config.policy, minimum_slices: Number(e.target.value) } })} /></label>
       </fieldset>
-      <fieldset disabled={busy}><legend>资源观察阈值（可选）</legend><p className="muted">留空表示未配置。速率取最近完整一分钟的平均值；覆盖不足或连接数尚无观测时显示不可用，不按零计算。</p>
-        {(['request_rate', 'connections', 'traffic_rate'] as const).map((key, i) => <div key={key} className="audit-console-toolbar"><strong>{['请求速率（请求/秒）', '同时连接数（条）', '流量速率（字节/秒）'][i]}</strong>{(['start', 'full'] as const).map(bound => <label key={bound}>{bound === 'start' ? '开始计分' : '贡献上限'}<input aria-label={`${['请求速率', '同时连接数', '流量速率'][i]}${bound === 'start' ? '开始计分' : '贡献上限'}`} type="number" min={bound === 'start' ? 0 : 1} max={Number.MAX_SAFE_INTEGER} step="1" value={config.resources[key]?.[bound] ?? ''} onChange={e => mutate({ ...config, resources: { ...config.resources, [key]: e.target.value === '' ? null : { start: config.resources[key]?.start ?? 0, full: config.resources[key]?.full ?? 0, unit: ['requests/second', 'connections', 'bytes/second'][i], [bound]: Number(e.target.value) } } })} /></label>)}</div>)}
+      <fieldset className="audit-config-group" disabled={busy}><legend>资源观察阈值（可选）</legend>
+        <p className="audit-config-muted">留空表示未配置。速率取最近完整一分钟的平均值；覆盖不足或连接数尚无观测时显示不可用，不按零计算。</p>
+        <div className="audit-threshold-grid" role="group" aria-label="资源观察阈值">
+          <span className="audit-threshold-head">指标</span><span className="audit-threshold-head">开始计分</span><span className="audit-threshold-head">贡献上限</span>
+          {(['request_rate', 'connections', 'traffic_rate'] as const).map((key, i) => <div key={key} className="audit-threshold-row"><strong>{resourceLabels[i]}</strong>{(['start', 'full'] as const).map(bound => <input key={bound} aria-label={`${resourceShortLabels[i]}${boundLabel(bound)}`} placeholder="未配置" type="number" min={bound === 'start' ? 0 : 1} max={Number.MAX_SAFE_INTEGER} step="1" value={config.resources[key]?.[bound] ?? ''} onChange={e => mutate({ ...config, resources: { ...config.resources, [key]: e.target.value === '' ? null : { start: config.resources[key]?.start ?? 0, full: config.resources[key]?.full ?? 0, unit: resourceUnits[i], [bound]: Number(e.target.value) } } })} />)}</div>)}
+        </div>
       </fieldset>
-      <fieldset disabled={busy}><legend>来源分组</legend><p className="muted">当前生效：IPv4 /{config.source.ipv4_prefix_bits}、IPv6 /{config.source.ipv6_prefix_bits} · 代次 {config.source.epoch}。仅在校验并确认后生效。来源组不代表设备或人数。只能合并采集网段，不能细分；修改前缀须同时递增代次。变更后历史比较为未知，重新积累至少七天，不拼接旧代次。</p>
-        {(['ipv4_prefix_bits', 'ipv6_prefix_bits', 'epoch'] as const).map((key, i) => <label key={key}>{['IPv4 前缀长度', 'IPv6 前缀长度', '来源代次（递增以手动轮换）'][i]}<input type="number" min={i === 2 ? config.source.epoch : 0} max={[24, 56, Number.MAX_SAFE_INTEGER][i]} step="1" value={config.source_grouping[key]} onChange={e => mutate({ ...config, source_grouping: { ...config.source_grouping, [key]: Number(e.target.value) } })} /></label>)}
+      <fieldset className="audit-config-group" disabled={busy}><legend>来源分组</legend>
+        <p className="audit-config-muted">当前生效：IPv4 /{config.source.ipv4_prefix_bits}、IPv6 /{config.source.ipv6_prefix_bits} · 代次 {config.source.epoch}。来源组不代表设备或人数；只能合并采集网段，不能细分。修改前缀须同时递增代次，变更后历史比较为未知，重新积累至少七天。</p>
+        <div className="audit-grouping-grid">{(['ipv4_prefix_bits', 'ipv6_prefix_bits', 'epoch'] as const).map((key, i) => <label key={key}>{groupingLabels[i]}<input type="number" min={i === 2 ? config.source.epoch : 0} max={[24, 56, Number.MAX_SAFE_INTEGER][i]} step="1" value={config.source_grouping[key]} onChange={e => mutate({ ...config, source_grouping: { ...config.source_grouping, [key]: Number(e.target.value) } })} /></label>)}</div>
       </fieldset>
-      {prepared ? <><p role="status">规则已校验：{prepared.reason}</p><button type="button" disabled={busy} onClick={() => void apply()}>{busy ? '正在应用…' : '确认应用判定规则'}</button></> : <button type="button" disabled={busy} onClick={() => void prepare()}>{busy ? '正在校验…' : '校验判定规则'}</button>}
-      <button type="button" className="ghost" disabled={busy} onClick={() => refresh(n => n + 1)}>重新读取</button>
+      {prepared && <p role="status" className="audit-config-callout">规则已校验：{prepared.reason}</p>}
+      <footer className="audit-config-actions">
+        <button type="button" className="ghost" disabled={busy} onClick={() => refresh(n => n + 1)}>重新读取</button>
+        {prepared ? <button type="button" disabled={busy} onClick={() => void apply()}>{busy ? '正在应用…' : '确认应用判定规则'}</button> : <button type="button" disabled={busy} onClick={() => void prepare()}>{busy ? '正在校验…' : '校验判定规则'}</button>}
+      </footer>
     </>}
   </section>
 }
+
+const policyLabels = ['共同活跃来源规模', '累计达到规模的分钟', '重复新来源数']
+const policyShortLabels = ['共同活跃来源规模', '累计分钟', '重复新来源数']
+const resourceLabels = ['请求速率（请求/秒）', '同时连接数（条）', '流量速率（字节/秒）']
+const resourceShortLabels = ['请求速率', '同时连接数', '流量速率']
+const resourceUnits = ['requests/second', 'connections', 'bytes/second']
+const groupingLabels = ['IPv4 前缀长度', 'IPv6 前缀长度', '来源代次']
+const boundLabel = (bound: 'start' | 'full') => bound === 'start' ? '开始计分' : '贡献上限'

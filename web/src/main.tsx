@@ -5688,7 +5688,7 @@ function AuditSettingsPanel({ data, client, load, notify }: any) {
         connection_audit_enabled: connectionAuditEnabled,
         audit_action: 'warn',
       }) })
-      notify?.('审计配置已保存', 'success')
+      notify?.('审计开关已保存', 'success')
       await load?.('audit', { background: true })
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
@@ -5696,29 +5696,21 @@ function AuditSettingsPanel({ data, client, load, notify }: any) {
       setSaving(false)
     }
   }
-  return <section className="settings-card">
-    <div className="settings-card-head"><div><h3>审计配置</h3><p className="muted">统一控制订阅审计与连接审计的采集、风险评估、通知和 Agent 行为。</p></div></div>
-    <div className="form settings-form single-field">
-      <FormField label="行为审计" hint="分析订阅与连接活动，发现异常使用模式。关闭后停止新的行为采集与判定；历史记录仍可查看。正常鉴权、计费、限流和必要管理操作日志不受影响。">
-        <div className="switch-setting-row">
-          <Switch checked={auditEnabled} onChange={enabled => void changeAuditEnabled(enabled)} ariaLabel="启用总审计" />
-        </div>
-      </FormField>
-      <FormField label="订阅活动" hint="关闭后停止新的订阅行为采集与判定；已有访问限制保持不变。">
-        <div className="switch-setting-row">
-          <Switch checked={auditEnabled && subscriptionAuditEnabled} disabled={!auditEnabled} onChange={setSubscriptionAuditEnabled} ariaLabel="启用订阅审计" />
-        </div>
-      </FormField>
-      <FormField label="连接审计（全局）" hint="关闭后所有服务器的 Agent 停止采集、上报和本地审计状态写入；仍可在单台服务器上单独控制。">
-        <div className="switch-setting-row">
-          <Switch checked={auditEnabled && connectionAuditEnabled} disabled={!auditEnabled} onChange={setConnectionAuditEnabled} ariaLabel="启用连接审计" />
-        </div>
-      </FormField>
-      <FormField label="判定模式：仅告警" hint="记录异常并通知管理员，不因行为评分自动限制账号。已有访问限制、配额和独立请求限流不受影响。">
-        <p className="muted">观察阈值与贡献上限用于判定异常强度，不是账号封禁门槛。</p>
-      </FormField>
-      <div className="settings-actions"><button onClick={() => void saveAuditSettings()} disabled={saving}>{saving ? '保存中...' : '保存审计配置'}</button></div>
+  const switches = [
+    { label: '行为审计', hint: '分析订阅与连接活动，发现异常使用模式。关闭后停止新的行为采集与判定；历史记录仍可查看，正常鉴权、计费、限流和管理操作日志不受影响。', checked: auditEnabled, disabled: false, onChange: (enabled: boolean) => void changeAuditEnabled(enabled), ariaLabel: '启用总审计' },
+    { label: '订阅活动', hint: '关闭后停止新的订阅行为采集与判定；已有访问限制保持不变。', checked: auditEnabled && subscriptionAuditEnabled, disabled: !auditEnabled, onChange: setSubscriptionAuditEnabled, ariaLabel: '启用订阅审计' },
+    { label: '连接审计（全局）', hint: '关闭后所有服务器的 Agent 停止采集、上报和本地审计状态写入；仍可在单台服务器上单独控制。', checked: auditEnabled && connectionAuditEnabled, disabled: !auditEnabled, onChange: setConnectionAuditEnabled, ariaLabel: '启用连接审计' },
+  ]
+  return <section className="audit-config-section" aria-labelledby="audit-switches-title">
+    <header className="audit-config-head"><div><h3 id="audit-switches-title">审计开关</h3><p>统一控制订阅审计与连接审计的采集、风险评估、通知和 Agent 行为。</p></div></header>
+    <div className="audit-config-rows">
+      {switches.map(item => <div key={item.ariaLabel} className={`audit-config-row${item.disabled ? ' is-disabled' : ''}`}>
+        <div className="audit-config-row-text"><strong>{item.label}</strong><span>{item.hint}</span></div>
+        <Switch checked={item.checked} disabled={item.disabled} onChange={item.onChange} ariaLabel={item.ariaLabel} />
+      </div>)}
     </div>
+    <p className="audit-config-callout"><strong>判定模式：仅告警。</strong>记录异常并通知管理员，不因行为评分自动限制账号；已有访问限制、配额和独立请求限流不受影响。</p>
+    <footer className="audit-config-actions"><button onClick={() => void saveAuditSettings()} disabled={saving}>{saving ? '保存中...' : '保存审计开关'}</button></footer>
   </section>
 }
 
