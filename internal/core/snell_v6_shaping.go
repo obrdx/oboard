@@ -11,6 +11,7 @@ import (
 	"io"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -211,10 +212,69 @@ func SnellShapingAcceptance(policy model.SnellShapingPolicy) float64 {
 // ValidateSnellShapingFeasible rejects a policy too strict to select PSKs for.
 func ValidateSnellShapingFeasible(policy model.SnellShapingPolicy) error {
 	rate := SnellShapingAcceptance(policy)
-	if rate*snellShapingMinAcceptanceDenominator < 1 {
-		return fmt.Errorf("%w: snell shaping accepts about %.4f%% of PSKs, the minimum is %.3f%%; relax the density band, padding style or max_padding", ErrSnellShapingInfeasible, rate*100, 100.0/snellShapingMinAcceptanceDenominator)
+	if snellShapingFeasibleRate(rate) {
+		return nil
 	}
-	return nil
+	share := "抽样中没有 PSK 满足"
+	if rate > 0 {
+		share = fmt.Sprintf("只有约 %.3f%% 的 PSK 满足", rate*100)
+	}
+	return fmt.Errorf("%w: 整形策略过严，%s（至少需要 1/%d）。%s", ErrSnellShapingInfeasible, share, snellShapingMinAcceptanceDenominator, snellShapingRelaxation(policy))
+}
+
+func snellShapingFeasibleRate(rate float64) bool {
+	return rate*snellShapingMinAcceptanceDenominator >= 1
+}
+
+// snellShapingRelaxation names the smallest change that makes a policy
+// feasible. Only bit_biased padding moves the first record away from 0.5,
+// and small padding caps leave too little padding to move it at all.
+func snellShapingRelaxation(policy model.SnellShapingPolicy) string {
+	feasible := func(p model.SnellShapingPolicy) bool { return snellShapingFeasibleRate(SnellShapingAcceptance(p)) }
+	styles := []string{policy.PaddingStyle}
+	if policy.PaddingStyle != "" && policy.PaddingStyle != SnellPaddingBitBiased {
+		styles = append(styles, SnellPaddingBitBiased)
+	}
+	paddings := []int{policy.MaxPadding}
+	if policy.MaxPadding > 0 {
+		for _, limit := range []int{300, 400, 500, 600, SnellShapingMaxMaxPadding} {
+			if limit > policy.MaxPadding {
+				paddings = append(paddings, limit)
+			}
+		}
+		paddings = append(paddings, 0)
+	}
+	for _, style := range styles {
+		for _, padding := range paddings {
+			if style == policy.PaddingStyle && padding == policy.MaxPadding {
+				continue
+			}
+			candidate := policy
+			candidate.PaddingStyle, candidate.MaxPadding = style, padding
+			if !feasible(candidate) {
+				continue
+			}
+			var changes []string
+			if style != policy.PaddingStyle {
+				changes = append(changes, "把填充风格改为「位偏置二进制」（其他风格的首包位密度都接近 0.5）")
+			}
+			if padding != policy.MaxPadding {
+				if padding == 0 {
+					changes = append(changes, "取消单记录填充上限")
+				} else {
+					changes = append(changes, fmt.Sprintf("把单记录填充上限调高到 %d", padding))
+				}
+			}
+			if policy.FirstRecordDensity.IsZero() {
+				return "可以" + strings.Join(changes, "，并") + "。"
+			}
+			return "可以" + strings.Join(changes, "，并") + "，或放宽首包位密度区间。"
+		}
+	}
+	if policy.FirstRecordDensity.IsZero() {
+		return "请放宽填充风格或单记录填充上限。"
+	}
+	return "请放宽或取消首包位密度区间。"
 }
 
 // ValidateSnellShaping checks a policy against the Snell version and mode it

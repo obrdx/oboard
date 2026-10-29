@@ -127,3 +127,32 @@ func TestProxyCredentialScopesCarrySnellShaping(t *testing.T) {
 		}
 	}
 }
+
+// Only bit_biased padding moves the first record away from 0.5, and a small
+// padding cap leaves too little padding to move it; the error names the fix.
+func TestSnellShapingInfeasibleNamesTheFix(t *testing.T) {
+	cases := []struct {
+		policy      model.SnellShapingPolicy
+		want, avoid []string
+	}{
+		{model.SnellShapingPolicy{PaddingStyle: SnellPaddingUTF8Like, FirstRecordDensity: snellAvoidBand.FirstRecordDensity}, []string{"位偏置二进制", "放宽首包位密度区间"}, []string{"填充上限"}},
+		{model.SnellShapingPolicy{MaxPadding: 250, FirstRecordDensity: snellAvoidBand.FirstRecordDensity}, []string{"调高到 400"}, []string{"位偏置二进制"}},
+		{model.SnellShapingPolicy{PaddingStyle: SnellPaddingBitBiased, MaxPadding: 184}, []string{"调高到 300"}, []string{"密度区间"}},
+	}
+	for _, tc := range cases {
+		err := ValidateSnellShapingFeasible(tc.policy)
+		if !errors.Is(err, ErrSnellShapingInfeasible) {
+			t.Fatalf("%+v: err=%v", tc.policy, err)
+		}
+		for _, want := range tc.want {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("%+v: %q lacks %q", tc.policy, err, want)
+			}
+		}
+		for _, avoid := range tc.avoid {
+			if strings.Contains(err.Error(), avoid) {
+				t.Fatalf("%+v: %q should not mention %q", tc.policy, err, avoid)
+			}
+		}
+	}
+}

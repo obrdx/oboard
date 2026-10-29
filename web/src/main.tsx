@@ -1246,6 +1246,7 @@ function localizeErrorMessage(message: unknown) {
   if (portExhaustion) return portExhaustion
   const relayUpdate = localizeRelayUpdateFailure(raw)
   if (relayUpdate) return relayUpdate
+  if (raw.startsWith('snell_shaping_infeasible: ')) return raw.slice('snell_shaping_infeasible: '.length)
   if (raw.startsWith('invalid age public key:')) return 'Age 公钥格式无效'
   if (raw.startsWith('invalid trusted proxy address ')) return `受信代理地址无效：${raw.slice('invalid trusted proxy address '.length)}`
   if (raw.startsWith('config_json.tls.reality.dest:')) return 'Reality 不支持旧字段 dest，请改用握手域名和握手端口。'
