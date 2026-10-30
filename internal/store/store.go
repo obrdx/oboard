@@ -6711,8 +6711,23 @@ func (s *Store) SupersedePendingTasksByServerType(ctx context.Context, serverID 
 		"error":   reason,
 	})
 	ts := now()
-	_, err := s.db.ExecContext(ctx, `update agent_tasks set status='failed', result_json=?, updated_at=?, completed_at=? where server_id=? and type=? and status='pending'`, string(result), ts, ts, serverID, taskType)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if taskType == model.AgentTaskTypeApplyDeployment || taskType == model.AgentTaskTypeApplyCoreConfig {
+		// A sync row waiting on a task retired here would never see a result
+		// and stay queued; reopen it so the next reconcile decides what to send.
+		if _, err := tx.ExecContext(ctx, `update configuration_sync_states set state='pending',trigger_reason=?,retry_count=0,next_retry_at=null,last_error='',problems_json='[]',updated_at=?
+			where server_id=? and state in ('queued','running') and last_config_version in (select config_version from agent_tasks where server_id=? and type=? and status='pending')`, ConfigurationSyncTriggerSuperseded, ts, serverID, serverID, taskType); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `update agent_tasks set status='failed', result_json=?, updated_at=?, completed_at=? where server_id=? and type=? and status='pending'`, string(result), ts, ts, serverID, taskType); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SupersedeStaleGuardedTasks cancels queued configuration tasks that a newer

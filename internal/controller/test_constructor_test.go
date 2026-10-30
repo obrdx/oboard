@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +32,8 @@ func snapshotBindingsFromData(data store.FullRoutingConfig) []model.ProxyPathUse
 }
 
 func newTestServer(store *store.Store, sessionSecret, staticDir string) *Server {
+	// Tests pull subscriptions immediately; skip the post-restart warmup.
+	store.StartSubscriptionLimiterAt(time.Now().Add(-time.Minute))
 	srv := New(store, sessionSecret, staticDir, "", nil)
 	srv.telegramMarkupSend = func(ctx context.Context, channel model.NotificationChannel, chatID int64, title, body, markup string) (int64, error) {
 		if err := srv.notificationSender(ctx, channel, title, body); err != nil {
@@ -40,6 +43,18 @@ func newTestServer(store *store.Store, sessionSecret, staticDir string) *Server 
 	}
 	srv.telegramMarkupEdit = func(context.Context, int64, int64, string, string) error { return nil }
 	return srv
+}
+
+// newAgentLinkTestServer is a test Controller with an AgentLink listener
+// configured: enrollment commands and Agent updates require one.
+func newAgentLinkTestServer(store *store.Store, sessionSecret, staticDir string) *Server {
+	srv := newTestServer(store, sessionSecret, staticDir)
+	enableTestAgentLink(srv)
+	return srv
+}
+
+func enableTestAgentLink(srv *Server) {
+	srv.stealthTransport.Store(&stealthTransport{addr: "agent.example.com:24443", pin: strings.Repeat("a", 64)})
 }
 
 func enableTestAudit(t testing.TB, db *store.Store) {

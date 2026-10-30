@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"github.com/OboardProject/oboard/internal/model"
 	"testing"
+	"time"
 )
 
 func TestProxyCredentialSelectionRequiresExactPersistedScope(t *testing.T) {
@@ -62,9 +63,15 @@ func TestIncoherentDeviceIdentityIsNeverProjected(t *testing.T) {
 				t.Fatalf("coherent = %v want %v", got, test.coherent)
 			}
 			user := model.User{ID: 1, Username: "account", Status: "active", DeviceIDHash: test.deviceIDHash, CredentialEpoch: test.epoch}
+			// Device-bound material projects only inside a reviewed retirement
+			// transition; the window must never rescue an incoherent identity.
+			transition := test.deviceIDHash != ""
+			if transition {
+				user.DeviceTransitionUntil = time.Now().Add(time.Hour)
+			}
 			user.ProxyCredentials = []model.ProxyCredential{{
 				ID: "opaque-key", UserID: 1, InboundID: 2, PathID: 3, Protocol: model.ProtocolSSH, Status: "active",
-				DeviceIDHash: test.deviceIDHash, CredentialEpoch: test.epoch,
+				DeviceIDHash: test.deviceIDHash, CredentialEpoch: test.epoch, DeviceTransitionAllowed: transition,
 				Username: "opaque-login", Password: "random-material", UUID: "random-uuid",
 			}}
 			selected := UserCredentialForRoute(user, 2, 3, model.ProtocolSSH)

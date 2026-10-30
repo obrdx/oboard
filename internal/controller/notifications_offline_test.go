@@ -241,7 +241,9 @@ func TestServerRecoveryCancelsOfflineAndDelaysOnline(t *testing.T) {
 	}
 }
 
-func TestSubscriptionAbnormalNotificationQueuesOncePerHour(t *testing.T) {
+// Rejected pulls feed account audit snapshots; the legacy hourly
+// subscription_abnormal notice is retired and is never sent directly.
+func TestRejectedSubscriptionPullsMarkAccountAuditDirty(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -275,21 +277,16 @@ func TestSubscriptionAbnormalNotificationQueuesOncePerHour(t *testing.T) {
 			t.Fatalf("pull %d status = %d", i, recorder.Code)
 		}
 	}
-	waitNotificationCount(t, srv, &sentMu, &sent, 1)
-	sentMu.Lock()
-	if !strings.Contains(sent[0], "alice") {
-		t.Fatalf("subscription abnormal title missing user: %q", sent[0])
+	// Each rejected pull marked the account dirty, so the next mark is the fourth.
+	revision, err := db.MarkAccountAuditDirty(context.Background(), user.ID)
+	if err != nil || revision != 4 {
+		t.Fatalf("rejected pulls did not mark the account for evaluation: revision=%d err=%v", revision, err)
 	}
-	sentMu.Unlock()
-
-	// A fourth abnormal pull within the same hour must not queue again.
-	recorder := httptest.NewRecorder()
-	h.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/subscriptions/sub-token?format=bogus", nil))
 	time.Sleep(200 * time.Millisecond)
 	sentMu.Lock()
 	defer sentMu.Unlock()
-	if len(sent) != 1 {
-		t.Fatalf("dedup failed, got %d notifications", len(sent))
+	if len(sent) != 0 {
+		t.Fatalf("retired direct abnormal notice sent: %q", sent)
 	}
 }
 
@@ -375,7 +372,7 @@ func TestTelegramBotReplyCommands(t *testing.T) {
 		t.Fatalf("users reply missing info: %q", users)
 	}
 	audit := srv.telegramBotReply(ctx, "/audit")
-	if !strings.Contains(audit, "审计概览") {
+	if !strings.Contains(audit, "审计中心") || !strings.Contains(audit, "待处理事件") {
 		t.Fatalf("audit reply missing info: %q", audit)
 	}
 	help := srv.telegramBotReply(ctx, "/help")

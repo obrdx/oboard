@@ -122,6 +122,8 @@ func TestRelayControllerEndToEnd(t *testing.T) {
 	if err := db.SetSetting(context.Background(), "subscription_relay_url", managed.PublicURL); err != nil {
 		t.Fatal(err)
 	}
+	// The Controller is fresh; skip its post-restart subscription rate warmup.
+	db.StartSubscriptionLimiterAt(time.Now().Add(-time.Minute))
 	app := controller.New(db, masterSecret, "", "", nil)
 	defer app.Close()
 	upstream := httptest.NewServer(app.Handler())

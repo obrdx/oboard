@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/perfload"
+	"github.com/OboardProject/oboard/internal/store"
 )
 
 // percentileNearestRank returns the nearest-rank percentile for a sorted sample.
@@ -61,7 +62,12 @@ func TestHotPathBenchmarkSmallSpec(t *testing.T) {
 	if _, err := srv.currentAuthorizationLease(ctx, server.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := srv.auditOverviewData(ctx, 24); err != nil {
+	// The audit console reads persisted account audit snapshots.
+	readAudit := func() error {
+		_, err := db.ListAccountAuditEvents(ctx, store.AccountAuditQuery{Limit: 20, Status: "pending"})
+		return err
+	}
+	if err := readAudit(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -83,7 +89,7 @@ func TestHotPathBenchmarkSmallSpec(t *testing.T) {
 		leaseSamples = append(leaseSamples, time.Since(start))
 
 		start = time.Now()
-		if _, _, _, err := srv.auditOverviewData(ctx, 24); err != nil {
+		if err := readAudit(); err != nil {
 			t.Fatal(err)
 		}
 		auditSamples = append(auditSamples, time.Since(start))

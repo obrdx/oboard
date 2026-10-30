@@ -308,6 +308,27 @@ func storageDiagnosticsSchema() map[string]any {
 		fields[key] = integer
 	}
 	operation := schemaObject(map[string]any{"role": text, "kind": text, "count": integer, "sample_count": integer, "window_start": text, "window_end": text, "avg_ms": number, "p50_ms": number, "p95_ms": number, "p99_ms": number, "max_ms": number})
-	performance := map[string]any{"type": "object", "properties": map[string]any{"role": text, "traffic_ledger": schemaObject(fields), "operations": map[string]any{"type": "array", "items": operation}}, "additionalProperties": true}
-	return map[string]any{"type": "object", "properties": map[string]any{"performance": map[string]any{"type": "array", "items": performance}, "table_space_available": map[string]any{"type": "boolean"}, "table_space_pending": map[string]any{"type": "boolean"}}, "additionalProperties": true}
+	performance := closedObject(map[string]any{
+		"traffic_ledger": schemaObject(fields), "role": text, "wait_count": integer, "wait_duration_ms": number,
+		"open_connections": integer, "in_use": integer, "busy_errors": integer, "locked_errors": integer,
+		"operations": map[string]any{"type": "array", "items": operation},
+	})
+	// Maintenance summaries and checkpoint results are free-form key/value reports.
+	report := map[string]any{"type": "object"}
+	health := closedObject(map[string]any{
+		"role": text, "status": text, "path": text, "schema_version": integer, "db_bytes": integer, "wal_bytes": integer, "shm_bytes": integer,
+		"page_count": integer, "page_size": integer, "freelist_count": integer, "growth_24h_bytes": integer,
+		"last_maintenance_at": text, "last_maintenance": report, "checkpoint": report, "last_error": text, "opened_at": text,
+	})
+	tableSpace := closedObject(map[string]any{"database": text, "table": text, "data_bytes": integer, "index_bytes": integer, "row_count": integer, "exact": map[string]any{"type": "boolean"}, "growth_24h_bytes": integer})
+	boolean := map[string]any{"type": "boolean"}
+	return closedObject(map[string]any{
+		"db_bytes": integer, "wal_bytes": integer, "shm_bytes": integer, "page_count": integer, "page_size": integer, "freelist_count": integer,
+		"maintenance_hint": text, "incremental_vacuum_pending": boolean, "audit_rollup_state": report, "dirty_hourly_count": integer,
+		"connection_audit_retention_hours": integer, "subscription_audit_retention_hours": integer, "server_monitoring_retention_days": integer,
+		"last_maintenance_at": text, "last_maintenance_summary": report, "analyzed_at": text,
+		"history_available": boolean, "table_space_available": boolean, "table_space_pending": boolean,
+		"core": health, "history": health, "tables": map[string]any{"type": "array", "items": tableSpace},
+		"performance": map[string]any{"type": "array", "items": performance},
+	})
 }

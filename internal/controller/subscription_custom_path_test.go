@@ -139,6 +139,7 @@ func TestSubscriptionCustomPathHonorsBasePath(t *testing.T) {
 	if _, err := db.SetSubscriptionCustomPath(context.Background(), user.ID, "base-alias"); err != nil {
 		t.Fatal(err)
 	}
+	db.StartSubscriptionLimiterAt(time.Now().Add(-time.Minute))
 	h := New(db, "test-secret", "", "/hidden", nil).Handler()
 	for path, want := range map[string]int{"/s/base-alias": http.StatusNotFound, "/hidden/s/base-alias": http.StatusOK, "/hidden/s/base-alias/": http.StatusNotFound, "/hidden/s/base/alias": http.StatusNotFound} {
 		response := httptest.NewRecorder()

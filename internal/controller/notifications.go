@@ -500,6 +500,8 @@ func (s *Server) queueDeploymentAfterReconnect(ctx context.Context, serverID int
 	if err := s.store.SupersedePendingTasksByServerType(ctx, serverID, model.AgentTaskTypeApplyDeployment, "服务器恢复在线，新的配置已自动下发"); err != nil {
 		log.Printf("supersede stale deployment tasks for server %d: %v", serverID, err)
 	}
+	// The superseded task's sync row is pending again; let the reconciler settle it.
+	defer s.signalConfigurationReconcile()
 	tasks, version, err := s.deployConfiguration(ctx, serverID, true)
 	if err != nil {
 		log.Printf("auto deployment after server %d reconnect failed: %v", serverID, err)

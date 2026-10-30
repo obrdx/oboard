@@ -2168,6 +2168,34 @@ func TestQuickOneTimeSubscriptionDoesNotChangePersistentPolicy(t *testing.T) {
 	}
 }
 
+func TestAgentUpdateWithoutAgentLinkExplainsThePrecondition(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "http://localhost"); err != nil {
+		t.Fatal(err)
+	}
+	h := newTestServer(db, "test-secret", "").Handler()
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "edge", "listen_ip": "0.0.0.0", "status": "online"}, http.StatusCreated)
+	serverID := int64(created["server"].(map[string]any)["id"].(float64))
+	server, err := db.GetServer(context.Background(), serverID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.AgentID, server.AgentTokenHash, server.AgentBuild = "agent-edge", security.HashSecret("agent-token"), "20260706050530"
+	if err := db.UpdateServer(context.Background(), server); err != nil {
+		t.Fatal(err)
+	}
+	res := request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(serverID)+"/agent-update", token, map[string]any{}, http.StatusPreconditionFailed)
+	if !strings.Contains(fmt.Sprint(res["error"]), "AgentLink") {
+		t.Fatalf("missing AgentLink was not explained: %#v", res)
+	}
+}
+
 func TestAgentUpdateAllowedForSelfUpdateCapableOlderBuild(t *testing.T) {
 	originalBuild, originalAgentBuild := version.Build, version.AgentBuild
 	t.Cleanup(func() {
@@ -2183,7 +2211,7 @@ func TestAgentUpdateAllowedForSelfUpdateCapableOlderBuild(t *testing.T) {
 	if err := db.SetSetting(context.Background(), "controller_url", "http://localhost"); err != nil {
 		t.Fatal(err)
 	}
-	h := newTestServer(db, "test-secret", "").Handler()
+	h := newAgentLinkTestServer(db, "test-secret", "").Handler()
 
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
@@ -3547,6 +3575,10 @@ func TestDeploymentSyncsDNSBeforeCreatingTasks(t *testing.T) {
 	}))
 	defer cf.Close()
 
+	// A single-stack IPv4 entry keeps a record only with "always resolve" on.
+	if err := db.SetSetting(context.Background(), settingDNSAlwaysResolve, "true"); err != nil {
+		t.Fatal(err)
+	}
 	srv := newTestServer(db, "test-secret", "")
 	srv.dnsEndpoints.cloudflare = cf.URL
 	h := srv.Handler()
@@ -3828,7 +3860,7 @@ func TestAgentsUpdateAllCreatesTasks(t *testing.T) {
 	if err := db.SetSetting(ctx, "controller_url", "http://localhost"); err != nil {
 		t.Fatal(err)
 	}
-	h := newTestServer(db, "test-secret", "").Handler()
+	h := newAgentLinkTestServer(db, "test-secret", "").Handler()
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)

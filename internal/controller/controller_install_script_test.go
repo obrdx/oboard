@@ -677,11 +677,13 @@ func TestControllerUpdaterUnitBinaryWritePaths(t *testing.T) {
 	if !strings.Contains(text, "EnvironmentFile=-/opt/oboard/config/controller.env") {
 		t.Fatal("updater unit does not load the persisted install directory")
 	}
-	want := "ReadWritePaths=/run/oboard /opt/oboard"
+	// The optional unit directories let the updater remove the retired script
+	// worker unit; it tolerates a read-only /etc and defers that to the installer.
+	want := "ReadWritePaths=/run/oboard /opt/oboard -/etc/systemd/system -/etc/init.d\n"
 	if !strings.Contains(text, want) {
-		t.Fatalf("updater unit missing binary installation write paths %q", want)
+		t.Fatalf("updater unit write paths changed; want %q", want)
 	}
-	for _, removed := range []string{"docker", "/var/lib/oboard", "/etc/oboard", "/usr/local/bin", "/etc/systemd/system"} {
+	for _, removed := range []string{"docker", "/var/lib/oboard", "/etc/oboard", "/usr/local/bin"} {
 		if strings.Contains(strings.ToLower(text), removed) {
 			t.Fatalf("updater unit still contains removed path or dependency %q", removed)
 		}

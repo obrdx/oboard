@@ -40,6 +40,10 @@ func TestHealthAvailableWhileGeoHistoryRefreshIsPending(t *testing.T) {
 	if err := db.CreateUser(t.Context(), user); err != nil {
 		t.Fatal(err)
 	}
+	// Per-connection detail, and so its source geography, is kept only in standard collection.
+	if err := db.SetSetting(t.Context(), "account_audit_collection", `{"mode":"standard"}`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.AddConnectionAuditReportsResult(t.Context(), []model.ConnectionAuditReport{{
 		ReportID: "geo-report", ServerID: node.ID, UserID: user.ID, SourceIP: "1.1.1.1", GeoDatabaseRevision: "old-geo",
 	}}); err != nil {

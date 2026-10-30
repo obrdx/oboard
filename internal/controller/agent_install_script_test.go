@@ -1070,7 +1070,7 @@ esac
 			if tc.active {
 				writeTestFile(t, filepath.Join(state, "active"), "1")
 			}
-			driver := "set -eu\nSERVICE_MANAGER=systemd\n" + helpers + "\nwait_service_stable oboard-sb 4\n"
+			driver := "set -eu\nSERVICE_MANAGER=systemd\nSTEALTH_MODE=0\n" + helpers + "\nwait_service_stable oboard-sb 4\n"
 			cmd := exec.Command(shell, "-c", driver)
 			cmd.Env = append(os.Environ(), "PATH="+stub+":"+os.Getenv("PATH"), "STUB_STATE="+state)
 			out, err := cmd.CombinedOutput()

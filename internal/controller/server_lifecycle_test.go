@@ -65,7 +65,7 @@ func TestServerLifecycleDoesNotWaitForCredentialReconciliation(t *testing.T) {
 	}
 	principal := application.HumanPrincipal(*user, model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
 	withBusyWorker(func() {
-		applyAutomationChangeset(t, srv, principal, "fast-mcp-create", automation.OperationRequest{Capability: "servers.onboard", Input: json.RawMessage(`{"server":{"name":"fast-mcp"},"issue_enrollment_token":false}`)})
+		applyAutomationChangeset(t, srv, principal, "fast-mcp-create", automation.OperationRequest{Capability: "servers.onboard", Input: json.RawMessage(`{"server":{"name":"fast-mcp","auto_renew_enabled":false},"issue_enrollment_token":false}`)})
 	})
 	servers, err := db.ListServers(context.Background())
 	if err != nil || len(servers) != 1 {
@@ -151,7 +151,7 @@ func TestServerOnboardUniquenessEnrollmentIssueAndDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	principal := application.HumanPrincipal(*user, model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
-	onboard, _ := json.Marshal(map[string]any{"server": map[string]any{"name": "SJC"}, "issue_enrollment_token": false})
+	onboard, _ := json.Marshal(map[string]any{"server": map[string]any{"name": "SJC", "auto_renew_enabled": false}, "issue_enrollment_token": false})
 	applyAutomationChangeset(t, server, principal, "onboard-sjc", automation.OperationRequest{Capability: "servers.onboard", Input: onboard})
 	items, err := db.ListServers(ctx)
 	if err != nil || len(items) != 1 {
@@ -213,7 +213,7 @@ func TestServerOnboardingPlanEmptyNameAndReissue(t *testing.T) {
 		t.Fatalf("suggested=%s", rawSuggested)
 	}
 
-	unique, err := server.application.PlanServerOnboarding(ctx, principal, json.RawMessage(`{"name":"NRT","region_code":"JP"}`))
+	unique, err := server.application.PlanServerOnboarding(ctx, principal, json.RawMessage(`{"name":"NRT","region_code":"JP","auto_renew_enabled":false}`))
 	if err != nil || !unique.Valid {
 		t.Fatalf("unique plan=%#v err=%v", unique, err)
 	}

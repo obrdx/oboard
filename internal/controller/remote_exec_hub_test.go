@@ -237,6 +237,7 @@ func TestRemoteTerminalGateAcceptsLiveChannelWhileStatusLags(t *testing.T) {
 	}
 	view.Global.RemoteTerminalEnabled = true
 	view.Server.RemoteTerminalEnabled = true
+	view.Effective.RemoteTerminal = true
 
 	if reasons := app.remoteAccessUnavailableReasons(node, view, "remote_terminal"); len(reasons) == 0 {
 		t.Fatal("an offline row with no channel must still be refused")

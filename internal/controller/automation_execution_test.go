@@ -439,14 +439,14 @@ func TestDeploymentOperationChecksCompleteScopeBeforeMutation(t *testing.T) {
 
 func TestServerOnboardingEnrollmentTokenIsReturnedOnlyOnce(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
-	server := newTestServer(db, "test-secret", "")
+	server := newAgentLinkTestServer(db, "test-secret", "")
 	ctx := context.Background()
 	user := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused"}
 	if err := db.CreateUser(ctx, user); err != nil {
 		t.Fatal(err)
 	}
 	principal := application.HumanPrincipal(*user, model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
-	plan, err := server.application.PlanServerOnboarding(ctx, principal, json.RawMessage(`{"name":"new-node","region_code":"JP","ip_stack":"auto"}`))
+	plan, err := server.application.PlanServerOnboarding(ctx, principal, json.RawMessage(`{"name":"new-node","region_code":"JP","ip_stack":"auto","auto_renew_enabled":false}`))
 	if err != nil {
 		t.Fatal(err)
 	}

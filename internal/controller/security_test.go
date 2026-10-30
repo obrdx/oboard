@@ -753,7 +753,7 @@ func TestEnrollmentTokenIsOneTimeAndAgentAuthUsesConstantTimePath(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer db.Close()
-	h := newTestServer(db, "test-secret", "").Handler()
+	h := newAgentLinkTestServer(db, "test-secret", "").Handler()
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := login["token"].(string)
@@ -1157,7 +1157,7 @@ func TestEnrollmentTokenIncludesExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	h := newTestServer(db, "test-secret", "").Handler()
+	h := newAgentLinkTestServer(db, "test-secret", "").Handler()
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := login["token"].(string)

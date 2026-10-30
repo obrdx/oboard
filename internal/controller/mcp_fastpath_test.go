@@ -340,7 +340,7 @@ func TestMCPFastPathRecipesCommitThroughWorkflow(t *testing.T) {
 		name string
 		args map[string]any
 	}{
-		{name: "server onboard", args: map[string]any{"intent": "server.onboard", "goal": "新增一台 Tokyo 服务器，IPv6 优先，打开 BBR"}},
+		{name: "server onboard", args: map[string]any{"intent": "server.onboard", "goal": "新增一台 Tokyo 服务器，IPv6 优先，打开 BBR", "params": map[string]any{"auto_renew_enabled": false}}},
 		{name: "server manage", args: map[string]any{"intent": "server.manage", "goal": "把香港服务器调成 IPv6 优先", "target_refs": []any{fmt.Sprintf("server:%d", entry.ID)}, "params": map[string]any{"ip_stack": "prefer_ipv6"}}},
 		{name: "inbound create", args: map[string]any{"intent": "inbound.create", "goal": "在新加坡创建 VLESS 入口", "target_refs": []any{fmt.Sprintf("server:%d", exit.ID)}, "params": map[string]any{"name": "Singapore VLESS", "protocol": "vless", "port": 8443}}},
 		{name: "proxy path", args: map[string]any{"intent": "proxy_path.manage", "goal": "把香港 VLESS 入口通过新加坡", "target_refs": []any{fmt.Sprintf("inbound:%d", inbound.ID), fmt.Sprintf("server:%d", exit.ID)}}},
@@ -440,7 +440,7 @@ func TestMCPFastPathContinuationAndStaleRevision(t *testing.T) {
 		t.Fatalf("needs_input=%#v", needs)
 	}
 	continuationID := needs["data"].(map[string]any)["continuation_id"].(string)
-	ready := fastPathCall(t, session, "oboard_task", map[string]any{"continuation_id": continuationID, "params": map[string]any{"server.name": "Tokyo-Continuation"}})
+	ready := fastPathCall(t, session, "oboard_task", map[string]any{"continuation_id": continuationID, "params": map[string]any{"server.name": "Tokyo-Continuation", "server.auto_renew_enabled": false}})
 	fastPathPreparedID(t, ready)
 	for _, name := range []string{"Tokyo-01", "Tokyo-02"} {
 		candidate := model.Server{Name: name, RegionMode: "manual", RegionCode: "JP", ListenIP: "0.0.0.0", PortRangeStart: 16000, PortRangeEnd: 17000, Status: model.ServerOnline}

@@ -195,7 +195,7 @@ func TestUninstallAgentCapabilityQueuesTask(t *testing.T) {
 
 func TestAgentsUpdateAllCapability(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
-	server := newTestServer(db, "test-secret", "")
+	server := newAgentLinkTestServer(db, "test-secret", "")
 	ctx := context.Background()
 	admin := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused"}
 	if err := db.CreateUser(ctx, admin); err != nil {

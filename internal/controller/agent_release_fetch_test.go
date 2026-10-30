@@ -280,14 +280,18 @@ func writeTestAgentRelease(t *testing.T, directory, commit string, privateKey ed
 	files := []struct {
 		name      string
 		component string
+		os        string
 		arch      string
 	}{
-		{name: "oboard-agent-linux-amd64", component: "agent", arch: "amd64"},
-		{name: "oboard-agent-linux-arm64", component: "agent", arch: "arm64"},
-		{name: "oboard-sb-linux-amd64", component: "sb", arch: "amd64"},
-		{name: "oboard-sb-linux-arm64", component: "sb", arch: "arm64"},
-		{name: "oboard-realm-linux-amd64", component: "realm", arch: "amd64"},
-		{name: "oboard-realm-linux-arm64", component: "realm", arch: "arm64"},
+		{name: "oboard-agent-linux-amd64", component: "agent", os: "linux", arch: "amd64"},
+		{name: "oboard-agent-linux-arm64", component: "agent", os: "linux", arch: "arm64"},
+		{name: "oboard-sb-linux-amd64", component: "sb", os: "linux", arch: "amd64"},
+		{name: "oboard-sb-linux-arm64", component: "sb", os: "linux", arch: "arm64"},
+		{name: "oboard-realm-linux-amd64", component: "realm", os: "linux", arch: "amd64"},
+		{name: "oboard-realm-linux-arm64", component: "realm", os: "linux", arch: "arm64"},
+		{name: "oboard-agent-windows-amd64", component: "agent", os: "windows", arch: "amd64"},
+		{name: "oboard-sb-windows-amd64", component: "sb", os: "windows", arch: "amd64"},
+		{name: "oboard-realm-windows-amd64", component: "realm", os: "windows", arch: "amd64"},
 	}
 	manifest := testAgentReleaseManifest{
 		Version: "dev-" + commit[:12],
@@ -305,7 +309,7 @@ func writeTestAgentRelease(t *testing.T, directory, commit string, privateKey ed
 		manifest.Files = append(manifest.Files, testAgentReleaseManifestFile{
 			Name:      file.name,
 			Component: file.component,
-			OS:        "linux",
+			OS:        file.os,
 			Arch:      file.arch,
 			SHA256:    hex.EncodeToString(digest[:]),
 			Size:      int64(len(content)),
@@ -358,7 +362,7 @@ while [ "$#" -gt 0 ]; do
   if [ "$1" = --dir ]; then destination=$2; shift 2; else shift; fi
 done
 test -n "$destination"
-for file in oboard-agent-linux-amd64 oboard-agent-linux-arm64 oboard-sb-linux-amd64 oboard-sb-linux-arm64 oboard-realm-linux-amd64 oboard-realm-linux-arm64 release-manifest.json release-manifest.json.sig; do
+for file in oboard-agent-linux-amd64 oboard-agent-linux-arm64 oboard-sb-linux-amd64 oboard-sb-linux-arm64 oboard-realm-linux-amd64 oboard-realm-linux-arm64 oboard-agent-windows-amd64 oboard-sb-windows-amd64 oboard-realm-windows-amd64 release-manifest.json release-manifest.json.sig; do
   cp "$source/$file" "$destination/$file"
 done
 `

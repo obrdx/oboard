@@ -398,7 +398,7 @@ func TestEnrollmentTokenCannotBindAnotherServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	h := newTestServer(db, "test-secret", "").Handler()
+	h := newAgentLinkTestServer(db, "test-secret", "").Handler()
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	adminToken := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 	serverA := request(t, h, http.MethodPost, "/api/v1/ui/servers", adminToken, map[string]any{"name": "enroll-a", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
@@ -432,7 +432,7 @@ func TestEnrollmentConcurrentRequestsConsumeTokenOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	h := newTestServer(db, "test-secret", "").Handler()
+	h := newAgentLinkTestServer(db, "test-secret", "").Handler()
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	adminToken := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", adminToken, map[string]any{"name": "race-node", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)

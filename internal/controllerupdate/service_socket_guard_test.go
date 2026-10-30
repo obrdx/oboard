@@ -3,6 +3,7 @@ package controllerupdate
 import (
 	"context"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,7 +16,7 @@ import (
 // update requests went to the newcomer instead. A production host was found
 // with three processes listening on this path.
 func TestServeRefusesToTakeALiveSocket(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "updater.sock")
+	path := shortSocketPath(t)
 	incumbent, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +51,7 @@ func TestServeRefusesToTakeALiveSocket(t *testing.T) {
 
 // A socket file left behind by a process that is gone is not a live one.
 func TestServeReplacesAStaleSocketFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "updater.sock")
+	path := shortSocketPath(t)
 	stale, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)
@@ -61,4 +62,16 @@ func TestServeReplacesAStaleSocketFile(t *testing.T) {
 	if err := errIfSocketIsLive(path); err != nil {
 		t.Fatalf("stale socket treated as live: %v", err)
 	}
+}
+
+// shortSocketPath keeps the socket under the 104-byte sun_path limit of
+// macOS; t.TempDir embeds the test name and can exceed it.
+func shortSocketPath(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "upd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "updater.sock")
 }

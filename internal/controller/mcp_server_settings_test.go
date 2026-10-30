@@ -147,7 +147,8 @@ func TestMCPServerDisplayTagsRoundTripAndPatchOmit(t *testing.T) {
 	principal := userAutomationPrincipal(t, db, admin.ID)
 	onboard, _ := json.Marshal(map[string]any{
 		"server": map[string]any{
-			"name": "tag-card",
+			"name":               "tag-card",
+			"auto_renew_enabled": false,
 			"display_tags": []map[string]any{
 				{"text": "IncuShlii", "tone": "blue"},
 				{"text": "原生IP/住宅IP", "tone": "orange"},

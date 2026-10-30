@@ -312,8 +312,9 @@ func TestPanelEnrollmentCommandIncludesStealthTransport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(plain, "OBOARD_STEALTH_ADDR") || env["OBOARD_STEALTH_PIN"] != nil || !strings.Contains(plain, "OBOARD_INSTALL_STEALTH='0'") {
-		t.Fatal("plain command includes stealth transport")
+	// Every Agent links through AgentLink; only the security-process layout is stealth-only.
+	if !strings.Contains(plain, "OBOARD_STEALTH_ADDR='transport.example.com:443'") || env["OBOARD_STEALTH_PIN"] != "test-pin" || strings.Contains(plain, "OBOARD_STEALTH_LAYOUT") || env["OBOARD_STEALTH_LAYOUT"] != nil || !strings.Contains(plain, "OBOARD_INSTALL_STEALTH='0'") {
+		t.Fatalf("plain command must carry AgentLink but no security-process layout: %s %#v", plain, env)
 	}
 }
 

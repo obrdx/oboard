@@ -116,6 +116,14 @@ func subscriptionLimitSource(raw string) string {
 
 // AllowSubscriptionIngress charges every HTTP request before token lookup. No
 // attacker-controlled credential is retained as a key, including invalid tokens.
+// StartSubscriptionLimiterAt fixes the limiter's process start, which bounds
+// the post-restart warmup, when called before the first request. Tests that
+// pull subscriptions right after opening a store use it; it never shortens
+// the warmup of a limiter that is already serving.
+func (s *Store) StartSubscriptionLimiterAt(at time.Time) {
+	s.subscriptionLimiter.once.Do(func() { s.subscriptionLimiter.seed = maphash.MakeSeed(); s.subscriptionLimiter.started = at })
+}
+
 func (s *Store) AllowSubscriptionIngress(source string, at time.Time) (bool, time.Duration) {
 	global, gr := s.subscriptionLimiter.consume("ingress:global", 6000, at)
 	local, lr := s.subscriptionLimiter.consume("ingress:source:"+subscriptionLimitSource(source), 120, at)

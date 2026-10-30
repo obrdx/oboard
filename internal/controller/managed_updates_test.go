@@ -60,7 +60,7 @@ func TestScheduledManagedUpdatesQueueOutdatedTargetsOnce(t *testing.T) {
 	if err := db.SetSettings(context.Background(), map[string]string{agentAutoUpdateSetting: "true", subscriptionRelayAutoUpdateSetting: "true"}); err != nil {
 		t.Fatal(err)
 	}
-	s := newTestServer(db, "test-secret", "")
+	s := newAgentLinkTestServer(db, "test-secret", "")
 	if err := db.SetSetting(context.Background(), "controller_url", "https://controller.example"); err != nil {
 		t.Fatal(err)
 	}

@@ -269,13 +269,10 @@ type Server struct {
 	subscriptionPublications      *subscriptionPublicationCache
 	subscriptionPublicationHits   atomic.Int64
 	subscriptionPublicationBuilds atomic.Int64
-	// auditOverviews caches the audit console summaries, which three polling
-	// endpoints request for the same reporting window.
-	auditOverviews         auditOverviewCache
-	latencyHistoryOnce     sync.Once
-	latencyHistoryCache    *coalesceCache[string, json.RawMessage]
-	latencyHistorySequence atomic.Uint64
-	latencyHistoryNow      func() time.Time
+	latencyHistoryOnce            sync.Once
+	latencyHistoryCache           *coalesceCache[string, json.RawMessage]
+	latencyHistorySequence        atomic.Uint64
+	latencyHistoryNow             func() time.Time
 	// settingsCache is the revision-keyed ListSettings snapshot used by hot
 	// paths (health reports, audit gates).
 	settingsCache      atomic.Pointer[settingsSnapshot]
@@ -2994,7 +2991,13 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case "audit":
-		err = require(model.RoleOperator)
+		// The AI review form scopes a job to selected servers and, for admins, users.
+		if err = require(model.RoleOperator); err == nil {
+			err = addServers()
+		}
+		if err == nil && roleAllows(role, model.RoleAdmin) {
+			err = addUsers()
+		}
 
 	case "account":
 		if user := currentUser(r); user != nil {
@@ -5048,6 +5051,8 @@ func (s *Server) serverAgentUpdate(w http.ResponseWriter, r *http.Request, id in
 			status = 400
 		} else if errors.Is(err, errAgentUpdateOffline) {
 			status = http.StatusConflict
+		} else if errors.Is(err, errAgentUpdateNeedsAgentLink) {
+			status = http.StatusPreconditionFailed
 		} else if strings.Contains(err.Error(), "已是最新") {
 			status = http.StatusConflict
 		}
@@ -5233,7 +5238,7 @@ func (s *Server) enqueueAgentUpdateWithVersion(ctx context.Context, server *mode
 		configVersion = time.Now().Unix()
 	}
 	if _, _, active := s.StealthTransportInfo(); !active {
-		return model.AgentTask{}, false, errors.New("请先填写并启用 AgentLink 专用地址，再更新 Agent")
+		return model.AgentTask{}, false, errAgentUpdateNeedsAgentLink
 	}
 	controllerURL, err := s.publicBaseURL(ctx)
 	if err != nil {
@@ -5269,6 +5274,8 @@ func (s *Server) enqueueAgentUpdateWithVersion(ctx context.Context, server *mode
 }
 
 var errAgentUpdateOffline = errors.New("服务器离线，将在重新连接后更新")
+
+var errAgentUpdateNeedsAgentLink = errors.New("请先填写并启用 AgentLink 专用地址，再更新 Agent")
 
 func emptyDash(value string) string {
 	if strings.TrimSpace(value) == "" {

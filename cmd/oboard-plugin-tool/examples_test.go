@@ -27,6 +27,7 @@ func fakeGateway(t *testing.T, methods map[string]int) pluginruntime.CallFunc {
 			"http.request":         `{"status":202,"headers":{},"redirects":0,"final_url":"https://api.statuspage.example.com/v1/reports","body":""}`,
 			"crypto.hmac":          `{"digest":"c2lnbmF0dXJl"}`,
 			"notifications.send":   `{"sent":["1"]}`,
+			"ui.publish":           `{"page":"overview","published":true}`,
 		}
 		result, ok := results[method]
 		if !ok {

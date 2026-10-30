@@ -278,7 +278,7 @@ func TestMCPCapabilityToolAndResourceCoverage(t *testing.T) {
 		}
 	}
 
-	for _, capability := range []string{"settings.get", "agent_tasks.list", "audit.connection.overview", "access_changes.list"} {
+	for _, capability := range []string{"settings.get", "agent_tasks.list", "audit.status.read", "access_changes.list"} {
 		result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: mcpCapabilityToolName(capability), Arguments: map[string]any{}})
 		if err != nil {
 			t.Fatalf("dynamic capability %s call: %v", capability, err)

@@ -82,7 +82,7 @@ func newMCPTestEnvironment(t *testing.T, accessLevel string, scopes []string) (*
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := newTestServer(db, "test-secret", "")
+	server := newAgentLinkTestServer(db, "test-secret", "")
 	httpServer := httptest.NewServer(server.Handler())
 	if err := db.SetSetting(context.Background(), "controller_url", httpServer.URL); err != nil {
 		httpServer.Close()

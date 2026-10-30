@@ -172,6 +172,10 @@ func TestRuntimeSecurityApprovalRejectsReplacedServer(t *testing.T) {
 	if err := db.DeleteServer(ctx, old.ID); err != nil {
 		t.Fatal(err)
 	}
+	// A deleted ID becomes reusable once its history cleanup has run.
+	if _, err := db.RunMaintenance(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	fresh := &model.Server{Name: "security-new", AgentID: "new-agent", Status: model.ServerOffline}
 	if err := db.CreateServer(ctx, fresh); err != nil {
 		t.Fatal(err)

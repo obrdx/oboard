@@ -602,7 +602,7 @@ func (s *Server) telegramBotReplyForUser(ctx context.Context, user model.User, r
 		if !adminAccess {
 			return "权限不足，无法查看审计信息。"
 		}
-		if _, allowed := s.capabilities.Authorize(principal, "audit.risk_overview"); !allowed {
+		if _, allowed := s.capabilities.Authorize(principal, "audit.events.list"); !allowed {
 			return "权限不足，无法查看审计信息。"
 		}
 		return s.telegramBotAudit(ctx)

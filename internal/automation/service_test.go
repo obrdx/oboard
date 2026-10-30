@@ -420,6 +420,10 @@ func TestChangesetRejectsReusedServerIDBeforeValidation(t *testing.T) {
 	if err := db.DeleteServer(ctx, first.ID); err != nil {
 		t.Fatal(err)
 	}
+	// A deleted ID becomes reusable once its history cleanup has run.
+	if _, err := db.RunMaintenance(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	replacement := &model.Server{Name: "new"}
 	if err := db.CreateServer(ctx, replacement); err != nil {
 		t.Fatal(err)

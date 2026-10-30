@@ -35,7 +35,7 @@ OLD_ACTIVE_SERVICES=
 cat > "$tmp/agent" <<'AGENT'
 #!/bin/sh
 case "$*" in
- *-reuse-existing*|*-cleanup-existing*) exit 0 ;;
+ *-reuse-existing*|*-cleanup-existing*|*-preflight-core-update*|*-record-release-proof*) exit 0 ;;
  -version) echo "Agent build new-build" ;;
  *-enroll-only*) echo enrolled >> "$TEST_ROOT/events" ;;
  *) exit 1 ;;

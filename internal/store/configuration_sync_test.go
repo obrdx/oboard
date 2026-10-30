@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -264,5 +265,51 @@ func TestConfigurationSyncRecoveryReopensPreparationBusyFailures(t *testing.T) {
 	configState, err := db.ConfigurationSyncState(ctx, config.ID)
 	if err != nil || configState.State != "failed" || configState.LastError != "invalid desired state" {
 		t.Fatalf("real preparation failure was reopened = %#v err=%v", configState, err)
+	}
+}
+
+// Recovery after a reconnect retires a queued deployment without an Agent
+// result. The sync row waiting on it must reopen instead of staying queued on
+// a version that will never report.
+func TestSupersedingAQueuedDeploymentReopensItsSync(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "sync-recover", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	other := &model.Server{Name: "sync-other", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+	if err := db.CreateServer(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{server.ID, other.ID} {
+		task := &model.AgentTask{ServerID: id, Type: model.AgentTaskTypeApplyDeployment, PayloadJSON: "{}", Status: "pending", ResultJSON: "{}", ConfigVersion: 301, Nonce: fmt.Sprintf("recover-%d", id)}
+		if err := db.CreateTask(ctx, task); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.MarkConfigurationSyncPending(ctx, 5, []int64{id}); err != nil {
+			t.Fatal(err)
+		}
+		if claimed, err := db.ClaimConfigurationSync(ctx, id, 5); err != nil || !claimed {
+			t.Fatalf("claim = %v, err=%v", claimed, err)
+		}
+		if err := db.MarkConfigurationSyncQueued(ctx, id, 5, 301, task.ID, "digest-301"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.SupersedePendingTasksByServerType(ctx, server.ID, model.AgentTaskTypeApplyDeployment, "recovered"); err != nil {
+		t.Fatal(err)
+	}
+	state, err := db.ConfigurationSyncState(ctx, server.ID)
+	if err != nil || state.State != "pending" || state.TriggerReason != ConfigurationSyncTriggerSuperseded {
+		t.Fatalf("superseded sync stayed pinned: %#v err=%v", state, err)
+	}
+	untouched, err := db.ConfigurationSyncState(ctx, other.ID)
+	if err != nil || untouched.State != "queued" {
+		t.Fatalf("another server's sync changed: %#v err=%v", untouched, err)
 	}
 }
