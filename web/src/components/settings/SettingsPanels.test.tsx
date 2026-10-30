@@ -105,26 +105,39 @@ describe('node and Snell preset settings', () => {
     expect(notify).toHaveBeenCalledWith('预设已更新，引用入口将在下次部署时生效', 'success')
   })
 
-  it('warns about shaping combinations no PSK can meet and the recommendation repairs them', async () => {
-    const profile = { ...emptySnellDraft(6), id: 4, name: 'Snell v6 conflict', builtin: false, usage_count: 0, shaping: { padding_style: 'utf8_like', max_padding: 250 } }
-    const request = vi.fn(async () => ({}))
+  it('shows the Controller recommendation for a policy no PSK can meet and applies it', async () => {
+    const profile = { ...emptySnellDraft(6), id: 4, name: 'Snell v6 conflict', builtin: false, usage_count: 0, shaping: { padding_style: 'motif', first_record_density: { mode: 'outside' as const, min: 0.36, max: 0.65 } } }
+    const recommended = { padding_style: 'bit_biased', first_record_density: { mode: 'outside', min: 0.36, max: 0.65 } }
+    const request = vi.fn(async (path: string, options?: any) => {
+      if (path !== '/snell-shaping/check') return {}
+      const shaping = JSON.parse(options.body).shaping
+      return { check: shaping.padding_style === 'motif'
+        ? { feasible: false, acceptance: 0, minimum_acceptance: 0.00025, recommended, changes: ['填充风格改为「位偏置二进制」（其他风格的首包位密度都接近 0.5）'] }
+        : { feasible: true, acceptance: 0.0055, minimum_acceptance: 0.00025 } }
+    })
     await render(<SnellProfilesPanel data={{ snell_profiles: [profile] }} client={{ request }} load={load} notify={notify} />)
     await click('编辑 Snell v6 conflict')
-    expect(document.body.textContent).not.toContain('无法满足当前密度区间')
-    await click('DPI 避让推荐')
-    expect(document.body.textContent).not.toContain('无法满足当前密度区间')
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 400)) })
+    expect(document.body.textContent).toContain('这组设置挑不出可用的 PSK')
+    expect(document.body.textContent).toContain('填充风格改为「位偏置二进制」')
+    await click('应用推荐')
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 400)) })
+    expect(document.body.textContent).not.toContain('这组设置挑不出可用的 PSK')
+    expect(document.body.textContent).toContain('约 0.55% 的随机 PSK 满足')
     await click('保存预设')
-    const [, options] = request.mock.calls[0] as unknown as [string, { body: string }]
-    expect(JSON.parse(options.body).shaping).toEqual({ padding_style: 'bit_biased', first_record_density: { mode: 'outside', min: 0.36, max: 0.65 } })
+    const put = request.mock.calls.find(([, options]) => options?.method === 'PUT') as unknown as [string, { body: string }]
+    expect(JSON.parse(put[1].body).shaping).toEqual(recommended)
   })
 
-  it('offers a one-click fix when the padding style conflicts with the density band', async () => {
-    const profile = { ...emptySnellDraft(6), id: 5, name: 'Snell v6 style', builtin: false, usage_count: 0, shaping: { padding_style: 'motif', first_record_density: { mode: 'outside' as const, min: 0.36, max: 0.65 } } }
-    await render(<SnellProfilesPanel data={{ snell_profiles: [profile] }} client={{ request: vi.fn() }} load={load} notify={notify} />)
+  it('makes the DPI recommendation drop a conflicting padding style and cap', async () => {
+    const profile = { ...emptySnellDraft(6), id: 5, name: 'Snell v6 style', builtin: false, usage_count: 0, shaping: { padding_style: 'utf8_like', max_padding: 250 } }
+    const request = vi.fn(async () => ({}))
+    await render(<SnellProfilesPanel data={{ snell_profiles: [profile] }} client={{ request }} load={load} notify={notify} />)
     await click('编辑 Snell v6 style')
-    expect(document.body.textContent).toContain('无法满足当前密度区间')
-    await click('改为位偏置二进制')
-    expect(document.body.textContent).not.toContain('无法满足当前密度区间')
+    await click('DPI 避让推荐')
+    await click('保存预设')
+    const put = request.mock.calls.find(([, options]) => (options as any)?.method === 'PUT') as unknown as [string, { body: string }]
+    expect(JSON.parse(put[1].body).shaping).toEqual({ padding_style: 'bit_biased', first_record_density: { mode: 'outside', min: 0.36, max: 0.65 } })
   })
 
   it('edits a v6 shaping policy, keeps the max padding typed and never offers unsafe-raw', async () => {
@@ -138,7 +151,7 @@ describe('node and Snell preset settings', () => {
     await fill('单记录填充上限', '400')
     expect((document.querySelector('[aria-label="单记录填充上限"]') as HTMLInputElement).value).toBe('400')
     await click('保存预设')
-    const [path, options] = request.mock.calls[0] as unknown as [string, { method: string; body: string }]
+    const [path, options] = request.mock.calls.find(([, init]) => (init as any)?.method === 'PUT') as unknown as [string, { method: string; body: string }]
     expect(path).toBe('/snell-profiles/3')
     expect(JSON.parse(options.body)).toEqual({ ...emptyPayload(profile), shaping: { max_padding: 400, first_record_density: { mode: 'outside', min: 0.36, max: 0.65 } } })
   })

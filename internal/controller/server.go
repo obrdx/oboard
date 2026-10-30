@@ -574,6 +574,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/access-changes/", s.auth(s.accessChanges, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-lists", s.auth(s.dnsLists, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-lists/", s.auth(s.dnsLists, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/snell-shaping/check", s.auth(s.checkSnellShaping, model.RoleOperator))
 	mux.HandleFunc("/api/v1/snell-profiles", s.auth(s.snellProfiles, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/snell-profiles/", s.auth(s.snellProfiles, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/node-presets", s.auth(s.nodePresets, model.RoleAdmin))
@@ -12491,6 +12492,27 @@ func (s *Server) dnsLists(w http.ResponseWriter, r *http.Request) {
 	default:
 		method(w)
 	}
+}
+
+// checkSnellShaping reports whether a v6 shaping policy is feasible and the
+// closest feasible policy when it is not; it saves nothing.
+func (s *Server) checkSnellShaping(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		method(w)
+		return
+	}
+	var input struct {
+		Shaping model.SnellShapingPolicy `json:"shaping"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	check, err := core.CheckSnellShaping(input.Shaping)
+	if err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	write(w, http.StatusOK, map[string]any{"check": check})
 }
 
 func (s *Server) snellProfiles(w http.ResponseWriter, r *http.Request) {

@@ -5,7 +5,7 @@ import { Dialog } from './ui/dialog'
 import { Select } from './ui/select'
 import { SettingsGroup, SettingsRow } from './settings/SettingsLayout'
 import { useSettingsEditorClose } from './settings/useSettingsEditorClose'
-import { SnellShapingFields, normalizeSnellShaping, snellShapingSummary, type SnellShapingPolicy } from './SnellShapingFields'
+import { SnellShapingFields, normalizeSnellShaping, snellShapingChecker, snellShapingSummary, type SnellShapingChecker, type SnellShapingPolicy } from './SnellShapingFields'
 
 export interface SnellProfilesPanelProps {
   data: any
@@ -78,7 +78,7 @@ export function SnellProfileCards({ profiles, editingID, onEdit, onDelete, busy 
   </div>
 }
 
-export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, saving, hideTitle }: { title: string; draft: SnellDraft; setDraft: (draft: SnellDraft) => void; onSave: () => void; onCancel: () => void; saving: boolean; hideTitle?: boolean }) {
+export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, saving, hideTitle, checkShaping }: { title: string; draft: SnellDraft; setDraft: (draft: SnellDraft) => void; onSave: () => void; onCancel: () => void; saving: boolean; hideTitle?: boolean; checkShaping?: SnellShapingChecker }) {
   const isV6 = Number(draft.version) === 6
   return <div className={`snell-profile-editor${hideTitle ? ' is-dialog' : ''}`}>
     {!hideTitle && <h4>{title}</h4>}
@@ -109,7 +109,7 @@ export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, s
           {v6Modes.map(mode => <option key={mode} value={mode}>{mode === 'default' ? '默认' : '无整形'}</option>)}
         </Select>
       </SettingsRow>}
-      {isV6 && draft.mode === 'default' && <SnellShapingFields value={draft.shaping} onChange={shaping => setDraft({ ...draft, shaping })} row={({ label, hint, children }) => <SettingsRow label={label} description={hint}>{children}</SettingsRow>} />}
+      {isV6 && draft.mode === 'default' && <SnellShapingFields value={draft.shaping} onChange={shaping => setDraft({ ...draft, shaping })} check={checkShaping} row={({ label, hint, children }) => <SettingsRow label={label} description={hint}>{children}</SettingsRow>} />}
       <SettingsRow label="连接复用（reuse）" description="复用已建立的连接，减少重复握手。">
         <input type="checkbox" checked={draft.reuse} onChange={event => setDraft({ ...draft, reuse: event.target.checked })} />
       </SettingsRow>
@@ -182,7 +182,7 @@ export function SnellProfilesPanel({ data, client, load, notify }: SnellProfiles
      </SettingsGroup>
      {editing && (
        <Dialog isOpen={Boolean(editing)} onClose={() => void closeEditor()} className="signal-settings-dialog" title={editing.id ? '编辑预设' : '新建预设'} size="lg">
-         <SnellProfileEditor title={editing.id ? '编辑预设' : '新建预设'} draft={editing.draft} setDraft={draft => setEditing({ id: editing.id, draft })} onSave={saveProfile} onCancel={() => void closeEditor()} saving={saving} hideTitle />
+         <SnellProfileEditor title={editing.id ? '编辑预设' : '新建预设'} draft={editing.draft} setDraft={draft => setEditing({ id: editing.id, draft })} onSave={saveProfile} onCancel={() => void closeEditor()} saving={saving} hideTitle checkShaping={snellShapingChecker(client.request)} />
        </Dialog>
      )}
    </section>

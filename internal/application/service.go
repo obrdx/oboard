@@ -607,6 +607,14 @@ func (s *Service) Query(ctx context.Context, principal Principal, capability str
 		return s.PreviewSubscriptionTemplate(ctx, principal, input.Format, input.Content)
 	case "snell_profiles.list":
 		return s.ListSnellProfiles(ctx, principal)
+	case "snell_profiles.shaping.check":
+		var input struct {
+			Shaping model.SnellShapingPolicy `json:"shaping"`
+		}
+		if err := strictUnmarshal(arguments, &input); err != nil {
+			return nil, err
+		}
+		return core.CheckSnellShaping(input.Shaping)
 	case "dns_lists.list":
 		return s.ListDNSLists(ctx, principal)
 	case "dns_credentials.list":

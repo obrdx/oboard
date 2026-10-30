@@ -10,7 +10,7 @@ import { Panel } from './shared/Panel'
 import { cell, formatTableTime, labelValue, formatBytes, formatDate, timeCorrectionModeLabel } from './shared/presentation'
 import { parseJSONLoose } from './shared/parse-json'
 import { MatrixLogoLoader } from './components/MatrixLogoLoader'
-import { SnellShapingFields, normalizeSnellShaping, type SnellShapingPolicy } from './components/SnellShapingFields'
+import { SnellShapingFields, normalizeSnellShaping, snellShapingChecker, type SnellShapingChecker, type SnellShapingPolicy } from './components/SnellShapingFields'
 import { userAccountDisplay, userPlanDisplay, userUsageDisplay } from './components/users/user-display'
 import { useUserAction } from './components/users/useUserAction'
 import { connectivityLatencyLabel, serverMonitoring } from './server-monitoring'
@@ -14078,7 +14078,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             </div>}
             {protocol !== 'ssh' && protocol !== 'anytls' && <InboundNodePresetPicker presetID={presetID} config={cfg} updateConfig={updateConfig} nodePresets={data.node_presets || []} />}
             {protocol === 'ssh' && <div className="access-note warning"><strong>SSH 暴露确认</strong><span>使用代理密码认证，仅允许本地/动态转发；不提供 shell、SFTP、远程转发或主机账户。保存时仍需再次确认。</span></div>}
-            {protocol !== 'ssh' && inboundPresetHasFields(presetID) && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} showTLSServerName={!certificateRequired} onRotateRealityKey={() => update({ __rotate_reality_key: true })} realityKeyRotationPending={Boolean(draft.__rotate_reality_key)} createMode={mode === 'create'} mieruUDPAllowed={!server || !server.udp_inbound_mode || server.udp_inbound_mode === 'allow'} snellProfiles={data.snell_profiles || []} nodePresets={data.node_presets || []} />}
+            {protocol !== 'ssh' && inboundPresetHasFields(presetID) && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} showTLSServerName={!certificateRequired} onRotateRealityKey={() => update({ __rotate_reality_key: true })} realityKeyRotationPending={Boolean(draft.__rotate_reality_key)} createMode={mode === 'create'} mieruUDPAllowed={!server || !server.udp_inbound_mode || server.udp_inbound_mode === 'allow'} snellProfiles={data.snell_profiles || []} nodePresets={data.node_presets || []} checkShaping={snellShapingChecker(client.request)} />}
             {protocol === 'snell' && <p id="snell-mode-status" className="field-hint">Snell v{Number(cfg.version || 4)} · {snellReady ? '每个授权身份使用独立 PSK，最多 64 个' : '请升级 Agent / 内核以支持多用户认证'} · {(server as any)?.users_confirmed ? '凭据已确认' : '等待凭据同步'} · {(server as any)?.authorization_confirmed ? '授权已确认' : '等待授权确认'}</p>}
             {protocol === 'snell' && cfg.mode === 'unsafe-raw' && <p role="alert" className="field-hint warning-text">unsafe-raw 没有 PSK 加密认证，禁止用于 Snell 入口。</p>}
           </EntryEditorSection>
@@ -14332,7 +14332,7 @@ function inboundPresetHasFields(presetID: string) {
     || presetID === 'snell-v6'
 }
 
-function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName = true, onRotateRealityKey, realityKeyRotationPending = false, createMode = false, mieruUDPAllowed = true, snellProfiles = [], nodePresets = [] }: { presetID: string; config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; showTLSServerName?: boolean; onRotateRealityKey?: () => void; realityKeyRotationPending?: boolean; createMode?: boolean; mieruUDPAllowed?: boolean; snellProfiles?: SnellProfile[]; nodePresets?: NodePreset[] }) {
+function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName = true, onRotateRealityKey, realityKeyRotationPending = false, createMode = false, mieruUDPAllowed = true, snellProfiles = [], nodePresets = [], checkShaping }: { checkShaping?: SnellShapingChecker; presetID: string; config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; showTLSServerName?: boolean; onRotateRealityKey?: () => void; realityKeyRotationPending?: boolean; createMode?: boolean; mieruUDPAllowed?: boolean; snellProfiles?: SnellProfile[]; nodePresets?: NodePreset[] }) {
   const tls = objectConfig(config.tls)
   const transport = objectConfig(config.transport)
   const headers = objectConfig(transport.headers)
@@ -14444,7 +14444,7 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
   // picker lives in the protocol section like every other preset's.
   if (presetID === 'vless-tcp' || presetID === 'socks5-auth') return null
   if (presetID === 'snell-v4') return <SnellPresetFields config={config} updateConfig={updateConfig} version={4} snellProfiles={snellProfiles} />
-  if (presetID === 'snell-v6') return <SnellPresetFields config={config} updateConfig={updateConfig} version={6} snellProfiles={snellProfiles} />
+  if (presetID === 'snell-v6') return <SnellPresetFields config={config} updateConfig={updateConfig} version={6} snellProfiles={snellProfiles} checkShaping={checkShaping} />
   return null
 }
 
@@ -14452,7 +14452,7 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
 // selector. Profiles let operators share one parameter set across many server
 // inbounds; selecting one writes `snell_profile_id` and the profile's params
 // into config_json (inbound-level explicit values win).
-function SnellPresetFields({ config, updateConfig, version, snellProfiles }: { config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; version: number; snellProfiles: SnellProfile[] }) {
+function SnellPresetFields({ config, updateConfig, version, snellProfiles, checkShaping }: { config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; version: number; snellProfiles: SnellProfile[]; checkShaping?: SnellShapingChecker }) {
   const profiles = snellProfiles.filter(p => p.enabled && Number(p.version) === version)
   const currentID = Number(config.snell_profile_id || 0)
   const snellPresetActive = Boolean(currentID && profiles.some(p => p.id === currentID))
@@ -14490,7 +14490,7 @@ function SnellPresetFields({ config, updateConfig, version, snellProfiles }: { c
     <div className="access-note compact"><strong>v6 说明</strong><span>v6 不支持混淆；订阅输出仅 Surge / sing-box 支持，mihomo 等客户端暂不支持 v6。</span></div>
     {profiles.length > 0 && <FormField label="套用参数预设" hint="多个服务器入口可共享同一套参数；修改预设后需重新部署"><Select value={currentID || ''} onChange={event => applyProfile(Number(event.target.value))}><option value="">不使用预设</option>{profiles.map(p => <option key={p.id} value={p.id}>{p.name}{p.usage_count > 0 ? `（${p.usage_count} 个入口）` : ''}</option>)}</Select></FormField>}
     <FormField label="传输模式" className={snellFieldClass} hint={snellHint || undefined}><Select value={String(config.mode || 'default')} onChange={event => updateConfig({ mode: event.target.value, shaping: event.target.value === 'default' ? config.shaping : undefined })}><option value="default">默认</option><option value="unshaped">无整形</option></Select></FormField>
-    {String(config.mode || 'default') === 'default' && <SnellShapingFields value={config.shaping} onChange={shaping => updateConfig({ shaping })} row={({ label, hint, children }) => <FormField label={label} className={snellFieldClass} hint={snellPresetActive ? `${hint}${snellHint}` : hint}>{children}</FormField>} />}
+    {String(config.mode || 'default') === 'default' && <SnellShapingFields value={config.shaping} onChange={shaping => updateConfig({ shaping })} check={checkShaping} row={({ label, hint, children }) => <FormField label={label} className={snellFieldClass} hint={snellPresetActive ? `${hint}${snellHint}` : hint}>{children}</FormField>} />}
     <div className={`switch-form-row${snellFieldClass}`} style={snellPresetActive ? { opacity: 0.56 } : undefined}><span className="switch-form-label">连接复用（reuse）</span><Switch checked={Boolean(config.reuse)} onChange={checked => updateConfig({ reuse: checked || undefined })} ariaLabel="Snell 连接复用" /></div>
   </div>
 }

@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/OboardProject/oboard/internal/model"
 )
@@ -36,7 +35,6 @@ const (
 	// one costs milliseconds and a feasible policy never exhausts the budget.
 	snellShapingMinAcceptanceDenominator = 4000
 	snellShapingSampleSize               = 20000
-	snellShapingSampleEnough             = 64
 	snellShapingSelectBudget             = 1 << 20
 )
 
@@ -137,20 +135,25 @@ func SnellPSKMeetsShaping(psk string, policy model.SnellShapingPolicy) bool {
 		return true
 	}
 	p := newSnellV6Profile([]byte(psk))
-	if policy.PaddingStyle != "" && snellPaddingStyles[p.generator] != policy.PaddingStyle {
+	return snellShapingMeets(p.generator, p.padMax, func(i int) float64 { return p.firstRecord(snellShapingPayloadLens[i]).Density() }, policy)
+}
+
+// snellShapingMeets is the one policy rule; density is computed lazily so a
+// PSK that fails an early check costs no further first-record evaluation.
+func snellShapingMeets(generator uint32, padMax int, density func(int) float64, policy model.SnellShapingPolicy) bool {
+	if policy.PaddingStyle != "" && snellPaddingStyles[generator] != policy.PaddingStyle {
 		return false
 	}
-	if policy.MaxPadding > 0 && p.padMax > policy.MaxPadding {
+	if policy.MaxPadding > 0 && padMax > policy.MaxPadding {
 		return false
 	}
 	band := policy.FirstRecordDensity
 	if band.IsZero() {
 		return true
 	}
-	for _, length := range snellShapingPayloadLens {
-		density := p.firstRecord(length).Density()
-		inside := density >= band.Min && density <= band.Max
-		if inside != (band.Mode == SnellDensityInside) {
+	for i := range snellShapingPayloadLens {
+		d := density(i)
+		if (d >= band.Min && d <= band.Max) != (band.Mode == SnellDensityInside) {
 			return false
 		}
 	}
@@ -178,103 +181,183 @@ func NewShapedSnellPSK(policy model.SnellShapingPolicy) (string, error) {
 	return "", fmt.Errorf("%w: no PSK met the policy within %d candidates", ErrSnellShapingInfeasible, snellShapingSelectBudget)
 }
 
-var (
-	snellShapingAcceptance      sync.Map
-	snellShapingAcceptanceCount atomic.Int64
-)
+type snellShapingSample struct {
+	generator uint32
+	padMax    int
+	densities [11]float64
+}
 
-// SnellShapingAcceptance estimates the share of random PSKs a policy accepts
-// from a fixed sample, so the verdict for a policy never changes.
+// The fixed sample makes every verdict and recommendation deterministic and
+// lets one policy be evaluated in well under a millisecond.
+var snellShapingSamples = sync.OnceValue(func() []snellShapingSample {
+	samples := make([]snellShapingSample, snellShapingSampleSize)
+	for i := range samples {
+		sum := sha256.Sum256([]byte("oboard-snell-shaping-sample-" + strconv.Itoa(i)))
+		p := newSnellV6Profile([]byte(snellPSKFromEntropy(sum[:])))
+		samples[i].generator, samples[i].padMax = p.generator, p.padMax
+		for j, length := range snellShapingPayloadLens {
+			samples[i].densities[j] = p.firstRecord(length).Density()
+		}
+	}
+	return samples
+})
+
+// SnellShapingAcceptance is the share of the fixed PSK sample a policy accepts.
 func SnellShapingAcceptance(policy model.SnellShapingPolicy) float64 {
 	if policy.IsZero() {
 		return 1
 	}
-	if cached, ok := snellShapingAcceptance.Load(policy); ok {
-		return cached.(float64)
-	}
-	hits, tried := 0, 0
-	for tried < snellShapingSampleSize && hits < snellShapingSampleEnough {
-		sum := sha256.Sum256([]byte("oboard-snell-shaping-sample-" + strconv.Itoa(tried)))
-		if SnellPSKMeetsShaping(snellPSKFromEntropy(sum[:]), policy) {
+	samples := snellShapingSamples()
+	hits := 0
+	for i := range samples {
+		sample := &samples[i]
+		if snellShapingMeets(sample.generator, sample.padMax, func(j int) float64 { return sample.densities[j] }, policy) {
 			hits++
 		}
-		tried++
 	}
-	rate := float64(hits) / float64(tried)
-	if count := snellShapingAcceptanceCount.Add(1); count > 1024 {
-		snellShapingAcceptance.Clear()
-		snellShapingAcceptanceCount.Store(0)
-	}
-	snellShapingAcceptance.Store(policy, rate)
-	return rate
-}
-
-// ValidateSnellShapingFeasible rejects a policy too strict to select PSKs for.
-func ValidateSnellShapingFeasible(policy model.SnellShapingPolicy) error {
-	rate := SnellShapingAcceptance(policy)
-	if snellShapingFeasibleRate(rate) {
-		return nil
-	}
-	share := "抽样中没有 PSK 满足"
-	if rate > 0 {
-		share = fmt.Sprintf("只有约 %.3f%% 的 PSK 满足", rate*100)
-	}
-	return fmt.Errorf("%w: 整形策略过严，%s（至少需要 1/%d）。%s", ErrSnellShapingInfeasible, share, snellShapingMinAcceptanceDenominator, snellShapingRelaxation(policy))
+	return float64(hits) / float64(len(samples))
 }
 
 func snellShapingFeasibleRate(rate float64) bool {
 	return rate*snellShapingMinAcceptanceDenominator >= 1
 }
 
-// snellShapingRelaxation names the smallest change that makes a policy
-// feasible. Only bit_biased padding moves the first record away from 0.5,
-// and small padding caps leave too little padding to move it at all.
-func snellShapingRelaxation(policy model.SnellShapingPolicy) string {
-	feasible := func(p model.SnellShapingPolicy) bool { return snellShapingFeasibleRate(SnellShapingAcceptance(p)) }
+// SnellShapingCheck reports whether PSKs can be selected for a policy and,
+// when they cannot, the closest policy that works.
+type SnellShapingCheck struct {
+	Feasible          bool                      `json:"feasible"`
+	Acceptance        float64                   `json:"acceptance"`
+	MinimumAcceptance float64                   `json:"minimum_acceptance"`
+	Message           string                    `json:"message,omitempty"`
+	Recommended       *model.SnellShapingPolicy `json:"recommended,omitempty"`
+	Changes           []string                  `json:"changes,omitempty"`
+}
+
+// CheckSnellShaping validates a v6 default-mode policy and recommends the
+// closest feasible one. The density goal is kept whenever the padding style or
+// cap can be relaxed instead; the band is narrowed (outside) or widened
+// (inside) only when that is not enough, and dropped last.
+func CheckSnellShaping(policy model.SnellShapingPolicy) (SnellShapingCheck, error) {
+	policy, err := NormalizeSnellShapingPolicy(policy)
+	if err != nil {
+		return SnellShapingCheck{}, err
+	}
+	rate := SnellShapingAcceptance(policy)
+	check := SnellShapingCheck{Feasible: snellShapingFeasibleRate(rate), Acceptance: rate, MinimumAcceptance: 1.0 / snellShapingMinAcceptanceDenominator}
+	if check.Feasible {
+		return check, nil
+	}
+	share := "抽样中没有 PSK 满足"
+	if rate > 0 {
+		share = fmt.Sprintf("只有约 %.3f%% 的 PSK 满足", rate*100)
+	}
+	recommended, changes := recommendSnellShaping(policy)
+	check.Recommended, check.Changes = &recommended, changes
+	check.Message = fmt.Sprintf("当前组合过严，%s（至少需要 1/%d）。推荐：%s。", share, snellShapingMinAcceptanceDenominator, strings.Join(changes, "；"))
+	return check, nil
+}
+
+func recommendSnellShaping(policy model.SnellShapingPolicy) (model.SnellShapingPolicy, []string) {
 	styles := []string{policy.PaddingStyle}
 	if policy.PaddingStyle != "" && policy.PaddingStyle != SnellPaddingBitBiased {
 		styles = append(styles, SnellPaddingBitBiased)
 	}
+	if policy.PaddingStyle != "" {
+		styles = append(styles, "")
+	}
 	paddings := []int{policy.MaxPadding}
 	if policy.MaxPadding > 0 {
-		for _, limit := range []int{300, 400, 500, 600, SnellShapingMaxMaxPadding} {
+		for _, limit := range []int{300, 400, 500, 600} {
 			if limit > policy.MaxPadding {
 				paddings = append(paddings, limit)
 			}
 		}
 		paddings = append(paddings, 0)
 	}
-	for _, style := range styles {
-		for _, padding := range paddings {
-			if style == policy.PaddingStyle && padding == policy.MaxPadding {
-				continue
-			}
-			candidate := policy
-			candidate.PaddingStyle, candidate.MaxPadding = style, padding
-			if !feasible(candidate) {
-				continue
-			}
-			var changes []string
-			if style != policy.PaddingStyle {
-				changes = append(changes, "把填充风格改为「位偏置二进制」（其他风格的首包位密度都接近 0.5）")
-			}
-			if padding != policy.MaxPadding {
-				if padding == 0 {
-					changes = append(changes, "取消单记录填充上限")
-				} else {
-					changes = append(changes, fmt.Sprintf("把单记录填充上限调高到 %d", padding))
+	for _, band := range snellDensityRelaxations(policy.FirstRecordDensity) {
+		for _, style := range styles {
+			for _, padding := range paddings {
+				candidate := model.SnellShapingPolicy{PaddingStyle: style, MaxPadding: padding, FirstRecordDensity: band}
+				if candidate != policy && snellShapingFeasibleRate(SnellShapingAcceptance(candidate)) {
+					return candidate, snellShapingChanges(policy, candidate)
 				}
 			}
-			if policy.FirstRecordDensity.IsZero() {
-				return "可以" + strings.Join(changes, "，并") + "。"
-			}
-			return "可以" + strings.Join(changes, "，并") + "，或放宽首包位密度区间。"
 		}
 	}
-	if policy.FirstRecordDensity.IsZero() {
-		return "请放宽填充风格或单记录填充上限。"
+	return model.SnellShapingPolicy{}, []string{"取消全部整形约束"}
+}
+
+// snellDensityRelaxations keeps the band first, then moves its edges 0.01 at a
+// time: an outside band shrinks toward its centre, an inside band grows.
+func snellDensityRelaxations(band model.SnellDensityBand) []model.SnellDensityBand {
+	out := []model.SnellDensityBand{band}
+	if band.IsZero() {
+		return out
 	}
-	return "请放宽或取消首包位密度区间。"
+	round := func(v float64) float64 { return math.Round(v*1000) / 1000 }
+	for step := 1; step <= 100; step++ {
+		delta := float64(step) / 100
+		next := band
+		if band.Mode == SnellDensityOutside {
+			next.Min, next.Max = round(band.Min+delta), round(band.Max-delta)
+			if next.Max-next.Min < 0.01 {
+				break
+			}
+		} else {
+			next.Min, next.Max = round(math.Max(0, band.Min-delta)), round(math.Min(1, band.Max+delta))
+			if next == out[len(out)-1] {
+				break
+			}
+		}
+		out = append(out, next)
+	}
+	return append(out, model.SnellDensityBand{})
+}
+
+func snellShapingChanges(from, to model.SnellShapingPolicy) []string {
+	var changes []string
+	if from.FirstRecordDensity != to.FirstRecordDensity {
+		if to.FirstRecordDensity.IsZero() {
+			changes = append(changes, "取消首包位密度约束")
+		} else {
+			verb := "避开"
+			if to.FirstRecordDensity.Mode == SnellDensityInside {
+				verb = "限定在"
+			}
+			changes = append(changes, fmt.Sprintf("首包位密度区间改为%s %g–%g", verb, to.FirstRecordDensity.Min, to.FirstRecordDensity.Max))
+		}
+	}
+	if from.PaddingStyle != to.PaddingStyle {
+		switch {
+		case to.PaddingStyle == "":
+			changes = append(changes, "填充风格改为「不限制」")
+		case !to.FirstRecordDensity.IsZero():
+			changes = append(changes, "填充风格改为「位偏置二进制」（其他风格的首包位密度都接近 0.5）")
+		default:
+			changes = append(changes, "填充风格改为「位偏置二进制」")
+		}
+	}
+	if from.MaxPadding != to.MaxPadding {
+		if to.MaxPadding == 0 {
+			changes = append(changes, "取消单记录填充上限")
+		} else {
+			changes = append(changes, fmt.Sprintf("单记录填充上限调高到 %d", to.MaxPadding))
+		}
+	}
+	return changes
+}
+
+// ValidateSnellShapingFeasible rejects a policy too strict to select PSKs for
+// and names the recommended change.
+func ValidateSnellShapingFeasible(policy model.SnellShapingPolicy) error {
+	check, err := CheckSnellShaping(policy)
+	if err != nil {
+		return err
+	}
+	if check.Feasible {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrSnellShapingInfeasible, check.Message)
 }
 
 // ValidateSnellShaping checks a policy against the Snell version and mode it

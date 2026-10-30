@@ -6,6 +6,7 @@ import { Select } from './ui/select'
 import { SettingsRow } from './settings/SettingsLayout'
 import { useSettingsEditorClose } from './settings/useSettingsEditorClose'
 import { SnellProfileCards, SnellProfileEditor, emptySnellDraft, snellDraftFromProfile, type SnellDraft, type SnellProfile } from './SnellProfilesPanel'
+import { snellShapingChecker } from './SnellShapingFields'
 
 export interface NodePresetsPanelProps {
   data: any
@@ -499,7 +500,7 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
       )}
       {editingSnell && (
         <Dialog isOpen={Boolean(editingSnell)} onClose={() => void closeSnell()} className="signal-settings-dialog" title={editingSnell.id ? '编辑 Snell 预设' : '新建 Snell 预设'} size="lg">
-          <SnellProfileEditor title={editingSnell.id ? '编辑 Snell 预设' : '新建 Snell 预设'} draft={editingSnell.draft} setDraft={draft => setEditingSnell({ id: editingSnell.id, draft })} onSave={saveSnell} onCancel={() => void closeSnell()} saving={saving} hideTitle />
+          <SnellProfileEditor title={editingSnell.id ? '编辑 Snell 预设' : '新建 Snell 预设'} draft={editingSnell.draft} setDraft={draft => setEditingSnell({ id: editingSnell.id, draft })} onSave={saveSnell} onCancel={() => void closeSnell()} saving={saving} hideTitle checkShaping={snellShapingChecker(client.request)} />
         </Dialog>
       )}
       {groupedPresets.map(group => (

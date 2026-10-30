@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Select } from './ui/select'
 
 export type SnellDensityBand = { mode: 'inside' | 'outside'; min: number; max: number }
@@ -34,6 +34,14 @@ export function snellShapingSummary(policy?: SnellShapingPolicy | null): string 
   return parts.join(' · ')
 }
 
+export type SnellShapingCheck = { feasible: boolean; acceptance: number; minimum_acceptance: number; message?: string; recommended?: SnellShapingPolicy; changes?: string[] }
+export type SnellShapingChecker = (policy: SnellShapingPolicy) => Promise<SnellShapingCheck>
+
+// The Controller owns the feasibility rule and the recommendation; the form only asks.
+export function snellShapingChecker(request: (path: string, init?: any) => Promise<any>): SnellShapingChecker {
+  return async policy => (await request('/snell-shaping/check', { method: 'POST', body: JSON.stringify({ shaping: policy }) })).check
+}
+
 // Called as a function so the caller's layout never remounts the inputs.
 type Row = (props: { label: string; hint: string; children: React.ReactNode }) => React.ReactElement
 
@@ -42,25 +50,30 @@ function numberOrZero(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-// Only bit_biased padding moves the first record away from a density of 0.5,
-// and a padding cap below 400 bytes leaves too little padding to move it.
-function densityExcludesHalf(band?: SnellDensityBand) {
-  if (!band) return false
-  const containsHalf = band.min <= 0.5 && band.max >= 0.5
-  return band.mode === 'outside' ? containsHalf : !containsHalf
-}
-
 // SnellShapingFields edits a v6 default-mode shaping policy. The traffic
 // profile is derived from the PSK, so the Controller enforces the policy by
 // choosing each identity's PSK; the form only describes the constraint.
-export function SnellShapingFields({ value, onChange, row }: { value?: SnellShapingPolicy; onChange: (policy: SnellShapingPolicy | undefined) => void; row: Row }) {
+export function SnellShapingFields({ value, onChange, row, check }: { value?: SnellShapingPolicy; onChange: (policy: SnellShapingPolicy | undefined) => void; row: Row; check?: SnellShapingChecker }) {
   const policy = value || {}
   const band = policy.first_record_density
   const set = (patch: Partial<SnellShapingPolicy>) => onChange(normalizeSnellShaping({ ...policy, ...patch }))
   const setBand = (patch: Partial<SnellDensityBand>) => set({ first_record_density: { ...(band || snellDensityAvoidBand), ...patch } })
-  const awayFromHalf = densityExcludesHalf(band)
-  const styleConflict = awayFromHalf && Boolean(policy.padding_style) && policy.padding_style !== 'bit_biased'
-  const paddingConflict = awayFromHalf && Boolean(policy.max_padding) && Number(policy.max_padding) < 400
+  const normalized = normalizeSnellShaping(value)
+  const key = JSON.stringify(normalized || {})
+  const checkRef = useRef(check)
+  checkRef.current = check
+  const [verdict, setVerdict] = useState<{ key: string; result: SnellShapingCheck } | null>(null)
+  useEffect(() => {
+    const checker = checkRef.current
+    if (!checker || !normalized) return
+    let cancelled = false
+    const timer = setTimeout(() => {
+      checker(normalized).then(result => { if (!cancelled) setVerdict({ key, result }) }).catch(() => { if (!cancelled) setVerdict(null) })
+    }, 350)
+    return () => { cancelled = true; clearTimeout(timer) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+  const current = normalized && verdict?.key === key ? verdict.result : null
   const applyAvoidBand = () => set({
     first_record_density: snellDensityAvoidBand,
     padding_style: policy.padding_style && policy.padding_style !== 'bit_biased' ? 'bit_biased' : policy.padding_style,
@@ -87,11 +100,16 @@ export function SnellShapingFields({ value, onChange, row }: { value?: SnellShap
         <option value="">不限制</option>
         {paddingStyles.map(style => <option key={style.value} value={style.value}>{style.label}</option>)}
       </Select>
-      {styleConflict && <p className="field-hint warning-text" role="status">这种填充风格的首包位密度都接近 0.5，无法满足当前密度区间。<button type="button" className="ghost" onClick={() => set({ padding_style: 'bit_biased' })}>改为位偏置二进制</button></p>}
     </> })}
     {row({ label: '单记录填充上限', hint: '每条记录随机填充的最大字节数，用于控制带宽开销；留空不限制，可填 184–730。', children: <>
       <input type="number" min={184} max={730} step={1} value={policy.max_padding || ''} onChange={event => set({ max_padding: event.target.value ? numberOrZero(event.target.value) : undefined })} placeholder="不限制" aria-label="单记录填充上限" />
-      {paddingConflict && <p className="field-hint warning-text" role="status">填充上限低于 400 时，填充不足以让首包位密度离开 0.5 附近。<button type="button" className="ghost" onClick={() => set({ max_padding: undefined })}>取消上限</button></p>}
     </> })}
+    {current && !current.feasible && <div className="access-note warning snell-shaping-recommendation" role="status">
+      <strong>这组设置挑不出可用的 PSK</strong>
+      <span>{current.changes?.length ? '推荐这样修改：' : current.message}</span>
+      {current.changes?.length ? <ul>{current.changes.map(change => <li key={change}>{change}</li>)}</ul> : null}
+      {current.recommended && <button type="button" onClick={() => onChange(normalizeSnellShaping(current.recommended))}>应用推荐</button>}
+    </div>}
+    {current?.feasible && <p className="field-hint" role="status">可用：约 {(current.acceptance * 100).toFixed(2)}% 的随机 PSK 满足，主控会为每个身份自动挑选。</p>}
   </>
 }

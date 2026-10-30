@@ -15392,6 +15392,9 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .snell-density-field > :first-child { flex: 1 1 160px; min-width: 0; }
 .snell-density-range { display: inline-flex; flex: 0 0 auto; gap: 6px; align-items: center; color: var(--text-muted); }
 .snell-density-field .snell-density-range input { flex: 0 0 88px; width: 88px; text-align: center; }
+.snell-shaping-recommendation { flex-direction: column; gap: 6px; }
+.snell-shaping-recommendation ul { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+.snell-shaping-recommendation button { align-self: flex-start; }
 .flow .react-flow__handle.server-entry-source-handle {
   bottom: 0;
   width: 24px;

@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/automation"
@@ -100,5 +103,40 @@ func TestSnellProfileShapingLifecycle(t *testing.T) {
 		if err := validateSnellProfile(candidate); err == nil {
 			t.Fatalf("%s profile accepted", name)
 		}
+	}
+}
+
+func TestSnellShapingCheckRecommendsOverRESTAndMCP(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	operator := &model.User{Username: "operator", PasswordHash: "unused", Role: model.RoleOperator, Status: "active", ProxyUUID: "33333333-3333-4333-8333-333333333333", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, operator); err != nil {
+		t.Fatal(err)
+	}
+	conflicting := `{"shaping":{"padding_style":"utf8_like","first_record_density":{"mode":"outside","min":0.36,"max":0.65}}}`
+	want := model.SnellShapingPolicy{PaddingStyle: "bit_biased", FirstRecordDensity: model.SnellDensityBand{Mode: "outside", Min: 0.36, Max: 0.65}}
+
+	recorder := httptest.NewRecorder()
+	server.checkSnellShaping(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/snell-shaping/check", strings.NewReader(conflicting)))
+	var rest struct {
+		Check core.SnellShapingCheck `json:"check"`
+	}
+	if recorder.Code != http.StatusOK || json.Unmarshal(recorder.Body.Bytes(), &rest) != nil || rest.Check.Feasible || rest.Check.Recommended == nil || *rest.Check.Recommended != want || len(rest.Check.Changes) == 0 {
+		t.Fatalf("REST check: %d %s", recorder.Code, recorder.Body.String())
+	}
+	recorder = httptest.NewRecorder()
+	server.checkSnellShaping(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/snell-shaping/check", strings.NewReader(`{"shaping":{"max_padding":10}}`)))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("invalid policy accepted: %d", recorder.Code)
+	}
+
+	result, err := server.application.Query(ctx, userAutomationPrincipal(t, db, operator.ID), "snell_profiles.shaping.check", json.RawMessage(conflicting))
+	if err != nil {
+		t.Fatal(err)
+	}
+	check, ok := result.(core.SnellShapingCheck)
+	if !ok || check.Feasible || check.Recommended == nil || *check.Recommended != want {
+		t.Fatalf("MCP check: %#v", result)
 	}
 }

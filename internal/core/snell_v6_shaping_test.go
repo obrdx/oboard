@@ -128,31 +128,43 @@ func TestProxyCredentialScopesCarrySnellShaping(t *testing.T) {
 	}
 }
 
-// Only bit_biased padding moves the first record away from 0.5, and a small
-// padding cap leaves too little padding to move it; the error names the fix.
-func TestSnellShapingInfeasibleNamesTheFix(t *testing.T) {
+// Only bit_biased padding moves the first record away from 0.5 and a small
+// padding cap leaves too little padding to move it, so the recommendation
+// relaxes those first and keeps the operator's density goal whenever it can.
+func TestCheckSnellShapingRecommendsTheClosestFeasiblePolicy(t *testing.T) {
+	avoid := snellAvoidBand.FirstRecordDensity
 	cases := []struct {
-		policy      model.SnellShapingPolicy
-		want, avoid []string
+		policy, want model.SnellShapingPolicy
+		message      string
 	}{
-		{model.SnellShapingPolicy{PaddingStyle: SnellPaddingUTF8Like, FirstRecordDensity: snellAvoidBand.FirstRecordDensity}, []string{"位偏置二进制", "放宽首包位密度区间"}, []string{"填充上限"}},
-		{model.SnellShapingPolicy{MaxPadding: 250, FirstRecordDensity: snellAvoidBand.FirstRecordDensity}, []string{"调高到 400"}, []string{"位偏置二进制"}},
-		{model.SnellShapingPolicy{PaddingStyle: SnellPaddingBitBiased, MaxPadding: 184}, []string{"调高到 300"}, []string{"密度区间"}},
+		{model.SnellShapingPolicy{PaddingStyle: SnellPaddingUTF8Like, FirstRecordDensity: avoid}, model.SnellShapingPolicy{PaddingStyle: SnellPaddingBitBiased, FirstRecordDensity: avoid}, "位偏置二进制"},
+		{model.SnellShapingPolicy{MaxPadding: 250, FirstRecordDensity: avoid}, model.SnellShapingPolicy{MaxPadding: 400, FirstRecordDensity: avoid}, "调高到 400"},
+		{model.SnellShapingPolicy{PaddingStyle: SnellPaddingMotif, MaxPadding: 250, FirstRecordDensity: avoid}, model.SnellShapingPolicy{PaddingStyle: SnellPaddingBitBiased, MaxPadding: 400, FirstRecordDensity: avoid}, "调高到 400"},
+		{model.SnellShapingPolicy{PaddingStyle: SnellPaddingBitBiased, MaxPadding: 184}, model.SnellShapingPolicy{PaddingStyle: SnellPaddingBitBiased, MaxPadding: 300}, "调高到 300"},
 	}
 	for _, tc := range cases {
-		err := ValidateSnellShapingFeasible(tc.policy)
-		if !errors.Is(err, ErrSnellShapingInfeasible) {
-			t.Fatalf("%+v: err=%v", tc.policy, err)
+		check, err := CheckSnellShaping(tc.policy)
+		if err != nil || check.Feasible || check.Recommended == nil || *check.Recommended != tc.want || !strings.Contains(check.Message, tc.message) {
+			t.Fatalf("%+v: check=%+v err=%v", tc.policy, check, err)
 		}
-		for _, want := range tc.want {
-			if !strings.Contains(err.Error(), want) {
-				t.Fatalf("%+v: %q lacks %q", tc.policy, err, want)
-			}
+		if err := ValidateSnellShapingFeasible(tc.policy); !errors.Is(err, ErrSnellShapingInfeasible) || !strings.Contains(err.Error(), tc.message) {
+			t.Fatalf("%+v: save error %v", tc.policy, err)
 		}
-		for _, avoid := range tc.avoid {
-			if strings.Contains(err.Error(), avoid) {
-				t.Fatalf("%+v: %q should not mention %q", tc.policy, err, avoid)
-			}
+	}
+	// Density bands are adjusted, not dropped, when style and cap cannot help.
+	for _, band := range []model.SnellDensityBand{{Mode: SnellDensityInside, Min: 0.9, Max: 1}, {Mode: SnellDensityOutside, Min: 0.2, Max: 0.8}} {
+		check, err := CheckSnellShaping(model.SnellShapingPolicy{PaddingStyle: SnellPaddingBCDLike, FirstRecordDensity: band})
+		if err != nil || check.Recommended == nil || check.Recommended.FirstRecordDensity.Mode != band.Mode {
+			t.Fatalf("%+v: check=%+v err=%v", band, check, err)
 		}
+		if again, _ := CheckSnellShaping(*check.Recommended); !again.Feasible {
+			t.Fatalf("%+v: recommended %+v is not feasible", band, check.Recommended)
+		}
+	}
+	if check, err := CheckSnellShaping(snellAvoidBand); err != nil || !check.Feasible || check.Recommended != nil {
+		t.Fatalf("feasible policy got %+v %v", check, err)
+	}
+	if _, err := CheckSnellShaping(model.SnellShapingPolicy{MaxPadding: 10}); err == nil {
+		t.Fatal("invalid policy checked")
 	}
 }
