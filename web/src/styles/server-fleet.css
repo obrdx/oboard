@@ -208,7 +208,22 @@ button.fleet-stat[aria-pressed="true"]:not(.is-total) {
 }
 
 .fleet-search input::-webkit-search-cancel-button { display: none; }
-.fleet-search button { min-height: 28px; width: 28px; padding: 0; }
+.fleet-search .fleet-search-clear {
+  flex: none;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  min-height: 20px;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  box-shadow: none;
+}
+.fleet-search .fleet-search-clear:hover { background: var(--border); color: var(--text-primary); }
+.fleet-search .fleet-search-clear svg { width: 12px; height: 12px; }
 
 .fleet-control {
   display: inline-flex;
@@ -1082,6 +1097,7 @@ button.fleet-chip:hover:not(:disabled).is-danger { background: color-mix(in srgb
   .fleet-view-toggle button { width: 40px; height: 40px; min-height: 40px; }
   .fleet-sort button { width: 32px; height: 32px; min-height: 32px; }
   .fleet-control, .fleet-search { height: 44px; min-height: 44px; }
+  .fleet-search .fleet-search-clear { width: 28px; min-width: 28px; height: 28px; min-height: 28px; }
   .fleet-option { min-height: 44px; }
   .fleet-choice-grid button { min-height: 40px; }
 }

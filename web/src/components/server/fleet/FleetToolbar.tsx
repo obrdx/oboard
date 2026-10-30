@@ -154,7 +154,7 @@ export function FleetSearch({ value, onChange }: { value: string; onChange: (val
     <label className="fleet-search">
       <Search size={15} aria-hidden="true" />
       <input type="search" value={value} onChange={event => onChange(event.target.value)} onKeyDown={event => { if (event.key === 'Escape' && value) { event.preventDefault(); onChange('') } }} placeholder="搜索名称、IP、编号或地区" aria-label="搜索服务器" />
-      {value ? <button type="button" className="ghost icon-button" onClick={() => onChange('')} aria-label="清除搜索" title="清除搜索"><X size={14} /></button> : null}
+      {value ? <button type="button" className="fleet-search-clear" onClick={() => onChange('')} aria-label="清除搜索" title="清除搜索"><X size={12} strokeWidth={2.5} /></button> : null}
     </label>
   )
 }
