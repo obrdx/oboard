@@ -1594,6 +1594,7 @@ export function App() {
   activeTabRef.current = tab
   const [theme, setTheme] = useState<ThemePreference>(getThemePreference)
   const [toast, setToast] = useState<ToastState>(null)
+  const notifyToast = useMemo(() => (message: unknown, kind?: ToastKind) => showToast(setToast, message, kind), [])
   const [controllerUpdateInProgress, setControllerUpdateInProgress] = useState(() => sessionStorage.getItem(CONTROLLER_UPDATE_IN_PROGRESS_KEY) === '1')
   const controllerUpdateInProgressRef = useRef(controllerUpdateInProgress)
   controllerUpdateInProgressRef.current = controllerUpdateInProgress
@@ -2289,7 +2290,7 @@ export function App() {
 
   return (
     <DialogContext.Provider value={dialogs}>
-      <OnboardingProvider client={client} isAdmin={sessionUser?.role === 'admin'} navigate={navigateTab} notify={(message, tone) => showToast(setToast, message, tone)} realtimeRevision={realtimeRevision}>
+      <OnboardingProvider client={client} isAdmin={sessionUser?.role === 'admin'} navigate={navigateTab} notify={notifyToast} realtimeRevision={realtimeRevision}>
       <PageRefreshProvider register={registerPageRefresh} refresh={refreshCurrentPage} refreshing={pageRefreshing} refreshResources={refreshPageResources}>
       <LoadingContext.Provider value={loading}>
         <AnimatePresence>
@@ -2442,7 +2443,7 @@ export function App() {
             <div className="page-stage">
               <AnimatePresence initial={false} mode="popLayout">
                 <MotionPage key={chromeTab}>
-                  {renderTab(tab, data, client, load, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, proxyPathTopbarTarget, realtimeStatus, serverTelemetryStatus, realtimeRevision, realtimeResources, handleControllerUpdateInProgressChange, patchPageData, proxyInboundFocus, theme, changeTheme)}
+                  {renderTab(tab, data, client, load, loading, notifyToast, sessionUser, proxyPathTopbarTarget, realtimeStatus, serverTelemetryStatus, realtimeRevision, realtimeResources, handleControllerUpdateInProgressChange, patchPageData, proxyInboundFocus, theme, changeTheme)}
                 </MotionPage>
               </AnimatePresence>
             </div>
