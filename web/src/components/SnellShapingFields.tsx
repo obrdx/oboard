@@ -74,6 +74,7 @@ export function SnellShapingFields({ value, onChange, row, check }: { value?: Sn
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
   const current = normalized && verdict?.key === key ? verdict.result : null
+  const usesAvoidBand = band?.mode === snellDensityAvoidBand.mode && band.min === snellDensityAvoidBand.min && band.max === snellDensityAvoidBand.max
   const applyAvoidBand = () => set({
     first_record_density: snellDensityAvoidBand,
     padding_style: policy.padding_style && policy.padding_style !== 'bit_biased' ? 'bit_biased' : policy.padding_style,
@@ -81,18 +82,19 @@ export function SnellShapingFields({ value, onChange, row, check }: { value?: Sn
   })
   return <>
     {row({ label: '首包位密度', hint: '按所有请求大小计算首个记录中 1 位的期望占比。避开区间可绕过按位密度识别的 DPI；修改后不满足的身份会更换 PSK，客户端需更新订阅。', children: <>
-      <div className="inline-field-action snell-density-field">
-        <Select value={band?.mode || ''} onChange={event => event.target.value ? setBand({ mode: event.target.value as SnellDensityBand['mode'] }) : set({ first_record_density: undefined })} aria-label="首包位密度约束">
-          <option value="">不限制</option>
-          <option value="outside">避开区间</option>
-          <option value="inside">限定在区间内</option>
-        </Select>
-        {band && <span className="snell-density-range">
-          <input type="number" min={0} max={1} step={0.01} value={band.min} onChange={event => setBand({ min: numberOrZero(event.target.value) })} aria-label="密度区间下限" />
-          <span aria-hidden="true">–</span>
-          <input type="number" min={0} max={1} step={0.01} value={band.max} onChange={event => setBand({ max: numberOrZero(event.target.value) })} aria-label="密度区间上限" />
-        </span>}
-        {(!band || band.mode !== snellDensityAvoidBand.mode || band.min !== snellDensityAvoidBand.min || band.max !== snellDensityAvoidBand.max) && <button type="button" className="ghost" onClick={applyAvoidBand}>DPI 避让推荐</button>}
+      <div className="snell-density">
+        <div className="snell-density-controls">
+          <Select value={band?.mode || ''} onChange={event => event.target.value ? setBand({ mode: event.target.value as SnellDensityBand['mode'] }) : set({ first_record_density: undefined })} aria-label="首包位密度约束">
+            <option value="">不限制</option>
+            <option value="outside">避开区间</option>
+            <option value="inside">限定在区间内</option>
+          </Select>
+          {band && <div className="snell-density-range">
+            <label><span>从</span><input type="number" inputMode="decimal" min={0} max={1} step={0.01} value={band.min} onChange={event => setBand({ min: numberOrZero(event.target.value) })} aria-label="密度区间下限" /></label>
+            <label><span>到</span><input type="number" inputMode="decimal" min={0} max={1} step={0.01} value={band.max} onChange={event => setBand({ max: numberOrZero(event.target.value) })} aria-label="密度区间上限" /></label>
+          </div>}
+        </div>
+        {!usesAvoidBand && <button type="button" className="ghost snell-density-suggest" onClick={applyAvoidBand}>使用 DPI 避让推荐（避开 {snellDensityAvoidBand.min}–{snellDensityAvoidBand.max}）</button>}
       </div>
     </> })}
     {row({ label: '填充风格', hint: '填充字节的外观。与密度约束组合过严时保存会被拒绝。', children: <>

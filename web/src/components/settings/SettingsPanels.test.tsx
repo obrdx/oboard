@@ -134,7 +134,7 @@ describe('node and Snell preset settings', () => {
     const request = vi.fn(async () => ({}))
     await render(<SnellProfilesPanel data={{ snell_profiles: [profile] }} client={{ request }} load={load} notify={notify} />)
     await click('编辑 Snell v6 style')
-    await click('DPI 避让推荐')
+    await click('使用 DPI 避让推荐（避开 0.36–0.65）')
     await click('保存预设')
     const put = request.mock.calls.find(([, options]) => (options as any)?.method === 'PUT') as unknown as [string, { body: string }]
     expect(JSON.parse(put[1].body).shaping).toEqual({ padding_style: 'bit_biased', first_record_density: { mode: 'outside', min: 0.36, max: 0.65 } })
@@ -146,7 +146,7 @@ describe('node and Snell preset settings', () => {
     await render(<SnellProfilesPanel data={{ snell_profiles: [profile] }} client={{ request }} load={load} notify={notify} />)
     await click('编辑 Snell v6 shaped')
     expect(document.body.textContent).not.toContain('unsafe-raw')
-    await click('DPI 避让推荐')
+    await click('使用 DPI 避让推荐（避开 0.36–0.65）')
     expect((document.querySelector('[aria-label="密度区间下限"]') as HTMLInputElement).value).toBe('0.36')
     await fill('单记录填充上限', '400')
     expect((document.querySelector('[aria-label="单记录填充上限"]') as HTMLInputElement).value).toBe('400')
