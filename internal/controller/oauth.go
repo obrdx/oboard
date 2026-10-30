@@ -175,7 +175,7 @@ func (s *Server) oauthRegister(w http.ResponseWriter, r *http.Request) {
 	if metadataURI := strings.TrimSpace(input.MetadataURI); metadataURI != "" {
 		metadata, fetchErr := s.fetchClientMetadata(r.Context(), metadataURI)
 		if fetchErr != nil {
-			oauthError(w, http.StatusBadRequest, "invalid_client_metadata", fetchErr.Error())
+			v2Error(w, r, http.StatusBadRequest, "invalid_client_metadata", fetchErr.Error())
 			return
 		}
 		item.MetadataURI = metadataURI
@@ -186,11 +186,11 @@ func (s *Server) oauthRegister(w http.ResponseWriter, r *http.Request) {
 		item.RedirectURIs = metadata.redirectURIs
 	}
 	if err := s.store.CreateOAuthClient(r.Context(), item); err != nil {
-		oauthError(w, http.StatusInternalServerError, "server_error", err.Error())
+		v2HandleError(w, r, err)
 		return
 	}
 	s.auditOAuthEvent(r, oauthAuditActor(currentUser(r)), "oauth_client_created", "oauth_client", item.ID, map[string]any{"client_name": boundedOAuthAuditValue(item.Name), "redirect_uris": item.RedirectURIs, "identity_type": item.IdentityType})
-	writeJSON(w, http.StatusCreated, map[string]any{"client_id": item.ID, "client_name": item.Name, "redirect_uris": item.RedirectURIs, "identity_type": item.IdentityType, "token_endpoint_auth_method": "none"})
+	v2Write(w, r, http.StatusCreated, item, nil)
 }
 
 func (s *Server) oauthGrants(w http.ResponseWriter, r *http.Request) {

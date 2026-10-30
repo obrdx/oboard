@@ -603,6 +603,35 @@ func TestOAuthDynamicRegistrationIsRetired(t *testing.T) {
 	}
 }
 
+func TestOAuthClientRegisterReturnsEnvelopedClient(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := newTestServer(db, "test-secret", "")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/oauth-clients", strings.NewReader(`{"client_name":"Hermes MCP","redirect_uris":["http://127.0.0.1/callback"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), userKey, model.User{ID: 1, Username: "admin", Role: model.RoleAdmin}))
+	response := httptest.NewRecorder()
+	server.oauthClients(response, req)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("register status=%d body=%s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Data model.OAuthClient `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Data.ID == "" || body.Data.Name != "Hermes MCP" || !body.Data.Enabled || !slices.Equal(body.Data.RedirectURIs, []string{"http://127.0.0.1/callback"}) {
+		t.Fatalf("register data=%+v", body.Data)
+	}
+	if _, err := db.GetOAuthClient(context.Background(), body.Data.ID); err != nil {
+		t.Fatalf("registered client not stored: %v", err)
+	}
+}
+
 func TestOAuthProtectedResourceChallengeRequestsDurableAccess(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
