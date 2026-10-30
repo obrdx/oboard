@@ -24,9 +24,9 @@ import type { Catalog, Installation, InstallationDetail, NotificationChannelOpti
 
 type EditorState = { pluginID?: number; manifest?: string; source?: string } | null
 
-export function PluginsWorkspace({ tab, data, client, notify, onNavigate }: PluginsWorkspaceProps) {
+export function PluginsWorkspace({ tab, data, role: sessionRole, client, notify, onNavigate }: PluginsWorkspaceProps) {
   const request = client.requestV2
-  const role = data?.session?.role || data?.current_user?.role
+  const role = data?.session?.role || data?.current_user?.role || sessionRole
   const isAdmin = canAuthorizePlugins(role)
   const canOperate = hasManagementAccess(role)
   const [channels, setChannels] = useState<NotificationChannelOption[]>(() => data?.notification_channels || [])

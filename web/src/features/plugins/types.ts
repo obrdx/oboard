@@ -365,6 +365,7 @@ export type RequestFn = <T = any>(path: string, init?: RequestInit) => Promise<T
 export interface PluginsWorkspaceProps {
   tab: 'plugins' | 'plugin-runs'
   data: any
+  role?: string
   client: { requestV2: RequestFn }
   notify: (message: string, tone?: ToastTone) => void
   onNavigate: (tab: 'plugins' | 'plugin-runs') => void

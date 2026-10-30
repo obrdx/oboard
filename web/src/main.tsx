@@ -2805,7 +2805,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'notifications') return <Notifications data={data} client={client} load={load} notify={notify} sessionUser={sessionUser} />
   if (tab === 'tasks') return <Tasks tasks={data.agent_tasks} servers={data.servers} client={client} loading={loading} />
   if (tab === 'audit') return <AuditConsole data={data} client={client} load={load} notify={notify} />
-  if (isAutomationNavTab(tab)) return <AutomationWorkspace tab={tab} data={data} client={client} notify={notify} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />
+  if (isAutomationNavTab(tab)) return <AutomationWorkspace tab={tab} data={data} role={data.session?.role || data.current_user?.role || sessionUser?.role} client={client} notify={notify} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />
   if (tab === 'settings') return <SettingsPage data={data} client={client} load={load} notify={notify} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} onControllerUpdateInProgressChange={onControllerUpdateInProgressChange} theme={theme} onThemeChange={onThemeChange} />
   return null
 }
@@ -2867,9 +2867,8 @@ function settingEnabled(value: any, fallback = true): boolean {
   return String(value ?? fallback) !== 'false'
 }
 
-function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, realtimeResources }: any) {
+function AutomationWorkspace({ tab, data, role, client, notify, realtimeRevision, realtimeResources }: any) {
   const dialogs = useDialogs()
-  const role = data?.session?.role || data?.current_user?.role
   const isAdmin = canManageAdministratorAccounts(role)
   const isPluginsView = tab !== 'automation' || !isAdmin
   const pluginTab = tab === 'plugin-runs' ? tab : 'plugins'
@@ -2933,7 +2932,7 @@ function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, real
         <button type="button" aria-pressed={!isPluginsView && view === 'ai'} className={!isPluginsView && view === 'ai' ? 'active' : ''} onClick={() => openAdminView('ai')}><Bot size={15} />AI Provider</button>
       </>}
     </div>
-    {isPluginsView && <div className="automation-plugins" style={{ marginTop: 14, minWidth: 0 }}><PluginsWorkspace tab={pluginTab} data={data} client={client} notify={notify} onNavigate={goTab} /></div>}
+    {isPluginsView && <div className="automation-plugins" style={{ marginTop: 14, minWidth: 0 }}><PluginsWorkspace tab={pluginTab} data={data} role={role} client={client} notify={notify} onNavigate={goTab} /></div>}
     {!isPluginsView && view === 'access' && <>
       <div className="automation-access-toolbar">
         <div><strong>MCP 客户端</strong></div>
