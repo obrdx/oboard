@@ -13747,7 +13747,7 @@ function AnyTLSPaddingSection({ mode, draft, update, data, client, onUpdated }: 
   </EntryFormSection>
 }
 
-type EntryAddressChoice = 'auto' | 'ipv4' | 'ipv6' | 'dual' | 'custom'
+type EntryAddressChoice = 'auto' | 'ipv4' | 'ipv6' | 'dual' | 'custom' | 'ddns'
 
 const inboundProtocolChoices: { protocol: Protocol; label: string; summary: string }[] = [
   { protocol: 'vless', label: 'VLESS', summary: 'Reality · WebSocket · TCP' },
@@ -13815,6 +13815,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   const cfg = parseConfig(draft.config_json) || {}
   const [saving, setSaving] = useState(false)
   const lastDNSDomain = useRef(String(draft.dns_domain || ''))
+  const [ddnsMode, setDDNSMode] = useState(() => Number(draft.ddns_record_id || 0) > 0)
   const submit = async () => {
     if (saving) return
     setSaving(true)
@@ -13847,7 +13848,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     : draft.dns_domain === selectedDNSZoneName ? '' : String(draft.dns_domain || '')
   const certificateRequired = presetRequiresCertificate(presetID)
   const entryMode = (draft.entry_ip_mode || 'auto') as EntryIPMode
-  const addressChoice = entryAddressChoice(draft)
+  const addressChoice: EntryAddressChoice = ddnsMode ? 'ddns' : entryAddressChoice(draft)
   const dnsActive = Boolean(draft.dns_sync_enabled)
   const dnsAllowed = addressChoice === 'dual' || alwaysResolve
   const legacyDNS = dnsActive && !dnsAllowed
@@ -13959,11 +13960,19 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   }
   const chooseAddress = (choice: EntryAddressChoice) => {
     if (choice === addressChoice) return
-    if (choice === 'dual') {
-      update({ entry_ip_mode: 'auto', ...dnsOnPatch('both') })
+    // A DDNS record already maintains the name the client connects to, so the
+    // entry keeps no DNS record of its own while it uses one.
+    setDDNSMode(choice === 'ddns')
+    if (choice === 'ddns') {
+      update({ entry_ip_mode: 'auto', ...dnsOffPatch() })
       return
     }
-    const base: Record<string, any> = { entry_ip_mode: choice, dns_record_types: 'auto' }
+    const clearDDNS = { ddns_record_id: null, ddns_domain: '' }
+    if (choice === 'dual') {
+      update({ entry_ip_mode: 'auto', ...clearDDNS, ...dnsOnPatch('both') })
+      return
+    }
+    const base: Record<string, any> = { entry_ip_mode: choice, dns_record_types: 'auto', ...clearDDNS }
     // Without the always-resolve switch a single-stack entry is reached by IP
     // and keeps no DNS record at all.
     update(alwaysResolve ? base : { ...base, ...dnsOffPatch() })
@@ -14010,6 +14019,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     (portValue < 1 || portValue > 65535) && '请填写 1-65535 的监听端口',
     natEnabled && (advertisePort < 1 || advertisePort > 65535) && '请填写 1-65535 的对外端口',
     entryMode === 'custom' && !String(draft.external_ip || '').trim() && '请填写自定义入口地址',
+    addressChoice === 'ddns' && !Number(draft.ddns_record_id || 0) && '请选择 DDNS 记录',
     dnsActive && !hasDNSCredentials && '双栈入口需要先在「域名解析」添加 DNS 账号',
     dnsActive && hasDNSCredentials && !Number(draft.dns_credential_id || 0) && '请选择域名服务账号',
     dnsActive && hasDNSCredentials && !isDomainLike(String(draft.dns_domain || '')) && '请填写解析域名',
@@ -14017,7 +14027,9 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     managedCertificateRequired && draft.certificate_mode === 'explicit' && !Number(draft.certificate_id || 0) && '请选择证书',
   ].filter(Boolean) as string[]
   const submitBlocked = problems.length > 0
-  const hostDisplay = addressChoice === 'dual' && !String(draft.dns_domain || '').trim()
+  const hostDisplay = addressChoice === 'ddns' && !String(draft.ddns_domain || '').trim()
+    ? `DDNS 域名:${displayPort || '端口'}（待选择）`
+    : addressChoice === 'dual' && !String(draft.dns_domain || '').trim()
     ? `解析域名:${displayPort || '端口'}（待填写）`
     : entryAddress ? formatHostPort(entryAddress, displayPort) : '等待 Agent 上报地址'
   const recordLabel = (() => {
@@ -14034,6 +14046,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     { value: 'ipv6', label: '仅 IPv6', detail: serverIPv6 || '未检测到 IPv6', disabled: familiesDetected && !serverIPv6 && addressChoice !== 'ipv6' },
     { value: 'dual', label: '双栈', detail: serverIPv4 && serverIPv6 ? 'IPv4 + IPv6 · 需域名解析' : '需服务器同时有 IPv4 与 IPv6', disabled: familiesDetected && !(serverIPv4 && serverIPv6) && addressChoice !== 'dual' },
     { value: 'custom', label: '自定义', detail: '其他 IP 或域名' },
+    { value: 'ddns', label: 'DDNS', detail: '使用 DDNS 记录的域名' },
   ]
   const dnsFields = dnsActive && hasDNSCredentials ? <div className="inbound-editor-grid">
     {enabledDNSCredentials.length > 1 || !Number(draft.dns_credential_id || 0)
@@ -14115,20 +14128,21 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             {entryMode === 'custom' && <FormField label="自定义入口地址" required hint="可填写域名、IPv4 或 IPv6，例如 NAT 网关或中转机地址。">
               <input value={draft.external_ip || ''} onChange={e => changeExternalIP(e.target.value)} placeholder="1.2.3.4 或 origin.example.net" autoCapitalize="none" autoCorrect="off" spellCheck={false} inputMode="url" />
             </FormField>}
-            <InboundDDNSField notify={notify} serverID={Number(draft.server_id || 0)} recordID={Number(draft.ddns_record_id || 0) || undefined} domain={String(draft.ddns_domain || '')} client={client} credentials={dnsCredentials} onChange={record => update(record ? { ddns_record_id: record.id, ddns_domain: record.domain } : { ddns_record_id: null, ddns_domain: '' })} />
+            {addressChoice === 'ddns' && <InboundDDNSField notify={notify} serverID={Number(draft.server_id || 0)} recordID={Number(draft.ddns_record_id || 0) || undefined} domain={String(draft.ddns_domain || '')} client={client} credentials={dnsCredentials} onChange={record => update(record ? { ddns_record_id: record.id, ddns_domain: record.domain } : { ddns_record_id: null, ddns_domain: '' })} />}
             <div className="inbound-host-preview">
               <div><span>Host（server）</span><strong>{hostDisplay}</strong></div>
-              <div><span>DNS 解析</span><strong>{dnsActive && String(draft.dns_domain || '').trim() ? `${recordLabel} · ${draft.dns_domain}` : dnsActive ? `${recordLabel} · 待填写域名` : '不创建'}</strong></div>
+              <div><span>DNS 解析</span><strong>{addressChoice === 'ddns' ? (String(draft.ddns_domain || '').trim() ? `由 DDNS 维护 · ${draft.ddns_domain}` : '由 DDNS 维护') : dnsActive && String(draft.dns_domain || '').trim() ? `${recordLabel} · ${draft.dns_domain}` : dnsActive ? `${recordLabel} · 待填写域名` : '不创建'}</strong></div>
             </div>
             {addressChoice === 'dual' && !hasDNSCredentials && <div className="access-note warning"><div><strong>需要 DNS 账号</strong><span>双栈入口用一个域名同时解析 A 与 AAAA 记录，请先到「域名解析」添加并验证账号。</span><ServerRelatedJumps serverID={server?.id} /></div></div>}
             {addressChoice === 'dual' && hasDNSCredentials && <p className="field-hint">客户端只能通过同一个域名同时拿到 IPv4 与 IPv6，所以双栈入口必须解析。</p>}
-            {addressChoice !== 'dual' && !alwaysResolve && !legacyDNS && <p className="field-hint">单栈入口直接用 IP 连接，不创建 DNS 记录，避免代理入口被当作网站扫描。需要时可在「设置 → 订阅」开启「始终解析」。</p>}
-            {addressChoice !== 'dual' && alwaysResolve && hasDNSCredentials && <div className="inbound-editor-switch">
+            {addressChoice !== 'dual' && addressChoice !== 'ddns' && !alwaysResolve && !legacyDNS && <p className="field-hint">单栈入口直接用 IP 连接，不创建 DNS 记录，避免代理入口被当作网站扫描。需要时可在「设置 → 订阅」开启「始终解析」。</p>}
+            {addressChoice !== 'dual' && addressChoice !== 'ddns' && alwaysResolve && hasDNSCredentials && <div className="inbound-editor-switch">
               <span><strong>为此入口创建解析</strong><small>已开启「始终解析」：订阅 Host 改用解析域名</small></span>
               <Switch checked={dnsActive} onChange={toggleSingleStackDNS} ariaLabel="为此入口创建解析" />
             </div>}
-            {legacyDNS && <div className="access-note warning"><div><strong>此入口仍保留旧的 DNS 解析</strong><span>单栈入口现在默认不解析。停止解析后保存，会删除 {draft.dns_domain || '该域名'} 的 A/AAAA 记录，订阅 Host 保持服务器 IP。</span></div><button type="button" className="ghost" onClick={() => update(dnsOffPatch())}>停止解析</button></div>}
-            {dnsFields}
+            {addressChoice === 'ddns' && dnsActive && <div className="access-note warning"><div><strong>此入口另外还维护着自己的解析</strong><span>Host 已由 DDNS 提供，无需再为入口解析。停止解析后保存，会删除 {draft.dns_domain || '该域名'} 的入口记录，DDNS 记录不受影响。</span></div><button type="button" className="ghost" onClick={() => update(dnsOffPatch())}>停止解析</button></div>}
+            {legacyDNS && addressChoice !== 'ddns' && <div className="access-note warning"><div><strong>此入口仍保留旧的 DNS 解析</strong><span>单栈入口现在默认不解析。停止解析后保存，会删除 {draft.dns_domain || '该域名'} 的 A/AAAA 记录，订阅 Host 保持服务器 IP。</span></div><button type="button" className="ghost" onClick={() => update(dnsOffPatch())}>停止解析</button></div>}
+            {addressChoice !== 'ddns' && dnsFields}
           </EntryEditorSection>
 
           {certificateRequired && <EntryEditorSection title="TLS 证书与 SNI" description="SNI 是 TLS 握手出示的域名（订阅里的 sni / servername 字段），由证书覆盖即可，与上面的 Host 无关，也不需要解析到服务器。证书通过 DNS-01 签发。">

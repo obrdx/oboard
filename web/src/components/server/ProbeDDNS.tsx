@@ -213,6 +213,8 @@ export function ProbeDDNS({ client, servers, credentials, canManage, notify }: {
   </div>
 }
 
+const ddnsRecordTypeLabels: Record<ProbeDDNSRecord['record_types'], string> = { a: '仅 A 记录', aaaa: '仅 AAAA 记录', both: 'A + AAAA' }
+
 export function InboundDDNSField({ serverID, recordID, domain, client, credentials, onChange, notify }: {
   serverID: number
   notify?: ToastNotify
@@ -258,19 +260,19 @@ export function InboundDDNSField({ serverID, recordID, domain, client, credentia
     }
   }
   return <div className="inbound-editor-grid">
-    <FormField label="DDNS 连接地址" hint="选用后，订阅 Host 使用这条记录的域名。证书 SNI 不变，也不会因此开启入口解析。">
+    <FormField label="DDNS 记录" required hint="订阅 Host 使用这条记录的域名，解析由 DDNS 任务维护；证书 SNI 不变。">
       <Select aria-label="选择 DDNS 记录" value={recordID || 0} onChange={event => {
         const id = Number(event.target.value)
         onChange(records.find(record => record.id === id) || null)
       }}>
-        <option value={0}>不使用 DDNS</option>
+        <option value={0}>选择记录</option>
         {records.map(record => <option key={record.id} value={record.id}>{record.name} · {record.domain}</option>)}
       </Select>
     </FormField>
     <div className="inline-field-action inbound-ddns-action">
       <button type="button" className="ghost" disabled={!serverID} onClick={() => setCreating(true)}>新建 DDNS</button>
     </div>
-    {selected && <p className="field-hint">当前 Host 将使用 {selected.domain}。{selected.error ? ` 最近一次更新失败：${selected.error}` : ''}</p>}
+    {selected && <p className="field-hint">当前 Host 将使用 {selected.domain}（{ddnsRecordTypeLabels[selected.record_types]}）。{selected.error ? ` 最近一次更新失败：${selected.error}` : ''}</p>}
     {!selected && domain && <p className="field-hint">已选记录暂时不在这台服务器的列表中。</p>}
     <Dialog isOpen={creating} onClose={() => { if (!busy) setCreating(false) }} title="新建 DDNS" size="lg">
       <ProbeDDNSForm notify={notify} record={emptyRecord(serverID)} servers={[]} credentials={credentials} client={client} busy={busy} canManage serverLocked onCancel={() => setCreating(false)} onSubmit={create} />
