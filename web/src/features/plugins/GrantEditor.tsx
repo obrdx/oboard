@@ -82,8 +82,8 @@ export function GrantEditor({ detail, grant, draft, servers, channels, users, pl
     {detail.permissions.length > 0 && <div className="plugin-grant-bulk">
       <span className="plugin-env-help">已开启 {enabledCount}/{detail.permissions.length} 项</span>
       <div className="plugin-grant-bulk-group" role="group" aria-label="批量授权">
-        <button type="button" disabled={busy || enabledCount === detail.permissions.length} onClick={() => toggleAll(true)}><ToggleRight size={16} aria-hidden="true" />全部开启</button>
-        <button type="button" disabled={busy || enabledCount === 0} onClick={() => toggleAll(false)}><ToggleLeft size={16} aria-hidden="true" />全部关闭</button>
+        <Button type="button" size="sm" variant="outline" disabled={busy || enabledCount === detail.permissions.length} onClick={() => toggleAll(true)}><ToggleRight size={16} aria-hidden="true" />全部开启</Button>
+        <Button type="button" size="sm" variant="outline" disabled={busy || enabledCount === 0} onClick={() => toggleAll(false)}><ToggleLeft size={16} aria-hidden="true" />全部关闭</Button>
       </div>
     </div>}
     <ul className="plugin-permission-list">
