@@ -24,6 +24,7 @@ import (
 
 const (
 	nodeSourceTimeout       = 15 * time.Second
+	nodeSourceFallbackDelay = 300 * time.Millisecond
 	nodeSourceMaxBody       = 1 << 20
 	nodeSourceRefreshPeriod = 6 * time.Hour
 )
@@ -936,7 +937,7 @@ func fetchNodeSource(ctx context.Context, rawURL, etag, lastModified string) ([]
 		if len(addresses) == 0 {
 			return nil, errors.New("订阅来源没有可用地址")
 		}
-		return dialer.DialContext(ctx, network, net.JoinHostPort(addresses[0].String(), port))
+		return dialNodeSourceAddresses(ctx, dialer, network, addresses, port, nodeSourceFallbackDelay)
 	}}
 	client := &http.Client{Timeout: nodeSourceTimeout, Transport: transport, CheckRedirect: func(request *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
@@ -976,6 +977,88 @@ func fetchNodeSource(ctx context.Context, rawURL, etag, lastModified string) ([]
 		return nil, "", "", false, errors.New("订阅来源超过 1 MiB 限制")
 	}
 	return body, response.Header.Get("ETag"), response.Header.Get("Last-Modified"), false, nil
+}
+
+// dialNodeSourceAddresses races the already validated addresses Happy Eyeballs
+// style: families are interleaved and each later attempt starts after
+// fallbackDelay or as soon as the previous one fails, so one unreachable
+// family never hides a reachable one.
+func dialNodeSourceAddresses(ctx context.Context, dialer *net.Dialer, network string, addresses []netip.Addr, port string, fallbackDelay time.Duration) (net.Conn, error) {
+	ordered := interleaveNodeSourceAddresses(addresses)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type dialResult struct {
+		conn net.Conn
+		err  error
+	}
+	results := make(chan dialResult, len(ordered))
+	next, pending := 0, 0
+	start := func() {
+		target := net.JoinHostPort(ordered[next].String(), port)
+		next++
+		pending++
+		go func() {
+			conn, err := dialer.DialContext(ctx, network, target)
+			results <- dialResult{conn: conn, err: err}
+		}()
+	}
+	start()
+	var firstErr error
+	for pending > 0 {
+		var timer <-chan time.Time
+		if next < len(ordered) {
+			timer = time.After(fallbackDelay)
+		}
+		select {
+		case result := <-results:
+			pending--
+			if result.err == nil {
+				cancel()
+				go func(remaining int) {
+					for ; remaining > 0; remaining-- {
+						if late := <-results; late.conn != nil {
+							late.conn.Close()
+						}
+					}
+				}(pending)
+				return result.conn, nil
+			}
+			if firstErr == nil {
+				firstErr = result.err
+			}
+			if next < len(ordered) {
+				start()
+			}
+		case <-timer:
+			start()
+		}
+	}
+	return nil, firstErr
+}
+
+func interleaveNodeSourceAddresses(addresses []netip.Addr) []netip.Addr {
+	if len(addresses) == 0 {
+		return nil
+	}
+	preferIPv4 := addresses[0].Unmap().Is4()
+	var primary, secondary []netip.Addr
+	for _, address := range addresses {
+		if address.Unmap().Is4() == preferIPv4 {
+			primary = append(primary, address)
+		} else {
+			secondary = append(secondary, address)
+		}
+	}
+	ordered := make([]netip.Addr, 0, len(addresses))
+	for i := 0; i < len(primary) || i < len(secondary); i++ {
+		if i < len(primary) {
+			ordered = append(ordered, primary[i])
+		}
+		if i < len(secondary) {
+			ordered = append(ordered, secondary[i])
+		}
+	}
+	return ordered
 }
 
 func validateNodeSourceURL(raw string) (*url.URL, error) {
