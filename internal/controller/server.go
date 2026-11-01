@@ -9505,6 +9505,11 @@ func parseExternalOutboundLine(line string) ([]model.ExternalOutbound, error) {
 		item, err := parseSSImportURI(line)
 		return []model.ExternalOutbound{item}, err
 	case "socks", "socks5":
+		if expanded := expandSocksShareLink(line); expanded != line {
+			if u, err = url.Parse(expanded); err != nil {
+				return nil, err
+			}
+		}
 		item, err := parseSocksImportURI(u)
 		return []model.ExternalOutbound{item}, err
 	case "http", "https":
@@ -9719,6 +9724,49 @@ func parseSocksImportURI(u *url.URL) (model.ExternalOutbound, error) {
 		cfg["password"] = password
 	}
 	return externalOutboundFromRawMap(cfg, "socks-import")
+}
+
+// expandSocksShareLink rewrites the base64 share forms socks://BASE64(user:pass@host:port)
+// and socks://BASE64(user:pass)@host:port into a plain socks:// URI. Client-only
+// query keys such as udp, method and dialer-proxy are left for the caller to ignore.
+func expandSocksShareLink(line string) string {
+	scheme, rest, ok := strings.Cut(line, "://")
+	if !ok {
+		return line
+	}
+	end := strings.IndexAny(rest, "?#")
+	if end < 0 {
+		end = len(rest)
+	}
+	authority, tail := strings.TrimSuffix(rest[:end], "/"), rest[end:]
+	userinfo, hostport := "", authority
+	if at := strings.LastIndex(authority, "@"); at >= 0 {
+		userinfo, hostport = authority[:at], authority[at+1:]
+		if userinfo == "" || strings.Contains(userinfo, ":") {
+			return line
+		}
+		decoded, err := decodeShareBase64(userinfo)
+		if err != nil || !strings.Contains(decoded, ":") {
+			return line
+		}
+		userinfo = decoded
+	} else {
+		decoded, err := decodeShareBase64(authority)
+		if err != nil {
+			return line
+		}
+		at := strings.LastIndex(decoded, "@")
+		if at < 0 {
+			return line
+		}
+		userinfo, hostport = decoded[:at], decoded[at+1:]
+	}
+	user, password, hasPassword := strings.Cut(userinfo, ":")
+	info := url.User(user)
+	if hasPassword {
+		info = url.UserPassword(user, password)
+	}
+	return scheme + "://" + info.String() + "@" + hostport + tail
 }
 
 // parseHTTPImportURI reads http://[user:pass@]host[:port][#name] and the
