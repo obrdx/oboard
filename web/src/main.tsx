@@ -10257,6 +10257,35 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	  }
 	  const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === step.path_id)
 	  const pathSteps = steps.filter(x => x.path_id === step.path_id)
+	  // Continuing from a hop that already has a successor opens a new branch that
+	  // shares the prefix; appending would extend the existing path past that successor.
+	  if (pathSteps.some(x => x.position > step.position)) {
+	    if (!path?.inbound_id) {
+	      await dialogs.alert({ title: '无法从这里分支', message: '这条路径没有入口，请从链路末端继续连接。' })
+	      return null
+	    }
+	    const prefix = pathSteps
+	      .filter(x => x.position <= step.position)
+	      .sort((left, right) => (left.position - right.position) || (left.id - right.id))
+	      .map(source => ({
+	        position: source.position,
+	        node_type: source.node_type,
+	        transport_mode: source.transport_mode || 'singbox',
+	        processing_role: source.processing_role === true,
+	        server_id: source.server_id,
+	        inbound_id: source.inbound_id,
+	        external_outbound_id: source.external_outbound_id,
+	        config_json: source.config_json || '{}',
+	      }))
+	    const branchStep = { position: step.position + 1, transport_mode: 'singbox' as ProxyPathTransportMode, processing_role: false, config_json: '{}', ...target }
+	    const initialSteps = [...prefix, branchStep]
+	    if (target.transport_mode === 'port_forward' && !await ensureTransparentPrefixCompatible(0, path.inbound_id, initialSteps)) return null
+	    const result = await client.request('/proxy-paths', { method: 'POST', body: JSON.stringify({
+	      kind: 'chain', name_mode: 'auto', name_template: [], inbound_id: path.inbound_id, enabled: true, initial_steps: initialSteps,
+	    }) }) as { proxy_path?: ProxyPath; proxy_path_steps?: ProxyPathStep[] }
+	    applyMutationResult(result)
+	    return result.proxy_path_steps?.[result.proxy_path_steps.length - 1] || null
+	  }
 	  const nextPosition = Math.max(0, ...pathSteps.map(x => x.position || 0)) + 1
 	  const candidateStep = { position: nextPosition, transport_mode: 'singbox' as ProxyPathTransportMode, config_json: '{}', ...target }
 	  if (target.transport_mode === 'port_forward' && path && !await ensureTransparentPrefixCompatible(path.id, path.inbound_id, [...pathSteps, candidateStep])) return null
