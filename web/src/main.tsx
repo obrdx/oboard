@@ -9230,6 +9230,7 @@ function graphEntityRemoveLabel(entity: GraphEntity) {
     || entity.node_id?.startsWith('warp-canvas-')
     || entity.node_id?.startsWith('vpngate-canvas-')
     || entity.node_id?.startsWith('routing-canvas-')
+    || entity.node_id?.startsWith('imported-')
     || entity.type === 'detached-step',
   )
   if (fromCanvas) return '移出画布'
@@ -11095,6 +11096,16 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
         saveGraphDirectExitInstances(next)
         return next
       })
+      setPositions(current => {
+        const next = { ...current }
+        delete next[entity.node_id!]
+        saveGraphPositions(next)
+        return next
+      })
+      return
+    }
+    if (entity.type === 'imported' && entity.node_id?.startsWith('imported-')) {
+      setCanvasImportedIDs(ids => ids.filter(id => id !== entity.id))
       setPositions(current => {
         const next = { ...current }
         delete next[entity.node_id!]
@@ -15410,7 +15421,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
   ;(data.external_outbounds || []).filter((x: ExternalOutbound) => importedIDs.has(x.id)).forEach((x: ExternalOutbound, i: number) => {
     const id = `imported-${x.id}`
     const position = positions[id] || defaultImportedGraphPosition(i)
-    nodes.push({ id, className: 'graph-node imported-graph-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity: { type: 'imported', id: x.id, label: x.name || `导入节点 ${x.id}` } as GraphEntity, label: <GraphNode kind="导入节点" title={x.name} meta={`${externalProtocolLabel(x)} · ${formatHostPort(x.target_address, x.target_port)} · ${x.expose_to_users ? '可订阅' : '订阅隐藏'}`} pathHandles={continuationByNode.get(id) || []} /> } })
+    nodes.push({ id, className: 'graph-node imported-graph-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity: { type: 'imported', id: x.id, label: x.name || `导入节点 ${x.id}`, node_id: id } as GraphEntity, label: <GraphNode kind="导入节点" title={x.name} meta={`${externalProtocolLabel(x)} · ${formatHostPort(x.target_address, x.target_port)} · ${x.expose_to_users ? '可订阅' : '订阅隐藏'}`} pathHandles={continuationByNode.get(id) || []} /> } })
   })
   let pathStepNodeIndex = 0
   const renderedStepNodeIDs = new Set<string>()
