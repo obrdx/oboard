@@ -161,6 +161,27 @@ describe('global proxy graph routing', () => {
     expect(routeIntersectsRect(result.routes.edge.points, expandRect(input.nodes[1].rect, NODE_CLEARANCE))).toBe(false)
   })
 
+  it('leaves and enters cards vertically when A* takes over instead of running along their borders', () => {
+    const input: GraphRoutingInput = {
+      nodes: [
+        { id: 'source', rect: { left: 347, top: 82, right: 711, bottom: 240 } },
+        { id: 'blocker', rect: { left: 1035, top: 143, right: 1320, bottom: 400 } },
+        { id: 'target', rect: { left: 927, top: 505, right: 1213, bottom: 665 } },
+      ],
+      edges: [{ id: 'edge', source: 'source', target: 'target', routingClass: 'primary', pathIDs: [1], sourceRank: 0, targetRank: 1 }],
+    }
+    const result = expectClean(input)
+    const points = result.routes.edge.points
+    expect(result.routes.edge.quality).toBe('pathfinder')
+    expect(points[1].x).toBe(points[0].x)
+    expect(points[1].y).toBeGreaterThan(points[0].y)
+    expect(points[points.length - 2].x).toBe(points[points.length - 1].x)
+    expect(points[points.length - 2].y).toBeLessThan(points[points.length - 1].y)
+    const horizontalYs = points.slice(1).filter((point, index) => point.y === points[index].y).map(point => point.y)
+    expect(horizontalYs).not.toContain(input.nodes[0].rect.bottom)
+    expect(horizontalYs).not.toContain(input.nodes[2].rect.top)
+  })
+
   it('reaches a side-shifted child without routing over the graph', () => {
     const input: GraphRoutingInput = {
       nodes: [

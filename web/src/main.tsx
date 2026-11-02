@@ -11786,9 +11786,18 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
             const start = connectionStart.current
             if (start && !connectionCompleted.current) {
               const point = 'changedTouches' in event ? event.changedTouches[0] : event
-              const handle = point ? document.elementFromPoint(point.clientX, point.clientY)?.closest('.react-flow__handle') : null
+              const below = point ? document.elementFromPoint(point.clientX, point.clientY) : null
+              const handle = below?.closest('.react-flow__handle')
               const targetID = handle?.getAttribute('data-nodeid')
-              if (targetID) {
+              // React Flow only accepts a drop on the input strip at a card's top
+              // edge; a drop anywhere else on the card means the same input.
+              const cardID = !handle && start.type === 'source' ? below?.closest('.react-flow__node')?.getAttribute('data-id') : null
+              const cardInput = cardID
+                ? Array.from(document.querySelectorAll('.react-flow__handle.connectable.target[data-handleid="target-top"]')).find(item => item.getAttribute('data-nodeid') === cardID)
+                : undefined
+              if (cardID && cardInput) {
+                onConnect({ source: start.nodeID, sourceHandle: start.handleID ?? null, target: cardID, targetHandle: 'target-top' })
+              } else if (targetID) {
                 const connection = start.type === 'source'
                   ? { source: start.nodeID, sourceHandle: start.handleID, target: targetID, targetHandle: handle?.getAttribute('data-handleid') }
                   : { target: start.nodeID, targetHandle: start.handleID, source: targetID, sourceHandle: handle?.getAttribute('data-handleid') }
@@ -11837,7 +11846,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
           }}><Edit3 size={14} />操作</button>
           <button type="button" className="ghost icon-button" aria-label="取消选择" onClick={clearGraphSelection}><X size={14} /></button>
         </div>}
-        {(connectionHint || connectingFrom) && <div className="graph-connection-hint" role="status">{connectionHint || '连接到目标节点上方的连接点；也可依次点击两个连接点。'}</div>}
+        {(connectionHint || connectingFrom) && <div className="graph-connection-hint" role="status">{connectionHint || '拖到目标节点上松开即可连接；也可依次点击两个连接点。'}</div>}
         <ProxyGraphLegend />
         {!nodes.length && <div className="graph-empty-state"><ServerIcon size={22} /><strong>还没有服务器</strong><span>添加服务器后即可创建入口和代理拓扑。</span><button onClick={() => addServer()}>添加服务器</button></div>}
         {canvasMenu && createPopoverPortal(

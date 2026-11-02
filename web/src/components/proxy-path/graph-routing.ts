@@ -478,16 +478,30 @@ function segmentProximityCost(segment: GraphSegment, obstacles: GraphRect[]) {
   }, 0)
 }
 
+/** Point FAN_STUB outside the card, straight out from the port's side. */
+function portStubPoint(port: GraphRoutePort): GraphPoint {
+  const { x, y } = port.point
+  if (port.side === 'top') return { x, y: routingCoordinate(y - FAN_STUB) }
+  if (port.side === 'bottom') return { x, y: routingCoordinate(y + FAN_STUB) }
+  if (port.side === 'left') return { x: routingCoordinate(x - FAN_STUB), y }
+  return { x: routingCoordinate(x + FAN_STUB), y }
+}
+
 function pathfindRoute(
   edge: RoutingEdge,
-  source: GraphPoint,
-  target: GraphPoint,
+  sourcePort: GraphRoutePort,
+  targetPort: GraphRoutePort,
   input: GraphRoutingInput,
   reservations: EdgeReservationIndex,
   ignoredEdgeIDs?: Iterable<string>,
 ): GraphPoint[] | undefined {
+  // The search runs between the two stub ends, and the endpoint cards are
+  // padded so no run can slide along their borders: an edge always leaves and
+  // enters perpendicular to the card side.
+  const source = portStubPoint(sourcePort)
+  const target = portStubPoint(targetPort)
   const bounds = graphBounds(input.nodes)
-  const obstacles = routeObstacles(edge, input.nodes).map(item => item.rect)
+  const obstacles = input.nodes.map(node => expandRect(node.rect, node.id === edge.source || node.id === edge.target ? FAN_STUB / 2 : NODE_CLEARANCE))
   const ignored = ignoredSet(ignoredEdgeIDs ?? edge.id)
   const outerLeft = bounds.left - OUTER_GUTTER
   const outerRight = bounds.right + OUTER_GUTTER
@@ -503,7 +517,7 @@ function pathfindRoute(
   const yValues = coordinateList([
     source.y,
     target.y,
-    source.y + BRANCH_STUB_LENGTH,
+    sourcePort.point.y + BRANCH_STUB_LENGTH,
     outerBottom,
     ...obstacles.flatMap(rect => [rect.top, rect.bottom]),
     ...(input.layerChannels || []).flatMap(channel => Object.values(channel.tracks)),
@@ -545,7 +559,7 @@ function pathfindRoute(
       if (reservations.overlapLength(move, ignored) > 0) return
       const bend = current.state.direction !== 'none' && current.state.direction !== direction ? BEND_COST : 0
       const crossing = reservations.crossingCount(move, ignored) * CROSSING_COST
-      const aboveSource = to.y < source.y ? ABOVE_SOURCE_COST : 0
+      const aboveSource = to.y < sourcePort.point.y ? ABOVE_SOURCE_COST : 0
       const nextCost = current.cost + segmentLength(move) + bend + crossing + aboveSource + segmentProximityCost(move, obstacles)
       const state: RoutingState = { xIndex, yIndex, direction }
       const key = pointKey(state)
@@ -565,7 +579,7 @@ function pathfindRoute(
     reversed.push({ x: xValues[state.xIndex], y: yValues[state.yIndex] })
     cursor = previous.get(cursor)
   }
-  return normalizeOrthogonalPoints(reversed.reverse())
+  return normalizeOrthogonalPoints([sourcePort.point, ...reversed.reverse(), targetPort.point])
 }
 
 export function routeLabelPoint(points: GraphPoint[]): GraphPoint | undefined {
@@ -860,7 +874,7 @@ export function routeProxyGraph(input: GraphRoutingInput): GraphRoutingResult {
       points = preferred
       if (edge.routingClass === 'auxiliary') quality = 'outer-gutter'
     } else {
-      points = pathfindRoute(edge, sourcePort.point, targetPort.point, routingInput, reservations, ignored)
+      points = pathfindRoute(edge, sourcePort, targetPort, routingInput, reservations, ignored)
       quality = points ? 'pathfinder' : 'failed'
       const bounds = graphBounds(routingInput.nodes)
       if (points?.some(point => point.x <= bounds.left - OUTER_GUTTER || point.x >= bounds.right + OUTER_GUTTER
