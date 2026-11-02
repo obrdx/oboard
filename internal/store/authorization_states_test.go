@@ -97,3 +97,46 @@ func TestAuthorizationDesiredRevisionIsSemantic(t *testing.T) {
 		t.Fatalf("confirmed server listed as stale (server has no agent): %v", stale)
 	}
 }
+
+func TestAuthorizationRegrantLiftsDenial(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "controller.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := &model.Server{Name: "auth-regrant"}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	expires := now.Add(5 * time.Minute)
+	if _, _, err := db.EvaluateAuthorizationDesiredWithSequence(ctx, server.ID, 1, "digest-a", []string{"k1", "k2"}, now, expires); err != nil {
+		t.Fatal(err)
+	}
+	dropped, _, err := db.EvaluateAuthorizationDesiredWithSequence(ctx, server.ID, 2, "digest-b", []string{"k1"}, now, expires)
+	if err != nil || len(dropped.DeniedKeys) != 1 || dropped.DeniedKeys[0] != "k2" {
+		t.Fatalf("drop evaluation: %+v err=%v", dropped, err)
+	}
+	regranted, _, err := db.EvaluateAuthorizationDesiredWithSequence(ctx, server.ID, 3, "digest-a", []string{"k1", "k2"}, now, expires)
+	if err != nil || !regranted.Changed || regranted.State.DesiredRevision <= dropped.State.DesiredRevision || len(regranted.DeniedKeys) != 0 {
+		t.Fatalf("regrant evaluation: %+v err=%v", regranted, err)
+	}
+	all, err := db.ListAuthorizationDenials(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 0 {
+		t.Fatalf("regranted key kept its denial: %+v", all)
+	}
+	// The plain evaluation path lifts a regranted denial the same way.
+	if _, err := db.EvaluateAuthorizationDesired(ctx, server.ID, 4, "digest-c", []string{"k2"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.EvaluateAuthorizationDesired(ctx, server.ID, 5, "digest-d", []string{"k1", "k2"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ = db.ListAuthorizationDenials(ctx, server.ID); len(all) != 0 {
+		t.Fatalf("regranted key kept its denial: %+v", all)
+	}
+}

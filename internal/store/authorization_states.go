@@ -151,6 +151,9 @@ func (s *Store) EvaluateAuthorizationDesired(ctx context.Context, serverID int64
 			return AuthorizationDesiredEvaluation{}, err
 		}
 	}
+	if err := liftRegrantedAuthorizationDenialsTx(ctx, tx, serverID, string(keysJSON)); err != nil {
+		return AuthorizationDesiredEvaluation{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `update authorization_states set desired_revision=?,desired_digest=?,desired_keys_json=?,evaluated_routing_revision=?,pending_reason=case when pending_reason='' then ? else pending_reason end,updated_at=? where server_id=?`, nextRevision, digest, string(keysJSON), routingRevision, AuthorizationPendingDelivering, ts, serverID); err != nil {
 		return AuthorizationDesiredEvaluation{}, err
 	}
@@ -167,6 +170,15 @@ func (s *Store) EvaluateAuthorizationDesired(ctx context.Context, serverID int64
 		out.State.PendingReason = AuthorizationPendingDelivering
 	}
 	return out, nil
+}
+
+// liftRegrantedAuthorizationDenialsTx drops the denial of every key the new
+// desired revision grants again. The revision that grants it is strictly newer
+// than the denial, so the node lifts its own watermark when it installs that
+// lease; keeping the row would keep re-delivering a denial the grant replaced.
+func liftRegrantedAuthorizationDenialsTx(ctx context.Context, tx *sql.Tx, serverID int64, keysJSON string) error {
+	_, err := tx.ExecContext(ctx, `delete from authorization_denials where server_id=? and credential_id in (select value from json_each(?))`, serverID, keysJSON)
+	return err
 }
 
 // IssueAuthorizationSequence allocates the next renewal sequence for a lease
@@ -252,6 +264,9 @@ func (s *Store) EvaluateAuthorizationDesiredWithSequence(ctx context.Context, se
 			if _, err := tx.ExecContext(ctx, `insert into authorization_denials(server_id,credential_id,deny_revision,lease_bound_until,confirmed_at,created_at) values(?,?,?,?,null,?) on conflict(server_id,credential_id) do update set deny_revision=excluded.deny_revision,lease_bound_until=case when excluded.lease_bound_until>authorization_denials.lease_bound_until then excluded.lease_bound_until else authorization_denials.lease_bound_until end,confirmed_at=null`, serverID, key, nextRevision, bound.Format(time.RFC3339Nano), ts); err != nil {
 				return AuthorizationDesiredEvaluation{}, 0, err
 			}
+		}
+		if err := liftRegrantedAuthorizationDenialsTx(ctx, tx, serverID, string(keysJSON)); err != nil {
+			return AuthorizationDesiredEvaluation{}, 0, err
 		}
 		if _, err := tx.ExecContext(ctx, `update authorization_states set desired_revision=?,desired_digest=?,desired_keys_json=?,evaluated_routing_revision=?,pending_reason=case when pending_reason='' then ? else pending_reason end,updated_at=? where server_id=?`, nextRevision, digest, string(keysJSON), routingRevision, AuthorizationPendingDelivering, ts, serverID); err != nil {
 			return AuthorizationDesiredEvaluation{}, 0, err
