@@ -8489,7 +8489,7 @@ function ServerMonitorMetricCard({
       const physical = pt.memory_total_bytes ? `${formatBytes(pt.memory_used_bytes)} / ${formatBytes(pt.memory_total_bytes)}` : ''
       const swapTotalAt = Number(pt.swap_total_bytes || 0)
       const swap = secondary.length === primary.length && secondary.length > 0
-        ? (swapTotalAt > 0 ? `Swap ${(Number(pt.swap_used_bytes || 0) / swapTotalAt * 100).toFixed(1)}%` : 'Swap —')
+        ? (swapTotalAt > 0 ? `Swap ${formatBytes(Number(pt.swap_used_bytes || 0))} / ${formatBytes(swapTotalAt)}` : 'Swap —')
         : ''
       displaySub = [physical, swap, hoverTimeLabel].filter(Boolean).join(' · ')
     } else if (tone === 'disk') {
@@ -8667,7 +8667,7 @@ function ServerLoadPanel({ server, response, loading, error, windowHours, onWind
   const swapUsed = Number(current.swap_used_bytes ?? server.swap_used_bytes ?? 0)
   const hasSwap = swapTotal > 0 || points.some(point => Number(point.swap_total_bytes || 0) > 0)
   const swapValues = hasSwap ? points.map(point => Number(point.swap_total_bytes || 0) > 0 ? Number(point.swap_used_bytes || 0) / Number(point.swap_total_bytes) * 100 : 0) : []
-  const memoryValue = [current.memory_total_bytes ? `${formatBytes(current.memory_used_bytes)} / ${formatBytes(current.memory_total_bytes)}` : '', swapTotal > 0 ? `Swap ${(swapUsed / swapTotal * 100).toFixed(1)}%` : ''].filter(Boolean).join(' · ') || '—'
+  const memoryValue = [current.memory_total_bytes ? `${formatBytes(current.memory_used_bytes)} / ${formatBytes(current.memory_total_bytes)}` : '', swapTotal > 0 ? `Swap ${formatBytes(swapUsed)} / ${formatBytes(swapTotal)}` : ''].filter(Boolean).join(' · ') || '—'
   const diskPercent = current.disk_total_bytes > 0 ? current.disk_used_bytes / current.disk_total_bytes * 100 : 0
   const diskValues = points.map(point => point.disk_total_bytes > 0 ? Number(point.disk_used_bytes || 0) / Number(point.disk_total_bytes) * 100 : 0)
   const tcpValues = points.map(point => Number(point.tcp_connection_count || 0))
