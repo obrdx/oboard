@@ -14,7 +14,7 @@ import { PageView } from './PageView'
 import { ScheduleEditor } from './ScheduleEditor'
 import {
   describeError, errorIssues, errorMessage, formatBytes, formatTime, instanceStatusLabels, instanceStatusTone,
-  issuesByField, issuesForDraft, newIdempotencyKey, runStatusLabels, runTone, triggerLabels,
+  issuesByField, issuesForDraft, lanEndpoint, newIdempotencyKey, runStatusLabels, runTone, sideEffectTargets, triggerLabels,
 } from './domain'
 import type {
   AuditEvent, CustomVar, EnvType, Grant, InstallationDetail, InstanceDetail, InstancePage,   NotificationChannelOption, PlanOption, RequestFn, Run, ServerOption, StateEntry, ToastTone, UserOption,
@@ -66,6 +66,7 @@ export function InstanceDialog(props: InstanceDialogProps) {
   const [issues, setIssues] = useState<Record<string, string>>({})
   const [validatedDraft, setValidatedDraft] = useState<{ values: Record<string, unknown>; custom: CustomVar[] }>({ values: {}, custom: [] })
   const [busy, setBusy] = useState(false)
+  const [confirmRun, setConfirmRun] = useState(false)
   const [error, setError] = useErrorToast(notify)
   const [runs, setRuns] = useState<Run[]>([])
   const [pages, setPages] = useState<InstancePage[]>([])
@@ -180,6 +181,8 @@ export function InstanceDialog(props: InstanceDialogProps) {
   const manifest = installation.manifest
   const runnable = instance.status === 'ready' || instance.status === 'degraded'
   const grantMissing = grantDirty ? grantMissingScopes(installation.permissions, grantDraft) : []
+  const riskyTargets = sideEffectTargets(manifest, instance.grant)
+  const runNow = () => void act(async () => { setConfirmRun(false); const result = await api.runInstance(request, instance.id, newIdempotencyKey('manual')); onOpenRun(result.run.id) }, '已提交运行')
   const saveAll = () => void act(async () => {
     let current = instance
     if (nameDirty) applyInstance(current = await api.updateInstance(request, current.id, { name: nameDraft.trim() }), true)
@@ -193,7 +196,7 @@ export function InstanceDialog(props: InstanceDialogProps) {
       {!dirty ? '所有更改已保存' : grantMissing.length ? '权限尚未选择资源范围' : '有未保存的更改'}
     </span>}
     {canExecute && <Button variant="outline" disabled={busy || !runnable} title={runnable ? undefined : instanceStatusLabels[instance.status]}
-      onClick={() => void act(async () => { const result = await api.runInstance(request, instance.id, newIdempotencyKey('manual')); onOpenRun(result.run.id) }, '已提交运行')}><Play size={15} />立即运行</Button>}
+      onClick={() => riskyTargets.length ? setConfirmRun(true) : runNow()}><Play size={15} />立即运行</Button>}
     {canConfigure && instance.auto_paused && <Button variant="outline" disabled={busy} onClick={() => void act(async () => applyInstance(await api.updateInstance(request, instance.id, { resume: true }), true), '已恢复实例')}><RotateCcw size={15} />恢复</Button>}
     {canConfigure && <Button variant="outline" disabled={busy} onClick={() => void act(async () => applyInstance(await api.updateInstance(request, instance.id, { enabled: !instance.enabled }), true), instance.enabled ? '已停用实例' : '已启用实例')}>{instance.enabled ? '停用' : '启用'}</Button>}
     {(canConfigure || canAuthorize) && <Button busy={busy} disabled={!dirty || grantMissing.length > 0} onClick={saveAll}>保存</Button>}
@@ -238,7 +241,7 @@ export function InstanceDialog(props: InstanceDialogProps) {
           {!runs.length ? <p className="text-sm text-muted-foreground">还没有执行记录。</p> : <ul className="plugin-record-list">
             {runs.map(run => <li key={run.id}><button type="button" className="plugin-record-row plugin-record-button" onClick={() => onOpenRun(run.id)}>
               <div className="min-w-0">
-                <strong>#{run.id} · {triggerLabels[run.trigger] || run.trigger}</strong>
+                <strong>#{run.id} · {run.draft ? '草稿试运行' : triggerLabels[run.trigger] || run.trigger}</strong>
                 <p className="plugin-env-help">{formatTime(run.queued_at)}{run.error_code ? ` · ${describeError(run.error_code)}` : ''}</p>
               </div>
               <Badge variant={runTone(run.status)}>{runStatusLabels[run.status] || run.status}</Badge>
@@ -285,6 +288,13 @@ export function InstanceDialog(props: InstanceDialogProps) {
       </>}>
       <p className="plugin-env-help">密钥加密保存，保存后任何人都无法再查看明文。插件只能在 HTTP 认证或签名中引用它。</p>
       <Input className="plugin-secret-input" type="password" autoComplete="new-password" aria-label="密钥内容" value={secretValue} onChange={event => setSecretValue(event.target.value)} />
+    </Dialog>
+    <Dialog isOpen={confirmRun} onClose={() => setConfirmRun(false)} title="确认运行" size="sm"
+      footer={<><Button variant="ghost" onClick={() => setConfirmRun(false)}>取消</Button><Button busy={busy} onClick={runNow}>确认运行</Button></>}>
+      <p className="text-sm">本次运行可以访问以下会改变设备状态的内网目标，每次调用都会写入审计：</p>
+      <ul className="plugin-lan-targets">
+        {riskyTargets.map(target => <li key={target.id}><code>{target.methods.join('/')} {lanEndpoint(target)}</code><span className="plugin-env-help">{target.reason}</span></li>)}
+      </ul>
     </Dialog>
   </Dialog>
 }

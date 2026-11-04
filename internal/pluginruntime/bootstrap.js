@@ -97,21 +97,30 @@
     uuid: function () { return cryptoCall('uuid', {}); }
   });
 
-  function httpRequest(opts) {
-    var request = options(opts);
-    if (request.json !== undefined) {
-      if (request.body !== undefined) throw new OBoardError('INVALID_ARGUMENT', 'use either body or json');
-      request.body = stringify(request.json);
-      var headers = {};
-      var hasType = false;
-      for (var name in (request.headers || {})) {
-        headers[name] = request.headers[name];
-        if (name.toLowerCase() === 'content-type') hasType = true;
-      }
-      if (!hasType) headers['Content-Type'] = 'application/json';
-      request.headers = headers;
-      delete request.json;
+  function withJSONBody(request) {
+    if (request.json === undefined) return request;
+    if (request.body !== undefined) throw new OBoardError('INVALID_ARGUMENT', 'use either body or json');
+    request.body = stringify(request.json);
+    var headers = {};
+    var hasType = false;
+    for (var name in (request.headers || {})) {
+      headers[name] = request.headers[name];
+      if (name.toLowerCase() === 'content-type') hasType = true;
     }
+    if (!hasType) headers['Content-Type'] = 'application/json';
+    request.headers = headers;
+    delete request.json;
+    return request;
+  }
+
+  function lanRequest(opts) {
+    var response = call('lan.request', withJSONBody(options(opts)));
+    response.ok = response.status >= 200 && response.status < 300;
+    return freeze(response);
+  }
+
+  function httpRequest(opts) {
+    var request = withJSONBody(options(opts));
     var response = call('http.request', request);
     response.ok = response.status >= 200 && response.status < 300;
     return freeze(response);
@@ -132,6 +141,7 @@
       httpProbe: function (opts) { return call('network.httpProbe', options(opts)); }
     }),
     http: freeze({ request: httpRequest }),
+    lan: freeze({ request: lanRequest }),
     state: freeze({
       get: function (key) { return call('state.get', { key: String(key) }); },
       list: function (prefix, opts) { opts = opts || {}; return call('state.list', { prefix: prefix === undefined ? '' : String(prefix), limit: opts.limit || 0 }).entries; },

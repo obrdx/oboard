@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,5 +99,12 @@ func TestRunnerFailureDoesNotInventResourceExhaustion(t *testing.T) {
 	defer cancel()
 	if got := runnerFailure(expired, nil); got.Code != "RUN_TIMEOUT" {
 		t.Fatalf("expired run classified as %+v", got)
+	}
+}
+
+func TestRefusalLineNamesMethodCodeAndRule(t *testing.T) {
+	line := refusalLine("lan.request", pluginrpc.CallResponse{Code: "TARGET_NOT_ALLOWED", Message: "LAN target router_change (http://10.10.18.1:5000/change) is not approved in the administrator grant"})
+	if !strings.Contains(line, "lan.request") || !strings.Contains(line, "TARGET_NOT_ALLOWED") || !strings.Contains(line, "not approved in the administrator grant") {
+		t.Fatalf("unexpected refusal line %q", line)
 	}
 }

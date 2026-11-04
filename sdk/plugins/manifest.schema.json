@@ -59,6 +59,7 @@
           "network.dns_lookup",
           "network.http_probe",
           "http.request",
+          "lan.request",
           "state.read",
           "state.write",
           "secrets.use",
@@ -103,6 +104,50 @@
             ]
           },
           "uniqueItems": true
+        }
+      }
+    },
+    "lan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targets"
+      ],
+      "description": "Required with lan.request. Each target is one exact private IP literal, port and path prefix; no ranges, hostnames or wildcards. The node must also run `obag remote-access allow lan`.",
+      "properties": {
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "scheme",
+              "address",
+              "port",
+              "methods",
+              "path_prefix",
+              "reason"
+            ],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+              "scheme": { "enum": ["http", "https"] },
+              "address": { "type": "string", "description": "IP literal in 10/8, 172.16/12, 192.168/16, 100.64/10 or fc00::/7." },
+              "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+              "methods": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": { "enum": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"] }
+              },
+              "path_prefix": { "type": "string", "pattern": "^/", "maxLength": 256 },
+              "side_effect": { "type": "boolean", "description": "Required true when any method other than GET/HEAD is declared." },
+              "insecure_tls": { "type": "boolean", "description": "https only: skip certificate verification." },
+              "reason": { "type": "string", "minLength": 1, "maxLength": 200 }
+            }
+          }
         }
       }
     },

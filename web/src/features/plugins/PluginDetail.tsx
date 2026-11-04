@@ -75,7 +75,7 @@ export function PluginDetail({ detail, isAdmin, canConfigure, busy, onClose, onO
             {detail.manifest && <div><dt>运行时</dt><dd>{detail.manifest.runtime} · {detail.manifest.entry}</dd></div>}
           </dl>
           <h4 className="plugin-subhead">声明的能力</h4>
-          <PermissionList permissions={detail.permissions} hosts={detail.http_hosts} forbidden={detail.forbidden} />
+          <PermissionList permissions={detail.permissions} hosts={detail.http_hosts} lanTargets={detail.manifest?.lan?.targets} forbidden={detail.forbidden} />
           {detail.license && <details className="plugin-details"><summary>许可证</summary><pre className="plugin-pre">{detail.license}</pre></details>}
         </TabsContent>
         <TabsContent value="versions">

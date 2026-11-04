@@ -70,6 +70,9 @@ type RemoteAccessLocalAllow struct {
 	RemoteTerminal bool `json:"remote_terminal"`
 	MCPEnabled     bool `json:"mcp_enabled"`
 	PluginsEnabled bool `json:"plugins_enabled"`
+	// LANRequests is the Agent-local switch for plugin lan.request, closed by
+	// default in every mode; Controller can never raise it.
+	LANRequests bool `json:"lan_requests_enabled"`
 }
 
 type ServerRemoteAccessPolicy struct {

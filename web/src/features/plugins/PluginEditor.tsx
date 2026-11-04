@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, CheckCircle2, PanelRight, Upload } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, FlaskConical, PanelRight, Upload } from 'lucide-react'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { Dialog } from '../../components/ui/dialog'
+import { Select } from '../../components/ui/select'
 import * as api from './api'
 import { EnvironmentForm } from './EnvironmentForm'
 import { PermissionList } from './PackageInstallDialog'
-import { defaultDraftManifest, defaultDraftSource, errorMessage } from './domain'
+import { defaultDraftManifest, defaultDraftSource, errorMessage, newIdempotencyKey } from './domain'
 import type { EditorDiagnostics, EnvType, RequestFn, ServerOption, ToastTone } from './types'
 
 function useWideLayout(query = '(min-width: 1024px)') {
@@ -36,9 +37,12 @@ export interface PluginEditorProps {
   onSaved: (pluginID: number) => void
   onPublished: (pluginID: number, reviewRequired: boolean) => void
   onClose: () => void
+  // instances of the published version a draft can be trial-run on.
+  instances?: Array<{ id: number; name: string }>
+  onOpenRun?: (runID: number) => void
 }
 
-export function PluginEditor({ pluginID, initialManifest, initialSource, request, servers, customTypes, canPublish, notify, onSaved, onPublished, onClose }: PluginEditorProps) {
+export function PluginEditor({ pluginID, initialManifest, initialSource, request, servers, customTypes, canPublish, notify, onSaved, onPublished, onClose, instances = [], onOpenRun }: PluginEditorProps) {
   const [id, setID] = useState<number | undefined>(pluginID)
   const [manifest, setManifest] = useState(initialManifest || JSON.stringify(defaultDraftManifest, null, 2))
   const [source, setSource] = useState(initialSource ?? defaultDraftSource)
@@ -50,6 +54,8 @@ export function PluginEditor({ pluginID, initialManifest, initialSource, request
   const [dirty, setDirty] = useState(false)
   const [panelOpen, setPanelOpen] = useState(false)
   const [confirmPublish, setConfirmPublish] = useState(false)
+  const [trialOpen, setTrialOpen] = useState(false)
+  const [trialInstance, setTrialInstance] = useState('')
   const wide = useWideLayout()
   const diagnoseSeq = useRef(0)
 
@@ -104,6 +110,22 @@ export function PluginEditor({ pluginID, initialManifest, initialSource, request
     }
   }
 
+  const trialRun = async () => {
+    const target = await save()
+    if (!target || !trialInstance) return
+    setBusy(true)
+    try {
+      const result = await api.runDraft(request, target, Number(trialInstance), newIdempotencyKey('draft'))
+      setTrialOpen(false)
+      notify('已提交草稿试运行', 'success')
+      onOpenRun?.(result.run.id)
+    } catch (e) {
+      notify(errorMessage(e, '试运行失败'), 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const issues = diagnostics?.issues || []
   const fields = diagnostics?.manifest?.environment || []
   const lineCount = useMemo(() => (file === 'main.js' ? source : manifest).split('\n').length, [file, source, manifest])
@@ -130,7 +152,7 @@ export function PluginEditor({ pluginID, initialManifest, initialSource, request
     </section>
     <section>
       <h4 className="plugin-subhead">申请的权限</h4>
-      <PermissionList permissions={diagnostics?.permissions || []} hosts={diagnostics?.manifest?.http?.hosts} />
+      <PermissionList permissions={diagnostics?.permissions || []} hosts={diagnostics?.manifest?.http?.hosts} lanTargets={diagnostics?.manifest?.lan?.targets} />
     </section>
   </div>
 
@@ -138,6 +160,7 @@ export function PluginEditor({ pluginID, initialManifest, initialSource, request
     {!wide && <Button variant="outline" onClick={() => setPanelOpen(true)}><PanelRight size={15} />配置面板</Button>}
     <Button variant="ghost" onClick={onClose}>关闭</Button>
     <Button variant="outline" busy={busy} disabled={!dirty && Boolean(id)} onClick={() => void save()}>保存草稿</Button>
+    {canPublish && id && instances.length > 0 && <Button variant="outline" busy={busy} disabled={!diagnostics?.valid} onClick={() => { setTrialInstance(current => current || String(instances[0].id)); setTrialOpen(true) }}><FlaskConical size={15} />试运行</Button>}
     {canPublish && <Button busy={busy} disabled={!diagnostics?.valid} onClick={() => setConfirmPublish(true)}><Upload size={15} />发布</Button>}
   </>
 
@@ -172,6 +195,16 @@ export function PluginEditor({ pluginID, initialManifest, initialSource, request
       {wide && <aside className="plugin-editor-panel" aria-label="配置面板">{panel}</aside>}
     </div>
     {!wide && <Dialog isOpen={panelOpen} onClose={() => setPanelOpen(false)} title="配置面板" size="lg" placement="right">{panel}</Dialog>}
+    <Dialog isOpen={trialOpen} onClose={() => setTrialOpen(false)} title="试运行草稿" size="sm"
+      footer={<><Button variant="ghost" onClick={() => setTrialOpen(false)}>取消</Button><Button busy={busy} disabled={!trialInstance} onClick={() => void trialRun()}>保存并运行</Button></>}>
+      <label className="plugin-scope">
+        <span>使用实例</span>
+        <Select aria-label="试运行实例" value={trialInstance} onChange={event => setTrialInstance(event.target.value)}>
+          {instances.map(instance => <option key={instance.id} value={String(instance.id)}>{instance.name}</option>)}
+        </Select>
+      </label>
+      <p className="plugin-env-help">草稿代码在该实例上执行一次，沿用已发布版本的配置与授权，并且只能使用草稿同样声明的权限；新增的权限要发布并审核后才可用。结果只记录为草稿运行，不计入失败暂停。</p>
+    </Dialog>
     <Dialog isOpen={confirmPublish} onClose={() => setConfirmPublish(false)} title="发布新版本" size="sm"
       footer={<><Button variant="ghost" onClick={() => setConfirmPublish(false)}>取消</Button><Button busy={busy} onClick={() => void publish()}>发布</Button></>}>
       <p className="text-sm">发布后成为本地插件的新版本（发布者为本地、未签名）。若申请了新权限，现有实例在管理员审核授权前不会运行。</p>

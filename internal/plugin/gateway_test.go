@@ -101,6 +101,11 @@ func (h *fakeHost) RunNetworkDiagnostic(_ context.Context, request DiagnosticReq
 	h.mu.Unlock()
 	var envelope model.NetworkDiagnosticEnvelope
 	_ = json.Unmarshal(request.Payload, &envelope)
+	if request.Capability == CapLANRequest {
+		var payload model.LANRequestTaskPayload
+		_ = json.Unmarshal(request.Payload, &payload)
+		return mustMarshal(model.LANRequestResult{OperationID: envelope.OperationID, TargetID: payload.TargetID, StatusCode: 200, Headers: map[string]string{"content-type": "application/json"}, BodyBase64: "eyJzdGF0dXMiOiJvayIsIm91dGJvdW5kIjoiYiJ9", BodyBytes: 29, DurationMS: 3}), nil
+	}
 	return mustMarshal(model.NetworkTraceResult{OperationID: envelope.OperationID, Target: "example.com", ResolvedIP: "93.184.216.34", IPFamily: "ipv4", Mode: "icmp", Reached: true, Hops: []model.NetworkTraceHop{{Hop: 1, Addresses: []string{"93.184.216.34"}, Probes: []model.NetworkTraceProbe{{Address: "93.184.216.34", RTTMS: 1.5}}}}}), nil
 }
 func (h *fakeHost) HTTPDenied(context.Context, netip.Addr) bool { return false }

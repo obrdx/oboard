@@ -4,7 +4,7 @@ import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { Switch } from '../../components/ui/switch'
 import { SearchableMultiSelect } from '../../components/ui/SearchableMultiSelect'
-import { groupLabels, riskLabels } from './domain'
+import { groupLabels, lanEndpoint, riskLabels } from './domain'
 import type { Grant, GrantView, InstallationDetail, NotificationChannelOption, PermissionLine, PlanOption, ServerOption, UserOption } from './types'
 
 // initialGrant proposes the narrowest useful grant: nothing is selected for
@@ -24,6 +24,7 @@ export function grantMissingScopes(permissions: PermissionLine[], draft: Grant):
   return permissions.filter(line => {
     const scope = draft.capabilities[line.capability]
     if (!scope) return false
+    if (line.capability === 'lan.request' && !scope.targets?.length) return true
     if (line.resource === 'server') return !scope.servers?.length
     if (line.resource === 'http_host') return !scope.hosts?.length
     if (line.resource === 'notification_channel') return !scope.channels?.length
@@ -48,9 +49,11 @@ export function GrantEditor({ detail, grant, draft, servers, channels, users, pl
 }) {
   const setDraft = onChange
   const hosts = detail.http_hosts || []
+  const lanTargets = detail.manifest?.lan?.targets || []
   const serverOptions = useMemo(() => servers.map(server => ({ value: server.id, label: `${server.name}${server.online ? '' : '（离线）'}`, keywords: server.region_code })), [servers])
   const applyToggle = (next: Grant['capabilities'], line: PermissionLine, on: boolean) => {
     if (!on) delete next[line.capability]
+    else if (line.capability === 'lan.request') next[line.capability] = { servers: envServerIDs.map(Number).filter(Boolean), targets: [] }
     else if (line.resource === 'server') next[line.capability] = { servers: envServerIDs.map(Number).filter(Boolean) }
     else if (line.resource === 'http_host') next[line.capability] = { hosts: [...hosts] }
     else if (line.resource === 'user') next[line.capability] = { users: [] }
@@ -103,6 +106,20 @@ export function GrantEditor({ detail, grant, draft, servers, channels, users, pl
             <span>允许的服务器</span>
             <SearchableMultiSelect ariaLabel={`${line.label}的服务器范围`} placeholder="选择服务器" searchPlaceholder="搜索服务器" options={serverOptions}
               value={(scope.servers || []).map(String)} onChange={next => setScope(line.capability, { servers: next.map(Number) })} />
+          </div>}
+          {scope && line.capability === 'lan.request' && <div className="plugin-scope">
+            <span>允许的内网目标</span>
+            <div className="plugin-chip-list">
+              {lanTargets.map(target => {
+                const checked = scope.targets?.includes(target.id) ?? false
+                return <label key={target.id} className="plugin-chip" title={target.reason}>
+                  <input type="checkbox" checked={checked} disabled={busy} onChange={event => setScope(line.capability, { targets: event.target.checked ? [...(scope.targets || []), target.id] : (scope.targets || []).filter(item => item !== target.id) })} />
+                  <code>{target.methods.join('/')} {lanEndpoint(target)}</code>
+                  {target.side_effect && <Badge variant="destructive">会改变设备状态</Badge>}
+                </label>
+              })}
+            </div>
+            <p className="plugin-env-help">节点还需本地执行 <code>obag remote-access allow lan</code>，主控无法远程开启。</p>
           </div>}
           {scope && line.resource === 'http_host' && <div className="plugin-scope">
             <span>允许的主机</span>

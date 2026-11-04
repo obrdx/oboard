@@ -175,7 +175,15 @@ type PluginRun struct {
 	LeaseGeneration     int64           `json:"-"`
 	LeaseUntil          *time.Time      `json:"-"`
 	RecoveryGeneration  int64           `json:"-"`
+	// DraftManifestJSON and DraftSource snapshot the editor draft of a draft
+	// trial run. Both are empty for runs of the published version.
+	DraftManifestJSON json.RawMessage `json:"-"`
+	DraftSource       string          `json:"-"`
+	IsDraft           bool            `json:"draft"`
 }
+
+// Draft reports whether the run executes an editor draft snapshot.
+func (r PluginRun) Draft() bool { return len(r.DraftManifestJSON) > 0 }
 
 type PluginRunLog struct {
 	RunID     int64     `json:"run_id"`

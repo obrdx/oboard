@@ -61,7 +61,9 @@ const pluginRunsTableSQL = `create table if not exists plugin_runs (
 		lease_owner text not null default '',
 		lease_generation integer not null default 0,
 		lease_until text,
-		recovery_generation integer not null default 1
+		recovery_generation integer not null default 1,
+		draft_manifest_json text not null default '',
+		draft_source text not null default ''
 	)`
 
 var pluginSchemaStatements = []string{
@@ -255,7 +257,13 @@ func (s *Store) migratePluginSchema(ctx context.Context) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.ensureColumn(ctx, "plugin_packages", "source_ref", `alter table plugin_packages add column source_ref text not null default ''`)
+	if err := s.ensureColumn(ctx, "plugin_packages", "source_ref", `alter table plugin_packages add column source_ref text not null default ''`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "plugin_runs", "draft_manifest_json", `alter table plugin_runs add column draft_manifest_json text not null default ''`); err != nil {
+		return err
+	}
+	return s.ensureColumn(ctx, "plugin_runs", "draft_source", `alter table plugin_runs add column draft_source text not null default ''`)
 }
 
 // retireScriptOutboxTx removes pending events from the pre-capability script
@@ -308,7 +316,7 @@ func (s *Store) widenPluginRunTriggers(ctx context.Context) error {
 	if _, err := tx.ExecContext(ctx, create); err != nil {
 		return fmt.Errorf("plugin schema: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `insert into plugin_runs__next(`+pluginRunColumns+`) select `+pluginRunColumns+` from plugin_runs`); err != nil {
+	if _, err := tx.ExecContext(ctx, `insert into plugin_runs__next(`+pluginRunLegacyColumns+`) select `+pluginRunLegacyColumns+` from plugin_runs`); err != nil {
 		return fmt.Errorf("plugin schema: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `drop table plugin_runs`); err != nil {

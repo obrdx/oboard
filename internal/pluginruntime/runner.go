@@ -132,6 +132,9 @@ func RunIsolated(ctx context.Context, self string, request RunnerRequest, call C
 			default:
 				response = call(sdk.Method, sdk.Arguments)
 			}
+			if !response.OK {
+				logs.add("warn", refusalLine(sdk.Method, response))
+			}
 			if err := encoder.Encode(frame{Kind: "call_result", Payload: mustRaw(response)}); err != nil {
 				report.Outcome = runnerFailure(ctx, command)
 				report.Logs, report.Dropped = logs.lines, logs.dropped
@@ -150,6 +153,16 @@ func RunIsolated(ctx context.Context, self string, request RunnerRequest, call C
 			return report
 		}
 	}
+}
+
+// refusalLine is the worker's own record of a failed SDK call, so a run
+// that swallows the error still shows which rule refused it.
+func refusalLine(method string, response pluginrpc.CallResponse) string {
+	message := response.Message
+	if message == "" {
+		message = "no reason given"
+	}
+	return "[oboard] " + method + " 失败：" + response.Code + " — " + message
 }
 
 func runnerFailure(ctx context.Context, command *pluginsandbox.Command) Outcome {

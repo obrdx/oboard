@@ -241,3 +241,19 @@ func TestRuntimePublishesViewThroughSDK(t *testing.T) {
 		t.Fatalf("publish was not delegated: %+v %v", outcome, calls)
 	}
 }
+
+func TestRuntimeLANRequestSendsStructuredCall(t *testing.T) {
+	source := `function main() {
+		var response = oboard.lan.request({ server_id: 2, target: 'router_change', method: 'POST', path: '/change', json: { to: 'b' } });
+		return { ok: response.ok, outbound: response.json.outbound };
+	}`
+	outcome, calls, _ := execute(t, source, nil, func(string, json.RawMessage) pluginrpc.CallResponse {
+		return pluginrpc.CallResponse{OK: true, Result: json.RawMessage(`{"status":200,"headers":{},"body":"{\"outbound\":\"b\"}","json":{"outbound":"b"}}`)}
+	})
+	if outcome.Code != "" || string(outcome.Result) != `{"ok":true,"outbound":"b"}` {
+		t.Fatalf("unexpected outcome %+v %s", outcome, outcome.Result)
+	}
+	if len(calls) != 1 || calls[0].method != "lan.request" || !strings.Contains(calls[0].arguments, `"server_id":"2"`) || !strings.Contains(calls[0].arguments, `"body":"{\"to\":\"b\"}"`) || !strings.Contains(calls[0].arguments, `"Content-Type":"application/json"`) {
+		t.Fatalf("unexpected call %+v", calls)
+	}
+}

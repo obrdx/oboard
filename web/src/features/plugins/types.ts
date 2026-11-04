@@ -39,11 +39,24 @@ export interface Manifest {
   entry: string
   capabilities: string[]
   http?: { hosts: string[]; methods: string[] }
+  lan?: { targets: LANTarget[] }
   resources?: { servers?: { min: number; max?: number; reason?: string } }
   environment?: EnvField[]
   pages?: PluginPageDeclaration[]
   triggers: { schedule: boolean; events?: string[] }
   limits: Record<string, unknown>
+}
+
+export interface LANTarget {
+  id: string
+  scheme: 'http' | 'https'
+  address: string
+  port: number
+  methods: string[]
+  path_prefix: string
+  side_effect?: boolean
+  insecure_tls?: boolean
+  reason: string
 }
 
 export interface PluginPageDeclaration {
@@ -139,7 +152,7 @@ export interface VersionView {
   created_at: string
 }
 
-export interface CapabilityGrant { servers?: number[]; hosts?: string[]; channels?: number[]; users?: number[]; plans?: number[] }
+export interface CapabilityGrant { servers?: number[]; hosts?: string[]; channels?: number[]; users?: number[]; plans?: number[]; targets?: string[] }
 
 export interface UserOption { id: string; username: string; nickname?: string; status: string }
 export interface PlanOption { id: string; name: string; enabled: boolean }
@@ -204,6 +217,8 @@ export interface PermissionDiff {
   added_hosts: string[]
   removed_hosts: string[]
   added_methods: string[]
+  added_lan_targets?: string[]
+  removed_lan_targets?: string[]
   added_events: string[]
   added_secrets: string[]
   added_environment: string[]
@@ -291,6 +306,7 @@ export interface Run {
   http_call_count: number
   agent_operation_count: number
   result?: unknown
+  draft?: boolean
 }
 
 export interface RunLog { run_id: number; seq: number; level: string; message: string; created_at: string }

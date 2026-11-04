@@ -20,6 +20,8 @@ type CapabilityGrant struct {
 	Channels []int64  `json:"channels,omitempty"`
 	Users    []int64  `json:"users,omitempty"`
 	Plans    []int64  `json:"plans,omitempty"`
+	// Targets lists the approved lan.request target IDs.
+	Targets []string `json:"targets,omitempty"`
 }
 
 func ParseGrant(raw []byte) (Grant, error) {
@@ -51,6 +53,15 @@ func ValidateGrant(manifest Manifest, grant *Grant, serverExists func(int64) boo
 		}
 		if !manifest.HasCapability(name) {
 			return FailField(CodeInvalidArgument, "capabilities."+name, "the plugin version does not declare this capability")
+		}
+		if name == CapLANRequest {
+			targets, err := normalizeLANTargets(manifest, scope.Targets)
+			if err != nil {
+				return FailField(CodeInvalidArgument, "capabilities."+name+".targets", err.Error())
+			}
+			scope.Targets = targets
+		} else if len(scope.Targets) > 0 {
+			return FailField(CodeInvalidArgument, "capabilities."+name+".targets", "targets are only valid for lan.request")
 		}
 		switch spec.Resource {
 		case ResourceServer:
@@ -142,6 +153,26 @@ func ValidateGrant(manifest Manifest, grant *Grant, serverExists func(int64) boo
 	return nil
 }
 
+func normalizeLANTargets(manifest Manifest, ids []string) ([]string, error) {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if _, ok := manifest.LANTarget(id); !ok {
+			return nil, Fail(CodeInvalidArgument, "LAN target "+id+" is not declared by the plugin")
+		}
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	if len(out) == 0 {
+		return nil, Fail(CodeInvalidArgument, "select at least one LAN target or leave the capability ungranted")
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 func manifestServerRequirement(manifest Manifest) *ServerRequirement {
 	if manifest.Resources == nil {
 		return nil
@@ -230,6 +261,16 @@ func (g Grant) AllowsChannel(channelID int64) bool {
 	return false
 }
 
+// AllowsLANTarget reports whether the administrator approved target id.
+func (g Grant) AllowsLANTarget(id string) bool {
+	for _, item := range g.Capabilities[CapLANRequest].Targets {
+		if item == id {
+			return true
+		}
+	}
+	return false
+}
+
 func (g Grant) HTTPHosts() []string {
 	return append([]string(nil), g.Capabilities[CapHTTPRequest].Hosts...)
 }
@@ -282,6 +323,18 @@ func (g Grant) RestrictTo(manifest Manifest) Grant {
 			}
 			scope.Hosts = hosts
 		}
+		if name == CapLANRequest {
+			targets := []string{}
+			for _, id := range scope.Targets {
+				if _, ok := manifest.LANTarget(id); ok {
+					targets = append(targets, id)
+				}
+			}
+			if len(targets) == 0 {
+				continue
+			}
+			scope.Targets = targets
+		}
 		out.Capabilities[name] = scope
 	}
 	return out
@@ -295,16 +348,20 @@ type PermissionDiff struct {
 	AddedHosts          []string `json:"added_hosts"`
 	RemovedHosts        []string `json:"removed_hosts"`
 	AddedMethods        []string `json:"added_methods"`
-	AddedEvents         []string `json:"added_events"`
-	AddedSecrets        []string `json:"added_secrets"`
-	AddedEnvironment    []string `json:"added_environment"`
-	RemovedEnvironment  []string `json:"removed_environment"`
-	ChangedEnvironment  []string `json:"changed_environment"`
-	NewRequired         []string `json:"new_required"`
-	AddedPages          []string `json:"added_pages"`
-	AddedActions        []string `json:"added_actions"`
-	ResourcesExpanded   bool     `json:"resources_expanded"`
-	Expanded            bool     `json:"expanded"`
+	// AddedLANTargets lists new LAN targets and targets whose endpoint,
+	// methods, side effect or TLS mode changed under the same id.
+	AddedLANTargets    []string `json:"added_lan_targets"`
+	RemovedLANTargets  []string `json:"removed_lan_targets"`
+	AddedEvents        []string `json:"added_events"`
+	AddedSecrets       []string `json:"added_secrets"`
+	AddedEnvironment   []string `json:"added_environment"`
+	RemovedEnvironment []string `json:"removed_environment"`
+	ChangedEnvironment []string `json:"changed_environment"`
+	NewRequired        []string `json:"new_required"`
+	AddedPages         []string `json:"added_pages"`
+	AddedActions       []string `json:"added_actions"`
+	ResourcesExpanded  bool     `json:"resources_expanded"`
+	Expanded           bool     `json:"expanded"`
 }
 
 func DiffPermissions(previous *Manifest, next Manifest) PermissionDiff {
@@ -312,7 +369,7 @@ func DiffPermissions(previous *Manifest, next Manifest) PermissionDiff {
 		AddedCapabilities: []string{}, RemovedCapabilities: []string{}, AddedHosts: []string{}, RemovedHosts: []string{},
 		AddedMethods: []string{}, AddedEvents: []string{}, AddedSecrets: []string{}, AddedEnvironment: []string{},
 		RemovedEnvironment: []string{}, ChangedEnvironment: []string{}, NewRequired: []string{},
-		AddedPages: []string{}, AddedActions: []string{},
+		AddedPages: []string{}, AddedActions: []string{}, AddedLANTargets: []string{}, RemovedLANTargets: []string{},
 	}
 	var prev Manifest
 	if previous != nil {
@@ -329,6 +386,7 @@ func DiffPermissions(previous *Manifest, next Manifest) PermissionDiff {
 	diff.AddedHosts, diff.RemovedHosts = setDiff(prevHosts, nextHosts)
 	diff.AddedMethods, _ = setDiff(prevMethods, nextMethods)
 	diff.AddedEvents, _ = setDiff(prev.Triggers.Events, next.Triggers.Events)
+	diff.AddedLANTargets, diff.RemovedLANTargets = lanTargetDiff(prev, next)
 	prevFields := map[string]EnvField{}
 	for _, field := range prev.Environment {
 		prevFields[field.Name] = field
@@ -390,9 +448,36 @@ func DiffPermissions(previous *Manifest, next Manifest) PermissionDiff {
 	if nextReq != nil && (prevReq == nil || nextReq.Min > prevReq.Min || nextReq.Max > prevReq.Max && prevReq.Max != 0 || nextReq.Max == 0 && prevReq.Max != 0) {
 		diff.ResourcesExpanded = previous != nil
 	}
-	diff.Expanded = len(diff.AddedCapabilities) > 0 || len(diff.AddedHosts) > 0 || len(diff.AddedMethods) > 0 ||
+	diff.Expanded = len(diff.AddedCapabilities) > 0 || len(diff.AddedHosts) > 0 || len(diff.AddedMethods) > 0 || len(diff.AddedLANTargets) > 0 ||
 		len(diff.AddedEvents) > 0 || len(diff.AddedSecrets) > 0 || len(diff.AddedPages) > 0 || len(diff.AddedActions) > 0 || diff.ResourcesExpanded
 	return diff
+}
+
+func lanTargetDiff(prev, next Manifest) (added, removed []string) {
+	before := map[string]string{}
+	if prev.LAN != nil {
+		for _, target := range prev.LAN.Targets {
+			before[target.ID] = target.canonical()
+		}
+	}
+	added, removed = []string{}, []string{}
+	present := map[string]bool{}
+	if next.LAN != nil {
+		for _, target := range next.LAN.Targets {
+			present[target.ID] = true
+			if before[target.ID] != target.canonical() {
+				added = append(added, target.ID)
+			}
+		}
+	}
+	for id := range before {
+		if !present[id] {
+			removed = append(removed, id)
+		}
+	}
+	sort.Strings(added)
+	sort.Strings(removed)
+	return added, removed
 }
 
 func setDiff(before, after []string) (added, removed []string) {

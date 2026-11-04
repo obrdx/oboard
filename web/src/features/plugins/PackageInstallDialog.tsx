@@ -6,10 +6,10 @@ import { Button } from '../../components/ui/button'
 import { Dialog } from '../../components/ui/dialog'
 import { Input } from '../../components/ui/input'
 import * as api from './api'
-import { envTypeLabels, errorMessage, publisherLabel, readFileAsBase64, riskLabels, shortHash } from './domain'
-import type { PackagePreview, PackageSource, PermissionDiff, PermissionLine, RequestFn } from './types'
+import { envTypeLabels, errorMessage, lanEndpoint, publisherLabel, readFileAsBase64, riskLabels, shortHash } from './domain'
+import type { LANTarget, PackagePreview, PackageSource, PermissionDiff, PermissionLine, RequestFn } from './types'
 
-export function PermissionList({ permissions, hosts, forbidden }: { permissions: PermissionLine[]; hosts?: string[]; forbidden?: string[] }) {
+export function PermissionList({ permissions, hosts, lanTargets, forbidden }: { permissions: PermissionLine[]; hosts?: string[]; lanTargets?: LANTarget[]; forbidden?: string[] }) {
   return <div className="plugin-permission-review">
     {!permissions.length ? <p className="text-sm text-muted-foreground">不申请任何能力。</p> : <ul className="plugin-permission-list">
       {permissions.map(line => <li key={line.capability} className="plugin-permission-item">
@@ -19,6 +19,14 @@ export function PermissionList({ permissions, hosts, forbidden }: { permissions:
             <strong>{line.label}</strong>
             <p className="plugin-env-help">{line.description}</p>
             {line.capability === 'http.request' && hosts?.length ? <p className="plugin-env-help">主机：{hosts.map(host => <code key={host} className="mr-1">{host}</code>)}</p> : null}
+            {line.capability === 'lan.request' && lanTargets?.length ? <ul className="plugin-lan-targets">
+              {lanTargets.map(target => <li key={target.id}>
+                <code>{target.methods.join('/')} {lanEndpoint(target)}</code>
+                {target.side_effect && <Badge variant="destructive">会改变设备状态</Badge>}
+                {target.insecure_tls && <Badge variant="warning">不校验证书</Badge>}
+                <span className="plugin-env-help">{target.reason}</span>
+              </li>)}
+            </ul> : null}
           </div>
         </div>
       </li>)}
@@ -30,7 +38,7 @@ export function PermissionList({ permissions, hosts, forbidden }: { permissions:
 export function DiffList({ diff }: { diff: PermissionDiff }) {
   const rows: Array<[string, string[]]> = [
     ['新增能力', diff.added_capabilities], ['移除能力', diff.removed_capabilities], ['新增 HTTP 主机', diff.added_hosts],
-    ['移除 HTTP 主机', diff.removed_hosts], ['新增 HTTP 方法', diff.added_methods], ['新增事件', diff.added_events],
+    ['移除 HTTP 主机', diff.removed_hosts], ['新增 HTTP 方法', diff.added_methods], ['新增或变更的内网目标', diff.added_lan_targets || []], ['移除的内网目标', diff.removed_lan_targets || []], ['新增事件', diff.added_events],
     ['新增密钥', diff.added_secrets], ['新增变量', diff.added_environment], ['移除变量', diff.removed_environment],
     ['变量类型变化', diff.changed_environment], ['新增必填项', diff.new_required],
     ['新增页面', diff.added_pages], ['新增操作', diff.added_actions],
@@ -119,7 +127,7 @@ export function PackageInstallDialog({ request, onClose, onInstalled, notify }: 
         {preview.blocked && <div className="plugin-callout danger"><AlertTriangle size={16} aria-hidden="true" /><p>{preview.blocked}</p></div>}
         <section>
           <h4 className="plugin-subhead">申请的权限</h4>
-          <PermissionList permissions={preview.permissions} hosts={preview.http_hosts} forbidden={preview.forbidden} />
+          <PermissionList permissions={preview.permissions} hosts={preview.http_hosts} lanTargets={preview.manifest?.lan?.targets} forbidden={preview.forbidden} />
         </section>
         {preview.existing && <section>
           <h4 className="plugin-subhead">与当前版本相比</h4>

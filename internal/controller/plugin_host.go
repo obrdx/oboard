@@ -65,6 +65,7 @@ func (h *pluginHost) serverInfo(ctx context.Context, server *model.Server) plugi
 	}
 	if status, err := h.server.store.GetServerRemoteAccessStatus(ctx, server.ID); err == nil {
 		info.PluginsGate = status.LocalAllow.PluginsEnabled
+		info.LANGate = status.LocalAllow.PluginsEnabled && status.LocalAllow.LANRequests
 	}
 	return info
 }

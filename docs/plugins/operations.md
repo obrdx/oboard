@@ -8,6 +8,8 @@
 
 节点侧诊断受 Agent 本地 `plugins_enabled` 开关约束：Standard 模式默认允许，可在节点上执行 `obag remote-access deny plugins` 关闭；Hardened 模式默认拒绝，需在节点上执行 `obag remote-access allow plugins`。主控无法远程开启。
 
+`lan.request` 另有节点本地 `lan` 开关，任何模式下默认关闭：需要插件访问该节点内网设备时，在节点上执行 `obag remote-access allow lan`（`deny lan` 关闭，`obag remote-access status` 查看）。
+
 ## 实例
 
 一个插件可以有多个实例，每个实例独立保存：名称、环境变量与自定义变量、密钥、授权、计划、私有状态（≤128 个键、单值 ≤16 KiB、合计 ≤512 KiB），以及每个已声明页面的最新视图快照。快照随实例删除，包含在数据库备份里；授权被撤销或权限待审核时页面不可读。实例状态：

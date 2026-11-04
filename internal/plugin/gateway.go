@@ -34,6 +34,10 @@ type callContext struct {
 	spec     CapabilitySpec
 	method   string
 	deadline time.Time
+	// draft is the draft manifest of a draft trial run. Every declaration a
+	// call relies on must then be present in both the published manifest
+	// (which the grant is bound to) and the draft.
+	draft *Manifest
 }
 
 // Invoke is the Capability Gateway. The effective permission for a call is
@@ -113,7 +117,18 @@ func (s *Service) authorizeCall(ctx context.Context, request pluginrpc.CallReque
 		return call, Fail(CodeRunTimeout, "run deadline reached")
 	}
 	if !loaded.manifest.HasCapability(spec.Name) {
-		return call, Fail(CodeCapabilityDenied, "the manifest does not declare "+spec.Name)
+		return call, Fail(CodeCapabilityDenied, "the published manifest does not declare "+spec.Name)
+	}
+	var draft *Manifest
+	if run.Draft() {
+		parsed, err := ParseManifest(run.DraftManifestJSON)
+		if err != nil {
+			return call, Fail(CodeCapabilityDenied, "the draft manifest of this trial run is invalid")
+		}
+		if !parsed.HasCapability(spec.Name) {
+			return call, Fail(CodeCapabilityDenied, "the draft manifest does not declare "+spec.Name)
+		}
+		draft = &parsed
 	}
 	if instance.PermissionReviewRequired {
 		return call, Fail(CodeCapabilityDenied, "permissions are waiting for administrator review")
@@ -124,7 +139,7 @@ func (s *Service) authorizeCall(ctx context.Context, request pluginrpc.CallReque
 	}
 	grant, parseErr := ParseGrant(record.GrantJSON)
 	if parseErr != nil || !grant.Allows(spec.Name) {
-		return call, Fail(CodeCapabilityDenied, spec.Name+" is not granted")
+		return call, Fail(CodeCapabilityDenied, spec.Name+" is declared but not granted by the administrator for this instance")
 	}
 	if operatorTriggered(run.Trigger) {
 		if failure := s.checkCaller(ctx, run); failure != nil {
@@ -142,7 +157,7 @@ func (s *Service) authorizeCall(ctx context.Context, request pluginrpc.CallReque
 	if !s.limiter.allow(strconv.FormatInt(instance.ID, 10)+"|"+spec.Name, spec.RatePerMinute, now) {
 		return call, Fail(CodeRateLimited, spec.Name+" rate limit reached; try again later")
 	}
-	return callContext{run: run, loaded: loaded, instance: instance, grant: grant, spec: spec, method: request.Method, deadline: deadline}, nil
+	return callContext{run: run, loaded: loaded, instance: instance, grant: grant, spec: spec, method: request.Method, deadline: deadline, draft: draft}, nil
 }
 
 // checkCaller re-verifies the human or machine that started a manual run.
@@ -163,14 +178,28 @@ func (s *Service) audit(ctx context.Context, call callContext, resource string, 
 	code := ""
 	if err != nil {
 		result, code = "failed", CodeOf(err)
-		if code == CodeCapabilityDenied || code == CodeResourceDenied || code == CodeHTTPHostDenied || code == CodeHTTPPrivateAddressDenied || code == CodeTargetNotAllowed {
+		switch code {
+		case CodeCapabilityDenied, CodeResourceDenied, CodeHTTPHostDenied, CodeHTTPPrivateAddressDenied, CodeTargetNotAllowed, CodeAgentPolicyDenied:
 			result = "denied"
+		}
+		if message := AsError(err).Message; message != "" {
+			detail = withReason(detail, message)
 		}
 	}
 	_ = s.store.InsertPluginAuditEvent(ctx, model.PluginAuditEvent{
 		InstallationID: call.loaded.installation.ID, InstanceID: call.instance.ID, PluginKey: call.run.PluginKey, PluginVersion: call.run.PluginVersion,
 		RunUUID: call.run.UUID, Capability: call.spec.Name, Resource: resource, Result: result, ErrorCode: code, DurationMS: duration.Milliseconds(), DetailJSON: mustMarshal(detail),
 	})
+}
+
+// withReason records why a call failed in its audit detail.
+func withReason(detail map[string]any, message string) map[string]any {
+	out := make(map[string]any, len(detail)+1)
+	for key, value := range detail {
+		out[key] = value
+	}
+	out["reason"] = boundText(message, 300)
+	return out
 }
 
 func decodeArgs(raw json.RawMessage, target any) error {
@@ -193,6 +222,8 @@ func (s *Service) dispatch(ctx context.Context, call callContext, raw json.RawMe
 		return s.handleNetwork(ctx, call, raw)
 	case CapHTTPRequest:
 		return s.handleHTTP(ctx, call, raw)
+	case CapLANRequest:
+		return s.handleLAN(ctx, call, raw)
 	case CapStateRead, CapStateWrite:
 		return s.handleState(ctx, call, raw)
 	case CapSecretsUse:
@@ -229,8 +260,11 @@ func parseServerArg(raw string) (int64, error) {
 // serverInScope enforces grant ∩ caller scope ∩ existence for one server.
 // An environment value naming a server never widens this.
 func (s *Service) serverInScope(ctx context.Context, call callContext, capability string, id int64) (ServerInfo, error) {
-	if !call.grant.AllowsServer(capability, id) || !s.callerAllowsServer(ctx, call.run, id) {
-		return ServerInfo{}, Fail(CodeResourceDenied, "server "+strconv.FormatInt(id, 10)+" is outside the granted scope for "+capability)
+	if !call.grant.AllowsServer(capability, id) {
+		return ServerInfo{}, Fail(CodeResourceDenied, "server "+strconv.FormatInt(id, 10)+" is not in the administrator grant for "+capability)
+	}
+	if !s.callerAllowsServer(ctx, call.run, id) {
+		return ServerInfo{}, Fail(CodeResourceDenied, "server "+strconv.FormatInt(id, 10)+" is outside the resource scope of the caller who started this run")
 	}
 	server, ok := s.host.Server(ctx, id)
 	if !ok {
@@ -549,7 +583,7 @@ func (s *Service) handleHTTP(ctx context.Context, call callContext, raw json.Raw
 	detail := map[string]any{"method": method, "host": host}
 	if err != nil {
 		if errors.Is(err, pluginhttp.ErrPrivateAddress) {
-			return nil, "http:" + host, detail, Fail(CodeHTTPPrivateAddressDenied, "private, loopback and metadata addresses are never reachable")
+			return nil, "http:" + host, detail, Fail(CodeHTTPPrivateAddressDenied, host+" is a private, loopback or metadata address; http.request only reaches public HTTPS hosts (declare a LAN target and use lan.request)")
 		}
 		return nil, "http:" + host, detail, Fail(CodeInvalidArgument, "url must be an absolute https URL without credentials or fragment")
 	}
@@ -635,7 +669,7 @@ func (s *Service) handleHTTP(ctx context.Context, call callContext, raw json.Raw
 		}
 	}
 	policy := pluginhttp.Policy{
-		Hosts: call.grant.HTTPHosts(), Methods: call.loaded.manifest.HTTP.Methods, MaxResponseBytes: args.MaxResponse,
+		Hosts: call.httpHosts(), Methods: call.httpMethods(), MaxResponseBytes: args.MaxResponse,
 		Deny: func(ip netip.Addr) bool { return s.host.HTTPDenied(ctx, ip) },
 	}
 	request := pluginhttp.Request{URL: parsed.String(), Method: method, Headers: plainHeaders, SecretHeaders: secretHeaders, Body: body, Timeout: timeout, FollowRedirects: args.FollowRedirects && len(secrets) == 0}
@@ -665,6 +699,48 @@ func (s *Service) handleHTTP(ctx context.Context, call callContext, raw json.Raw
 	return out, "http:" + host, detail, nil
 }
 
+// httpHosts is the granted host allowlist, narrowed to the draft's
+// declaration during a draft trial run.
+func (c callContext) httpHosts() []string {
+	hosts := c.grant.HTTPHosts()
+	if c.draft == nil {
+		return hosts
+	}
+	declared := map[string]bool{}
+	if c.draft.HTTP != nil {
+		for _, host := range c.draft.HTTP.Hosts {
+			declared[host] = true
+		}
+	}
+	out := []string{}
+	for _, host := range hosts {
+		if declared[host] {
+			out = append(out, host)
+		}
+	}
+	return out
+}
+
+func (c callContext) httpMethods() []string {
+	methods := c.loaded.manifest.HTTP.Methods
+	if c.draft == nil {
+		return methods
+	}
+	declared := map[string]bool{}
+	if c.draft.HTTP != nil {
+		for _, method := range c.draft.HTTP.Methods {
+			declared[method] = true
+		}
+	}
+	out := []string{}
+	for _, method := range methods {
+		if declared[method] {
+			out = append(out, method)
+		}
+	}
+	return out
+}
+
 func redactURL(raw string, secrets []string) string {
 	if u, err := url.Parse(raw); err == nil && u.RawQuery != "" && len(secrets) > 0 {
 		return pluginhttp.Redact(raw, secrets)
@@ -675,11 +751,11 @@ func redactURL(raw string, secrets []string) string {
 func mapHTTPError(err error) error {
 	switch {
 	case errors.Is(err, pluginhttp.ErrHostDenied):
-		return Fail(CodeHTTPHostDenied, "the host is not in the granted HTTP allowlist")
+		return Fail(CodeHTTPHostDenied, "the host is not in the granted HTTP allowlist (manifest http.hosts ∩ administrator grant)")
 	case errors.Is(err, pluginhttp.ErrMethodDenied):
 		return Fail(CodeHTTPHostDenied, "the HTTP method is not declared in the manifest")
 	case errors.Is(err, pluginhttp.ErrPrivateAddress):
-		return Fail(CodeHTTPPrivateAddressDenied, "the host resolves to a private or reserved address")
+		return Fail(CodeHTTPPrivateAddressDenied, "the host resolves to a private or reserved address; http.request only reaches public HTTPS hosts (declare a LAN target and use lan.request)")
 	case errors.Is(err, pluginhttp.ErrTimeout), errors.Is(err, pluginhttp.ErrCanceled):
 		return Fail(CodeHTTPTimeout, "the HTTP request timed out")
 	case errors.Is(err, pluginhttp.ErrResponseTooLarge):

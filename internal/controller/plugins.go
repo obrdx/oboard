@@ -400,6 +400,26 @@ func (s *Server) apiV1PluginItem(w http.ResponseWriter, r *http.Request) {
 		}
 		s.publishRealtime("plugins")
 		pluginOK(w, r, http.StatusOK, result)
+	case parts[1] == "draft" && len(parts) == 3 && parts[2] == "runs" && r.Method == http.MethodPost:
+		var input struct {
+			InstanceID     string `json:"instance_id"`
+			IdempotencyKey string `json:"idempotency_key"`
+		}
+		if !pluginDecode(w, r, &input, 1<<16) {
+			return
+		}
+		instanceID, err := strconv.ParseInt(strings.TrimSpace(input.InstanceID), 10, 64)
+		if err != nil || instanceID <= 0 {
+			pluginFail(w, r, plugin.FailField(plugin.CodeInvalidArgument, "instance_id", "instance_id must be an instance ID string"))
+			return
+		}
+		run, err := s.plugins.RunDraft(ctx, principal, id, instanceID, input.IdempotencyKey, draftCandidate)
+		if err != nil {
+			pluginFail(w, r, err)
+			return
+		}
+		s.publishRealtime("plugins")
+		pluginOK(w, r, http.StatusAccepted, map[string]any{"run": run})
 	case parts[1] == "source" && len(parts) == 3 && parts[2] == "check" && r.Method == http.MethodPost:
 		result, err := s.checkPluginUpdate(ctx, principal, id)
 		if err != nil {

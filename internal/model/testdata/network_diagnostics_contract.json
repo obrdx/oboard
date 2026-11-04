@@ -29,6 +29,30 @@
     "queries_per_hop": 1,
     "per_hop_timeout_ms": 1000
   },
+  "plugin_lan_request": {
+    "protocol_version": 1,
+    "operation_id": "op-1",
+    "origin": "plugin",
+    "run_id": "run-1",
+    "plugin_id": "acme.monitor",
+    "instance_id": 7,
+    "issued_at": "2026-09-30T12:00:00Z",
+    "expires_at": "2026-09-30T12:01:00Z",
+    "target_id": "router_change",
+    "scheme": "http",
+    "address": "10.10.18.1",
+    "port": 5000,
+    "path_prefix": "/change",
+    "side_effect": true,
+    "method": "POST",
+    "path": "/change?to=b",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body_base64": "eyJ0byI6ImIifQ==",
+    "timeout_ms": 5000,
+    "max_response_bytes": 4096
+  },
   "probe_google_region": {
     "protocol_version": 1,
     "operation_id": "monitor-2",
@@ -156,6 +180,18 @@
       "server_name": "example.com",
       "cert_not_after": "2026-12-30T12:00:00Z"
     }
+  },
+  "result.lan": {
+    "operation_id": "op-1",
+    "target_id": "router_change",
+    "status_code": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_base64": "eyJzdGF0dXMiOiJvayJ9",
+    "body_bytes": 15,
+    "truncated": false,
+    "duration_ms": 12.5
   },
   "result.monitor_trace": {
     "provider": "NextTrace-API",

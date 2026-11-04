@@ -183,6 +183,39 @@ declare global {
     readonly json?: unknown
   }
 
+  interface LANRequestOptions {
+    server_id: ServerID
+    /** A target id declared in manifest lan.targets and approved in the grant. */
+    target: string
+    method?: 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+    /** Path with optional query, inside the target's path_prefix. Defaults to the prefix. */
+    path?: string
+    /** Plain strings only; secret references are not accepted here. */
+    headers?: Record<string, string>
+    body?: string
+    body_encoding?: 'utf8' | 'base64'
+    /** Serialized as the body with Content-Type application/json. */
+    json?: unknown
+    timeout_ms?: number
+    /** 1-16384, default 4096. */
+    max_response_bytes?: number
+  }
+
+  interface LANResponse {
+    readonly ok: boolean
+    readonly target: string
+    readonly status: number
+    readonly headers: Record<string, string>
+    readonly truncated: boolean
+    readonly duration_ms: number
+    readonly side_effect: boolean
+    /** Set when the connection failed (timeout, refused, reset, unreachable, tls_failed). */
+    readonly error_class?: string
+    readonly body?: string
+    readonly body_base64?: string
+    readonly json?: unknown
+  }
+
   interface StateEntry<T = unknown> { key: string; exists: boolean; version: number; value?: T; updated_at?: string }
 
   interface DigestOptions { input?: 'utf8' | 'hex' | 'base64'; output?: 'hex' | 'base64' | 'base64url' }
@@ -208,6 +241,8 @@ declare global {
     }
     /** http.request: HTTPS to granted hosts through the Controller gateway. */
     readonly http: { request(options: HTTPRequestOptions): HTTPResponse }
+    /** lan.request: one HTTP exchange from the chosen server's Agent to a granted private LAN target. */
+    readonly lan: { request(options: LANRequestOptions): LANResponse }
     /** state.read / state.write: private to this instance, with quotas. */
     readonly state: {
       get<T = unknown>(key: string): StateEntry<T>

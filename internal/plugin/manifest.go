@@ -21,6 +21,7 @@ const (
 	maxNameBytes       = 80
 	maxDescribeBytes   = 2000
 	maxHTTPHosts       = 32
+	maxLANTargets      = 16
 	maxEnvFields       = 64
 	maxCustomEnvFields = 32
 	maxPages           = 8
@@ -54,6 +55,7 @@ type Manifest struct {
 	Entry        string                `json:"entry"`
 	Capabilities []string              `json:"capabilities"`
 	HTTP         *HTTPScope            `json:"http,omitempty"`
+	LAN          *LANScope             `json:"lan,omitempty"`
 	Resources    *ResourceRequirements `json:"resources,omitempty"`
 	Environment  []EnvField            `json:"environment,omitempty"`
 	Pages        []PageDeclaration     `json:"pages,omitempty"`
@@ -167,6 +169,9 @@ func ValidateManifest(m *Manifest) error {
 		return err
 	}
 	if err := validateHTTPScope(m); err != nil {
+		return err
+	}
+	if err := validateLANScope(m); err != nil {
 		return err
 	}
 	if err := validateResources(m); err != nil {

@@ -20,6 +20,7 @@ const (
 	CapNetworkDNSLookup   = "network.dns_lookup"
 	CapNetworkHTTPProbe   = "network.http_probe"
 	CapHTTPRequest        = "http.request"
+	CapLANRequest         = "lan.request"
 	CapStateRead          = "state.read"
 	CapStateWrite         = "state.write"
 	CapSecretsUse         = "secrets.use"
@@ -77,6 +78,7 @@ var capabilityCatalog = []CapabilitySpec{
 	{Name: CapNetworkDNSLookup, Group: "network", Label: "在指定服务器执行 DNS 查询", Description: "由指定服务器的 Agent 查询域名的 A/AAAA 记录。", Resource: ResourceServer, Risk: RiskLow, AgentTask: true, Audited: true, Methods: []string{"network.dnsLookup"}, Timeout: 20 * time.Second, RatePerMinute: 30},
 	{Name: CapNetworkHTTPProbe, Group: "network", Label: "在指定服务器执行 HTTP 探测", Description: "由指定服务器的 Agent 以 GET/HEAD 探测公网 HTTP(S) 地址，只返回状态与耗时。", Resource: ResourceServer, Risk: RiskMedium, AgentTask: true, Audited: true, Methods: []string{"network.httpProbe"}, Timeout: 30 * time.Second, RatePerMinute: 20},
 	{Name: CapHTTPRequest, Group: "http", Label: "访问外部 HTTPS 服务", Description: "由主控受控客户端访问清单声明且已授权的公网 HTTPS 主机。", Resource: ResourceHTTPHost, Risk: RiskHigh, Audited: true, Methods: []string{"http.request"}, Timeout: 35 * time.Second, RatePerMinute: 120},
+	{Name: CapLANRequest, Group: "network", Label: "在指定服务器访问内网目标", Description: "由指定服务器的 Agent 向清单声明且已授权的内网地址（精确 IP、端口与路径前缀）发送一次 HTTP 请求，并返回有限的响应体。需要节点本地执行 obag remote-access allow lan。", Resource: ResourceServer, Risk: RiskHigh, AgentTask: true, Audited: true, Methods: []string{"lan.request"}, Timeout: 25 * time.Second, RatePerMinute: 30},
 	{Name: CapStateRead, Group: "state", Label: "读取插件运行状态", Description: "读取本插件实例自己的私有状态。", Risk: RiskLow, Methods: []string{"state.get", "state.list"}, Timeout: 5 * time.Second, RatePerMinute: 600},
 	{Name: CapStateWrite, Group: "state", Label: "保存插件运行状态", Description: "写入、删除与条件更新本插件实例自己的私有状态。", Risk: RiskLow, Methods: []string{"state.set", "state.delete", "state.compareAndSwap"}, Timeout: 5 * time.Second, RatePerMinute: 600},
 	{Name: CapSecretsUse, Group: "secrets", Label: "使用已配置的密钥", Description: "在 HTTP 认证或 HMAC 签名中引用本实例密钥；插件代码拿不到明文。", Risk: RiskHigh, Audited: true, Methods: []string{"crypto.hmac"}, Timeout: 5 * time.Second, RatePerMinute: 240},

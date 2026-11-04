@@ -41,6 +41,7 @@ async function main(run) {
 | `network.dnsLookup(opts)` | `network.dns_lookup` | `{server_id, name, record_types: ['A','AAAA']}` |
 | `network.httpProbe(opts)` | `network.http_probe` | `{server_id, url, method: GET\|HEAD, follow_redirects}`，只返回状态、耗时与 TLS 信息 |
 | `http.request(opts)` | `http.request` | 经主控网关访问授权主机；见下文 |
+| `lan.request(opts)` | `lan.request` | 由指定服务器的 Agent 访问已授权的内网目标，返回有限的响应体；见下文 |
 | `state.get/list` | `state.read` | 实例私有键值 |
 | `state.set/delete/compareAndSwap` | `state.write` | `compareAndSwap(key, expectedVersion, value)`，`0` 表示键不存在；冲突返回 `STATE_CONFLICT` |
 | `notifications.send({title, body, channel_ids?})` | `notifications.send` | 向已授权的管理员通知渠道发送 |
@@ -53,6 +54,25 @@ async function main(run) {
 | `crypto.*` | 无（带 `SecretRef` 的 HMAC 需要 `secrets.use`） | `sha256`、`sha1`、`hmacSha256`、`hmacSha1`、`base64Encode/Decode`、`hexEncode/Decode`、`randomBytes`、`uuid` |
 
 网络诊断由目标服务器上的 Agent 以原生 Go 套接字执行，目标必须是公网域名或公网 IP；服务器离线时立即返回 `SERVER_OFFLINE`，正在执行其他任务时返回 `SERVER_BUSY`。Windows Agent 只支持 `tcpProbe`、`dnsLookup`、`httpProbe`。
+
+### `lan.request`
+
+```js
+const res = oboard.lan.request({
+  server_id: env.SERVER,
+  target: 'router_change',        // 清单 lan.targets 中的 id，且在授权中勾选
+  method: 'POST',                 // 必须是该目标声明的方法
+  path: '/change?to=b',           // 可带查询，必须落在目标 path_prefix 内；省略时为前缀本身
+  json: { outbound: 'b' },        // 或 body + body_encoding（utf8 / base64）
+  timeout_ms: 5000,               // 500–15000
+  max_response_bytes: 4096,       // 1–16384，默认 4096
+})
+if (!res.ok || res.json?.status !== 'ok') throw new OBoardError('SWITCH_FAILED', `设备返回 ${res.status}`)
+```
+
+返回 `{ ok, target, status, headers, truncated, duration_ms, side_effect, error_class?, body | body_base64, json? }`。连接被拒、超时或重置时 `status` 为 0、`error_class` 说明原因，不抛异常；响应体超过上限时 `truncated=true` 且不解析 `json`。地址、端口、协议与 TLS 方式只来自清单目标，调用参数无法改动；`Host`、`Content-Length`、`Connection`、`Transfer-Encoding`、`Proxy-*` 等头由传输层管理，不能设置；请求头只接受普通字符串，不支持 `SecretRef`。Agent 不跟随重定向，3xx 原样返回；也拒绝属于该服务器自身网卡的地址。
+
+除授权外，节点必须本地执行 `obag remote-access allow lan`（同时需要插件开关打开），否则返回 `AGENT_POLICY_DENIED`。标记了 `side_effect` 的目标每次调用都写入审计，面板手动运行前会要求确认。
 
 ### `http.request`
 
@@ -108,5 +128,7 @@ oboard.ui.publish({
 所有 SDK 失败抛出 `OBoardError`，`code` 稳定、可编程判断：
 
 `CAPABILITY_DENIED`、`RESOURCE_DENIED`、`SERVER_NOT_FOUND`、`SERVER_OFFLINE`、`SERVER_BUSY`、`AGENT_POLICY_DENIED`、`UNSUPPORTED_CAPABILITY`、`TARGET_NOT_ALLOWED`、`HTTP_HOST_DENIED`、`HTTP_PRIVATE_ADDRESS_DENIED`、`HTTP_TIMEOUT`、`HTTP_FAILED`、`HTTP_RESPONSE_TOO_LARGE`、`OPERATION_TIMEOUT`、`OPERATION_FAILED`、`RATE_LIMITED`、`LIMIT_EXCEEDED`、`STATE_QUOTA_EXCEEDED`、`STATE_CONFLICT`、`SECRET_NOT_CONFIGURED`、`INVALID_ARGUMENT`、`CANCELLED`。
+
+`message` 会写明具体的拒绝规则，例如 `LAN target router_change (http://10.10.18.1:5000/change) is not approved in the administrator grant`、`10.10.18.1 is a private … address; network diagnostics only reach public targets`。无论插件是否捕获异常，执行日志都会追加一行 `[oboard] <方法> 失败：<错误码> — <原因>`，被策略拦下的调用也会以「拒绝」写入插件活动审计并记录原因。
 
 插件也可 `throw new OBoardError('MY_CODE', 'message')`，该码记为执行错误码。未捕获的其他异常记为 `SCRIPT_ERROR`；超时为 `RUN_TIMEOUT`；超出内存、调用栈或结果大小为 `RESOURCE_LIMIT`。

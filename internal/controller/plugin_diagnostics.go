@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -16,11 +17,12 @@ var pluginDiagnosticTaskTypes = map[string]string{
 	plugin.CapNetworkTCPProbe:  model.AgentTaskTypeNetworkTCP,
 	plugin.CapNetworkDNSLookup: model.AgentTaskTypeNetworkDNS,
 	plugin.CapNetworkHTTPProbe: model.AgentTaskTypeNetworkHTTP,
+	plugin.CapLANRequest:       model.AgentTaskTypeLANRequest,
 }
 
 // NetworkDiagnosticTaskTypes lists every plugin diagnostic task type.
 func NetworkDiagnosticTaskTypes() []string {
-	return []string{model.AgentTaskTypeNetworkPing, model.AgentTaskTypeNetworkTrace, model.AgentTaskTypeNetworkTCP, model.AgentTaskTypeNetworkDNS, model.AgentTaskTypeNetworkHTTP}
+	return []string{model.AgentTaskTypeNetworkPing, model.AgentTaskTypeNetworkTrace, model.AgentTaskTypeNetworkTCP, model.AgentTaskTypeNetworkDNS, model.AgentTaskTypeNetworkHTTP, model.AgentTaskTypeLANRequest}
 }
 
 // RunNetworkDiagnostic queues exactly one signed, structured diagnostic task
@@ -86,11 +88,17 @@ func diagnosticFailure(resultJSON string) error {
 	}
 	switch result.Code {
 	case model.NetworkDiagnosticCodeLocalGateDenied:
-		return plugin.Fail(plugin.CodeAgentPolicyDenied, "the server's local Agent policy does not allow plugin operations")
+		return plugin.Fail(plugin.CodeAgentPolicyDenied, "the server's local Agent policy does not allow plugin operations (obag remote-access allow plugins)")
+	case model.NetworkDiagnosticCodeLANDisabled:
+		return plugin.Fail(plugin.CodeAgentPolicyDenied, "the server's local Agent policy does not allow plugin LAN requests (obag remote-access allow lan)")
 	case model.NetworkDiagnosticCodeUnsupported:
 		return plugin.Fail(plugin.CodeUnsupportedCapability, "the Agent does not support this diagnostic on this platform")
 	case model.NetworkDiagnosticCodeTargetNotAllowed:
-		return plugin.Fail(plugin.CodeTargetNotAllowed, "the target resolves to a private or reserved address")
+		message := "the target resolves to a private or reserved address"
+		if result.Error != "" {
+			message = "the Agent refused the target: " + boundedAgentMessage(result.Error)
+		}
+		return plugin.Fail(plugin.CodeTargetNotAllowed, message)
 	case model.NetworkDiagnosticCodeExpired:
 		return plugin.Fail(plugin.CodeOperationTimeout, "the Agent could not start the diagnostic in time")
 	case model.NetworkDiagnosticCodeResolveFailed:
@@ -100,4 +108,19 @@ func diagnosticFailure(resultJSON string) error {
 	default:
 		return plugin.Fail(plugin.CodeOperationFailed, "the diagnostic failed")
 	}
+}
+
+// boundedAgentMessage keeps an Agent refusal reason short and single-line.
+func boundedAgentMessage(message string) string {
+	message = strings.TrimPrefix(message, model.NetworkDiagnosticCodeTargetNotAllowed+": ")
+	message = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, message)
+	if len(message) > 200 {
+		message = message[:200]
+	}
+	return message
 }

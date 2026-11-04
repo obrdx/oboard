@@ -37,6 +37,8 @@ export const saveDraft = (request: RequestFn, id: number, manifest: string, sour
   request(`/plugins/${id}/draft`, { method: 'PUT', ...json({ manifest, source }) })
 export const publishDraft = (request: RequestFn, id: number) =>
   request(`/plugins/${id}/draft/publish`, { method: 'POST', ...json({ confirm: true }) })
+export const runDraft = (request: RequestFn, id: number, instanceID: number, idempotencyKey: string) =>
+  request<{ run: Run }>(`/plugins/${id}/draft/runs`, { method: 'POST', ...json({ instance_id: String(instanceID), idempotency_key: idempotencyKey }) })
 
 export const createInstance = (request: RequestFn, id: number, name: string) =>
   request<InstanceDetail>(`/plugins/${id}/instances`, { method: 'POST', ...json({ name }) })

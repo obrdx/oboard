@@ -44,12 +44,12 @@ func ValidateNetworkTarget(target string) (string, error) {
 	}
 	if ip, err := netip.ParseAddr(strings.Trim(target, "[]")); err == nil {
 		if !pluginhttp.PublicIP(ip) {
-			return "", Fail(CodeTargetNotAllowed, "private, loopback, link-local and metadata addresses are not allowed")
+			return "", Fail(CodeTargetNotAllowed, ip.Unmap().String()+" is a private, loopback, link-local or metadata address; network diagnostics only reach public targets (declare a LAN target and use lan.request)")
 		}
 		return ip.Unmap().String(), nil
 	}
 	if !ValidHostname(target) {
-		return "", Fail(CodeTargetNotAllowed, "target must be a public DNS name or public IP address")
+		return "", Fail(CodeTargetNotAllowed, target+" is not a public DNS name or public IP address")
 	}
 	return target, nil
 }
@@ -133,7 +133,7 @@ func (s *Service) handleNetwork(ctx context.Context, call callContext, raw json.
 		return nil, resource, detail, Fail(CodeUnsupportedCapability, "the Agent on this server does not support this diagnostic; update the Agent")
 	}
 	if !server.PluginsGate {
-		return nil, resource, detail, Fail(CodeAgentPolicyDenied, "the server's local Agent policy does not allow plugin operations (obag remote-access allow plugins)")
+		return nil, resource, detail, Fail(CodeAgentPolicyDenied, "server "+common.ServerID+" does not allow plugin operations locally (obag remote-access allow plugins)")
 	}
 	limits, _ := EffectiveLimits(call.loaded.manifest.Limits, s.Settings(ctx).MaxTimeout)
 	allowed, err := s.store.ConsumePluginRunBudget(ctx, call.run.UUID, call.run.LeaseGeneration, "agent", limits.AgentOperations)

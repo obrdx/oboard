@@ -53,6 +53,7 @@ type ServerInfo struct {
 	LastSeenAt   *time.Time
 	Capabilities []string
 	PluginsGate  bool
+	LANGate      bool
 }
 
 // UserInfo is the plugin-facing user. It never contains passwords, tokens or proxy credentials.

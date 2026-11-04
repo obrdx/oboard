@@ -24,6 +24,8 @@ func networkDiagnosticContractSamples() map[string]any {
 		AgentTaskTypeNetworkTCP:   NetworkTCPProbeTaskPayload{NetworkDiagnosticEnvelope: envelope, Host: "example.com", Port: 443, IPFamily: NetworkFamilyAuto, TimeoutMS: 3000},
 		AgentTaskTypeNetworkDNS:   NetworkDNSLookupTaskPayload{NetworkDiagnosticEnvelope: envelope, Name: "example.com", RecordTypes: []string{"A", "AAAA"}, TimeoutMS: 3000},
 		AgentTaskTypeNetworkHTTP:  NetworkHTTPProbeTaskPayload{NetworkDiagnosticEnvelope: envelope, URL: "https://example.com/health", Method: "GET", IPFamily: NetworkFamilyAuto, TimeoutMS: 5000, FollowRedirects: true},
+		AgentTaskTypeLANRequest:   LANRequestTaskPayload{NetworkDiagnosticEnvelope: envelope, TargetID: "router_change", Scheme: LANRequestSchemeHTTP, Address: "10.10.18.1", Port: 5000, PathPrefix: "/change", SideEffect: true, Method: "POST", Path: "/change?to=b", Headers: map[string]string{"Content-Type": "application/json"}, BodyBase64: "eyJ0byI6ImIifQ==", TimeoutMS: 5000, MaxResponseBytes: LANRequestDefaultResponseBytes},
+		"result.lan":              LANRequestResult{OperationID: "op-1", TargetID: "router_change", StatusCode: 200, Headers: map[string]string{"content-type": "application/json"}, BodyBase64: "eyJzdGF0dXMiOiJvayJ9", BodyBytes: 15, DurationMS: 12.5},
 		"result.ping":             NetworkPingResult{OperationID: "op-1", Target: "example.com", ResolvedIP: "93.184.215.14", IPFamily: NetworkFamilyIPv4, Sent: 2, Received: 1, LossPercent: 50, MinRTTMS: 11.5, AvgRTTMS: 11.5, MaxRTTMS: 11.5, Samples: []NetworkPingSample{{Seq: 1, RTTMS: 11.5}, {Seq: 2, Timeout: true}}},
 		"result.trace":            NetworkTraceResult{OperationID: "op-1", Target: "example.com", ResolvedIP: "93.184.215.14", IPFamily: NetworkFamilyIPv4, Mode: TraceModeTCP, Port: 443, StartedAt: issued, DurationMS: 812, Reached: true, Hops: []NetworkTraceHop{{Hop: 1, Addresses: []string{"203.0.113.1"}, Probes: []NetworkTraceProbe{{Address: "203.0.113.1", RTTMS: 1.2}, {Timeout: true}}}}},
 		"result.tcp":              NetworkTCPProbeResult{OperationID: "op-1", Host: "example.com", Port: 443, ResolvedIP: "93.184.215.14", IPFamily: NetworkFamilyIPv4, Connected: true, ConnectMS: 12.25},
@@ -78,6 +80,10 @@ func newContractValue(sample any) any {
 		return &NetworkHTTPProbeTaskPayload{}
 	case GoogleRegionTaskPayload:
 		return &GoogleRegionTaskPayload{}
+	case LANRequestTaskPayload:
+		return &LANRequestTaskPayload{}
+	case LANRequestResult:
+		return &LANRequestResult{}
 	case GoogleRegionResult:
 		return &GoogleRegionResult{}
 	case NetworkPingResult:

@@ -28,10 +28,39 @@
 | `runtime` / `entry` | 固定为 `oboard-js` / `main.js`。 |
 | `capabilities` | 只能取自能力目录（见 [安全模型](security.md)）。 |
 | `http` | 使用 `http.request` 时必填：`hosts`（精确主机名或单个前导 `*.`，最多 32 个，不接受 IP）与 `methods`。 |
+| `lan` | 使用 `lan.request` 时必填：`targets`（1–16 个），见下方「内网目标」。 |
 | `resources.servers` | 服务器数量需求与理由，展示给管理员审核。 |
 | `pages` | 使用 `ui.page` 时必填，最多 8 页。每页有 `id`、`title`，以及可选 `actions`（最多 8 个）。新增页面或操作算权限扩大。 |
 | `triggers` | `schedule` 允许 interval/cron；`events` 取 `server.online`、`server.offline`，需要 `events.server_status`。界面刷新与按钮不在这里声明。 |
 | `limits` | 只能**降低**主机上限：`timeout`（1s–2m）、`memory_mib`（16–128）、`sdk_calls`（≤1000）、`http_requests`（≤100）、`agent_operations`（≤20）、`log_bytes`（≤256 KiB）。 |
+
+## 内网目标
+
+`lan.request` 只能访问 `lan.targets` 中逐条声明、并由管理员在授权里勾选的目标。每个目标是一个精确端点，不接受网段、域名或通配：
+
+```json
+"capabilities": ["lan.request"],
+"lan": {
+  "targets": [
+    { "id": "router_status", "scheme": "http", "address": "10.10.18.1", "port": 5000, "methods": ["GET"], "path_prefix": "/", "reason": "读取当前出口" },
+    { "id": "router_change", "scheme": "http", "address": "10.10.18.1", "port": 5000, "methods": ["POST"], "path_prefix": "/change", "side_effect": true, "reason": "切换出口" }
+  ]
+}
+```
+
+| 字段 | 规则 |
+|---|---|
+| `id` | 小写标识（`^[a-z][a-z0-9_]{0,63}$`），清单内唯一；授权与 SDK 调用都按它引用。 |
+| `scheme` | `http` 或 `https`。 |
+| `address` | IP 字面量，只能是 `10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`100.64.0.0/10` 或 `fc00::/7`。回环、链路本地（含云元数据）与公网地址一律拒绝；公网主机请用 `http.request` 或 `network.http_probe`。 |
+| `port` | 1–65535。 |
+| `methods` | `GET`、`HEAD`、`POST`、`PUT`、`PATCH`、`DELETE` 的子集。 |
+| `path_prefix` | 以 `/` 开头，不含查询、片段、空白、反斜杠、百分号编码或 `.`/`..` 段。请求路径必须按段落在前缀内：`/change` 允许 `/change`、`/change/x`、`/change?to=b`，不允许 `/changes`。 |
+| `side_effect` | 目标会改变设备状态时为 `true`。声明了 `GET`/`HEAD` 以外的方法时必须为 `true`；`GET` 也可以标记。审核页会醒目提示，每次调用写入审计，手动运行前需要确认。 |
+| `insecure_tls` | 仅 `https`：不校验设备证书（自签名设备常见），审核页会提示。 |
+| `reason` | 必填（≤200 字节），展示给管理员。 |
+
+新增目标，或同一 `id` 的地址、端口、协议、前缀、方法、`side_effect`、`insecure_tls` 发生变化，都算权限扩大，实例在管理员重新审核前不会运行。节点还必须本地执行 `obag remote-access allow lan`，主控无法远程打开。
 
 ## 环境变量
 

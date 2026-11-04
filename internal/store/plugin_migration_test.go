@@ -291,7 +291,7 @@ func TestPluginPackageSourceRefUpgradesPreviousPackages(t *testing.T) {
 	for _, stmt := range []string{
 		`alter table plugin_packages drop column source_ref`,
 		`insert into plugin_installations(id,plugin_key,name,publisher_identity,created_at,updated_at) values(1,'acme.demo','Demo','local','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z')`,
-		`insert into plugin_packages(id,installation_id,plugin_key,version,sha256,manifest_json,source,publisher_identity,signature_state,source_kind,source_repository,source_commit,created_at) values(1,1,'acme.demo','1.0.0','sha','{}','src','local','unsigned','github','https://github.com/acme/demo','`+strings.Repeat("a", 40)+`','2026-10-01T00:00:00Z')`,
+		`insert into plugin_packages(id,installation_id,plugin_key,version,sha256,manifest_json,source,publisher_identity,signature_state,source_kind,source_repository,source_commit,created_at) values(1,1,'acme.demo','1.0.0','sha','{}','src','local','unsigned','github','https://github.com/acme/demo','` + strings.Repeat("a", 40) + `','2026-10-01T00:00:00Z')`,
 	} {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			t.Fatalf("%s: %v", stmt, err)
@@ -317,6 +317,40 @@ func TestPluginPackageSourceRefUpgradesPreviousPackages(t *testing.T) {
 			if _, err := s.db.ExecContext(ctx, `update plugin_packages set source_ref='main' where id=1`); err != nil {
 				t.Fatal(err)
 			}
+		}
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestPluginRunDraftColumnsUpgradePreviousRuns(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "oboard.sqlite")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`alter table plugin_runs drop column draft_source`,
+		`alter table plugin_runs drop column draft_manifest_json`,
+		`insert into plugin_runs(id,uuid,installation_id,instance_id,package_id,plugin_key,plugin_version,trigger,idempotency_key,status,queued_at) values(1,'prun_old',1,1,1,'acme.demo','1.0.0','manual','manual:old','succeeded','2026-10-01T00:00:00Z')`,
+	} {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for pass := 0; pass < 2; pass++ {
+		s, err = Open(path)
+		if err != nil {
+			t.Fatalf("pass %d: %v", pass, err)
+		}
+		run, err := s.GetPluginRunByUUID(ctx, "prun_old")
+		if err != nil || run.Status != "succeeded" || run.Draft() || run.IsDraft || run.DraftSource != "" {
+			t.Fatalf("pass %d: previous run was not preserved as a published-version run: %+v %v", pass, run, err)
 		}
 		if err := s.Close(); err != nil {
 			t.Fatal(err)

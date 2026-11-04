@@ -51,6 +51,7 @@ export function RunDialog({ id, request, canCancel, onClose, notify }: { id: num
           <Badge variant={runTone(run.status)}>{runStatusLabels[run.status] || run.status}</Badge>
           <span>{run.plugin_key} {run.plugin_version}</span>
           <span>{triggerLabels[run.trigger] || run.trigger}</span>
+          {run.draft && <Badge variant="warning">草稿试运行</Badge>}
         </div>
         <dl className="plugin-facts">
           <div><dt>排队</dt><dd>{formatTime(run.queued_at)}</dd></div>

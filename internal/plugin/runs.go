@@ -116,6 +116,10 @@ func (s *Service) RunManually(ctx context.Context, actor application.Principal, 
 }
 
 func (s *Service) enqueue(ctx context.Context, loaded loadedInstallation, instance model.PluginInstance, trigger string, detail TriggerDetail, key, caller string) (model.PluginRun, bool, error) {
+	return s.enqueueRun(ctx, loaded, instance, trigger, detail, key, caller, nil)
+}
+
+func (s *Service) enqueueRun(ctx context.Context, loaded loadedInstallation, instance model.PluginInstance, trigger string, detail TriggerDetail, key, caller string, draft *PackageCandidate) (model.PluginRun, bool, error) {
 	queued, err := s.store.CountPluginRunsByStatus(ctx, model.PluginRunQueued)
 	if err != nil {
 		return model.PluginRun{}, false, storeError(err)
@@ -128,6 +132,10 @@ func (s *Service) enqueue(ctx context.Context, loaded loadedInstallation, instan
 		PluginKey: loaded.installation.PluginKey, PluginVersion: loaded.pkg.Version, Trigger: trigger, TriggerJSON: mustMarshal(detail),
 		CallerPrincipal: caller, IdempotencyKey: key, RecoveryGeneration: s.Settings(ctx).RecoveryGen,
 	}
+	if draft != nil {
+		run.DraftManifestJSON, run.DraftSource = draft.Manifest.CanonicalJSON(), draft.Source
+		run.PluginVersion = draft.Manifest.Version
+	}
 	created, err := s.store.CreatePluginRun(ctx, &run)
 	if errors.Is(err, store.ErrPluginConflict) {
 		return model.PluginRun{}, false, Fail(CodeRunInProgress, "该实例已有正在排队或执行的任务")
@@ -136,6 +144,59 @@ func (s *Service) enqueue(ctx context.Context, loaded loadedInstallation, instan
 		return model.PluginRun{}, false, storeError(err)
 	}
 	return run, created, nil
+}
+
+// RunDraft queues one trial run of an installation's editor draft on an
+// existing instance. The run uses the instance's saved environment and the
+// grant of the published version, narrowed to what the draft also declares;
+// a draft can never use a permission that has not been reviewed. Its result
+// and logs stay on the run marked as draft and do not count toward the
+// instance's failure streak. Running unpublished code is an install-level
+// action, so only an interactive administrator may start it.
+func (s *Service) RunDraft(ctx context.Context, actor application.Principal, installationID, instanceID int64, idempotencyKey string, check func(DraftInput) (PackageCandidate, error)) (model.PluginRun, error) {
+	if err := s.require(actor, PermInstall); err != nil {
+		return model.PluginRun{}, err
+	}
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if idempotencyKey == "" || len(idempotencyKey) > 128 {
+		return model.PluginRun{}, FailField(CodeInvalidArgument, "idempotency_key", "idempotency_key is required (at most 128 bytes)")
+	}
+	loaded, instance, err := s.loadInstance(ctx, instanceID)
+	if err != nil {
+		return model.PluginRun{}, err
+	}
+	installation := loaded.installation
+	if installation.ID != installationID {
+		return model.PluginRun{}, Fail(CodeNotFound, "该实例不属于这个插件")
+	}
+	if installation.PublisherIdentity != model.PluginPublisherLocal || len(installation.DraftManifestJSON) == 0 {
+		return model.PluginRun{}, Fail(CodeConflict, "没有可试运行的草稿")
+	}
+	if loaded.pkg == nil {
+		return model.PluginRun{}, Fail(CodePluginDisabled, "试运行需要先发布一次并完成授权，草稿沿用已发布版本的授权与配置")
+	}
+	candidate, err := check(DraftInput{Manifest: installation.DraftManifestJSON, Source: installation.DraftSource})
+	if err != nil {
+		return model.PluginRun{}, err
+	}
+	if candidate.Manifest.ID != installation.PluginKey {
+		return model.PluginRun{}, FailField(CodeInvalidManifest, "id", "草稿不能修改插件 id")
+	}
+	if err := s.runnable(ctx, loaded, instance); err != nil {
+		return model.PluginRun{}, err
+	}
+	caller := &CallerRef{PrincipalID: actor.ID, Type: string(actor.Type), GrantID: actor.GrantID}
+	if actor.SourceIP.IsValid() {
+		caller.SourceIP = actor.SourceIP.String()
+	}
+	run, created, err := s.enqueueRun(ctx, loaded, instance, model.PluginTriggerManual, TriggerDetail{Caller: caller}, "draft:"+actor.ID+":"+idempotencyKey, actor.ID, &candidate)
+	if err != nil {
+		return run, err
+	}
+	if created {
+		s.Wake()
+	}
+	return run, nil
 }
 
 // Wake nudges idle workers after a new run was queued.
@@ -246,9 +307,16 @@ func (s *Service) buildLease(ctx context.Context, run model.PluginRun, settings 
 	if detail.Event != nil {
 		runContext.Event = mustMarshal(detail.Event)
 	}
+	source := loaded.pkg.Source
+	if run.Draft() {
+		if _, err := ParseManifest(run.DraftManifestJSON); err != nil {
+			return nil, Fail(CodeInvalidManifest, "草稿清单已失效，本次试运行作废")
+		}
+		source = run.DraftSource
+	}
 	return &pluginrpc.RunLease{
 		RunUUID: run.UUID, LeaseGeneration: run.LeaseGeneration, PluginKey: run.PluginKey, PluginVersion: run.PluginVersion,
-		InstanceID: instance.ID, Source: loaded.pkg.Source, Environment: env, Context: runContext,
+		InstanceID: instance.ID, Source: source, Environment: env, Context: runContext,
 		Limits: pluginrpc.Limits{TimeoutMS: limits.TimeoutMS, MemoryMiB: limits.MemoryMiB, SDKCalls: limits.SDKCalls, HTTPRequests: limits.HTTPRequests, AgentOperations: limits.AgentOperations, LogBytes: limits.LogBytes, LogLines: limits.LogLines, LogLineBytes: limits.LogLineBytes, ResultBytes: limits.ResultBytes},
 	}, nil
 }
@@ -328,7 +396,7 @@ func (s *Service) Complete(ctx context.Context, request pluginrpc.CompleteReques
 }
 
 func (s *Service) recordOutcome(ctx context.Context, run model.PluginRun) {
-	if run.Status == model.PluginRunCancelled {
+	if run.Status == model.PluginRunCancelled || run.Draft() {
 		return
 	}
 	finished := s.now()

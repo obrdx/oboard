@@ -143,7 +143,7 @@ export function PluginsWorkspace({ tab, data, role: sessionRole, client, notify,
             {runs.map(run => <li key={run.id}><button type="button" className="plugin-record-row plugin-record-button" onClick={() => setRunID(run.id)}>
               <div className="min-w-0">
                 <strong>{pluginName(run.installation_id)} · #{run.id}</strong>
-                <p className="plugin-env-help">{triggerLabels[run.trigger] || run.trigger} · {formatTime(run.queued_at)}{run.error_code ? ` · ${describeError(run.error_code)}` : ''}</p>
+                <p className="plugin-env-help">{run.draft ? '草稿试运行' : triggerLabels[run.trigger] || run.trigger} · {formatTime(run.queued_at)}{run.error_code ? ` · ${describeError(run.error_code)}` : ''}</p>
               </div>
               <Badge variant={runTone(run.status)}>{runStatusLabels[run.status] || run.status}</Badge>
             </button></li>)}
@@ -188,6 +188,8 @@ export function PluginsWorkspace({ tab, data, role: sessionRole, client, notify,
 
     {editor && <PluginEditor pluginID={editor.pluginID} initialManifest={editor.manifest} initialSource={editor.source} request={request} servers={servers}
       customTypes={catalog?.custom_types || []} canPublish={isAdmin} notify={notify}
+      instances={detail && detail.id === editor.pluginID ? detail.instance_details.filter(item => item.status === 'ready' || item.status === 'degraded').map(item => ({ id: item.id, name: item.name })) : []}
+      onOpenRun={setRunID}
       onSaved={() => void refresh()}
       onPublished={(id, reviewRequired) => { setEditor(null); if (reviewRequired) notify('新版本申请了新权限，实例需重新审核授权', 'warning'); void refresh(); void openDetail(id) }}
       onClose={() => { setEditor(null); if (detail) void reloadDetail(); else void refresh() }} />}

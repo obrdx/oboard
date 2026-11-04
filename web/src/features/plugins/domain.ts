@@ -1,4 +1,4 @@
-import type { CustomVar, EnvField, FieldIssue, Risk } from './types'
+import type { CustomVar, EnvField, FieldIssue, Grant, LANTarget, Manifest, Risk } from './types'
 
 export const instanceStatusLabels: Record<string, string> = {
   ready: '就绪',
@@ -70,7 +70,7 @@ export const errorCodeLabels: Record<string, string> = {
   SERVER_NOT_FOUND: '服务器不存在',
   SERVER_OFFLINE: '目标服务器离线',
   SERVER_BUSY: '服务器正在执行其他任务',
-  AGENT_POLICY_DENIED: '节点本地策略未允许插件诊断',
+  AGENT_POLICY_DENIED: '节点本地策略未允许该插件操作',
   UNSUPPORTED_CAPABILITY: '节点不支持该诊断',
   TARGET_NOT_ALLOWED: '目标地址不被允许',
   HTTP_HOST_DENIED: 'HTTP 主机未授权',
@@ -107,6 +107,18 @@ export const describeError = (code?: string, message?: string) => {
   const label = errorCodeLabels[code]
   if (label && message && message !== label) return `${label}：${message}`
   return label || message || code
+}
+
+export function lanEndpoint(target: LANTarget) {
+  const host = target.address.includes(':') ? `[${target.address}]` : target.address
+  return `${target.scheme}://${host}:${target.port}${target.path_prefix}`
+}
+
+// sideEffectTargets lists granted LAN targets that change device state; a
+// manual run asks for confirmation before it may use them.
+export function sideEffectTargets(manifest: Manifest | undefined, grant: Grant | undefined): LANTarget[] {
+  const granted = grant?.capabilities?.['lan.request']?.targets || []
+  return (manifest?.lan?.targets || []).filter(target => target.side_effect && granted.includes(target.id))
 }
 
 export function newIdempotencyKey(prefix: string) {

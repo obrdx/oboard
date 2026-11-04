@@ -88,17 +88,29 @@ func scanPluginSchedule(row pluginScanner) (model.PluginSchedule, error) {
 	return item, nil
 }
 
-const pluginRunColumns = `id,uuid,installation_id,instance_id,package_id,plugin_key,plugin_version,trigger,trigger_json,caller_principal,idempotency_key,status,error_code,error_message,cancel_requested,queued_at,started_at,finished_at,capability_call_count,http_call_count,agent_operation_count,result_json,lease_owner,lease_generation,lease_until,recovery_generation`
+// pluginRunLegacyColumns are the plugin_runs columns that predate draft trial
+// runs; the trigger-widening rebuild copies exactly these.
+const pluginRunLegacyColumns = `id,uuid,installation_id,instance_id,package_id,plugin_key,plugin_version,trigger,trigger_json,caller_principal,idempotency_key,status,error_code,error_message,cancel_requested,queued_at,started_at,finished_at,capability_call_count,http_call_count,agent_operation_count,result_json,lease_owner,lease_generation,lease_until,recovery_generation`
+
+const pluginRunColumns = pluginRunLegacyColumns + `,draft_manifest_json,draft_source`
+
+// pluginRunListColumns omits the draft source snapshot from list queries.
+const pluginRunListColumns = pluginRunLegacyColumns + `,draft_manifest_json,''`
 
 func scanPluginRun(row pluginScanner) (model.PluginRun, error) {
 	var item model.PluginRun
 	var triggerJSON, result, queued string
 	var cancel int
 	var started, finished, leaseUntil sql.NullString
-	if err := row.Scan(&item.ID, &item.UUID, &item.InstallationID, &item.InstanceID, &item.PackageID, &item.PluginKey, &item.PluginVersion, &item.Trigger, &triggerJSON, &item.CallerPrincipal, &item.IdempotencyKey, &item.Status, &item.ErrorCode, &item.ErrorMessage, &cancel, &queued, &started, &finished, &item.CapabilityCallCount, &item.HTTPCallCount, &item.AgentOperationCount, &result, &item.LeaseOwner, &item.LeaseGeneration, &leaseUntil, &item.RecoveryGeneration); err != nil {
+	var draftManifest string
+	if err := row.Scan(&item.ID, &item.UUID, &item.InstallationID, &item.InstanceID, &item.PackageID, &item.PluginKey, &item.PluginVersion, &item.Trigger, &triggerJSON, &item.CallerPrincipal, &item.IdempotencyKey, &item.Status, &item.ErrorCode, &item.ErrorMessage, &cancel, &queued, &started, &finished, &item.CapabilityCallCount, &item.HTTPCallCount, &item.AgentOperationCount, &result, &item.LeaseOwner, &item.LeaseGeneration, &leaseUntil, &item.RecoveryGeneration, &draftManifest, &item.DraftSource); err != nil {
 		return item, err
 	}
 	item.TriggerJSON = json.RawMessage(triggerJSON)
+	if draftManifest != "" {
+		item.DraftManifestJSON = json.RawMessage(draftManifest)
+		item.IsDraft = true
+	}
 	if result != "" {
 		item.ResultJSON = json.RawMessage(result)
 	}
@@ -789,14 +801,15 @@ func (s *Store) CreatePluginRun(ctx context.Context, run *model.PluginRun) (bool
 		return false, ErrPluginConflict
 	}
 	ts := now()
-	res, err := tx.ExecContext(ctx, `insert into plugin_runs(uuid,installation_id,instance_id,package_id,plugin_key,plugin_version,trigger,trigger_json,caller_principal,idempotency_key,status,queued_at,recovery_generation) values(?,?,?,?,?,?,?,?,?,?,'queued',?,?)`,
-		run.UUID, run.InstallationID, run.InstanceID, run.PackageID, run.PluginKey, run.PluginVersion, run.Trigger, string(orJSONObject(run.TriggerJSON)), run.CallerPrincipal, run.IdempotencyKey, ts, run.RecoveryGeneration)
+	res, err := tx.ExecContext(ctx, `insert into plugin_runs(uuid,installation_id,instance_id,package_id,plugin_key,plugin_version,trigger,trigger_json,caller_principal,idempotency_key,status,queued_at,recovery_generation,draft_manifest_json,draft_source) values(?,?,?,?,?,?,?,?,?,?,'queued',?,?,?,?)`,
+		run.UUID, run.InstallationID, run.InstanceID, run.PackageID, run.PluginKey, run.PluginVersion, run.Trigger, string(orJSONObject(run.TriggerJSON)), run.CallerPrincipal, run.IdempotencyKey, ts, run.RecoveryGeneration, string(run.DraftManifestJSON), run.DraftSource)
 	if err != nil {
 		return false, err
 	}
 	run.ID, _ = res.LastInsertId()
 	run.Status = model.PluginRunQueued
 	run.QueuedAt = parseTime(ts)
+	run.IsDraft = run.Draft()
 	return true, tx.Commit()
 }
 
@@ -829,7 +842,7 @@ func (s *Store) ListPluginRuns(ctx context.Context, filter PluginRunFilter) ([]m
 	if filter.BeforeID > 0 {
 		clauses, args = append(clauses, "id<?"), append(args, filter.BeforeID)
 	}
-	query := `select ` + pluginRunColumns + ` from plugin_runs`
+	query := `select ` + pluginRunListColumns + ` from plugin_runs`
 	if len(clauses) > 0 {
 		query += ` where ` + strings.Join(clauses, " and ")
 	}

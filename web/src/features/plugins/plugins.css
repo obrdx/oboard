@@ -88,6 +88,9 @@
 .plugin-permission-head code { font-size: 12px; color: var(--text-muted); }
 .plugin-scope { display: grid; gap: 6px; margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px dashed var(--border-color); font-size: 13px; color: var(--text-secondary); }
 .plugin-chip-list { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.plugin-lan-targets { display: grid; gap: var(--space-2); margin: var(--space-2) 0 0; padding: 0; list-style: none; }
+.plugin-lan-targets li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
+.plugin-lan-targets code { overflow-wrap: anywhere; }
 .plugin-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: var(--radius-full); background: var(--bg-control); cursor: pointer; }
 .plugin-forbidden { margin-top: var(--space-3); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--bg-control); font-size: 13px; color: var(--text-secondary); }
 .plugin-forbidden strong { display: block; margin-bottom: 2px; color: var(--text-primary); }
