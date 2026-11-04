@@ -2001,6 +2001,11 @@ func TestServerMonitoringPolicyAndHealthSanitization(t *testing.T) {
 	if time.Since(report.Timestamp) > 5*time.Second {
 		t.Fatalf("timestamp was not normalized: %s", report.Timestamp)
 	}
+	report = model.HealthReport{SwapUsedBytes: 300, SwapTotalBytes: 200}
+	sanitizeServerHealthReport(&report)
+	if report.SwapUsedBytes != 200 {
+		t.Fatalf("swap usage was not bounded: %d", report.SwapUsedBytes)
+	}
 	report = model.HealthReport{CPUCores: -3}
 	sanitizeServerHealthReport(&report)
 	if report.CPUCores != 0 {

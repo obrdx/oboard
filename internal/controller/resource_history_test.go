@@ -32,12 +32,14 @@ func TestServerResourceMetricsReturnsLiveStateWhenHistoryDisabled(t *testing.T) 
 		t.Fatal(err)
 	}
 	reportAt := time.Now().UTC().Add(-time.Minute)
-	report := model.HealthReport{AgentID: server.AgentID, Status: model.ServerOnline, CPUUsagePercent: 64, MemoryUsedBytes: 640, MemoryTotalBytes: 1000, DiskBytes: 800, DiskTotalBytes: 2000, TCPConnectionCount: 20, UDPConnectionCount: 4, ProcessCount: 70, NetworkUploadBPS: 50, NetworkDownloadBPS: 75, Timestamp: reportAt}
+	report := model.HealthReport{AgentID: server.AgentID, Status: model.ServerOnline, CPUUsagePercent: 64, MemoryUsedBytes: 640, MemoryTotalBytes: 1000, SwapUsedBytes: 32, SwapTotalBytes: 512, DiskBytes: 800, DiskTotalBytes: 2000, TCPConnectionCount: 20, UDPConnectionCount: 4, ProcessCount: 70, NetworkUploadBPS: 50, NetworkDownloadBPS: 75, Timestamp: reportAt}
 	window := model.ServerTrafficWindow{Key: reportAt.Format("2006-01-02"), Start: reportAt.Truncate(24 * time.Hour), End: reportAt.Truncate(24 * time.Hour).Add(24 * time.Hour)}
 	server.Status = report.Status
 	server.CPUUsagePercent = report.CPUUsagePercent
 	server.MemoryUsedBytes = report.MemoryUsedBytes
 	server.MemoryTotalBytes = report.MemoryTotalBytes
+	server.SwapUsedBytes = report.SwapUsedBytes
+	server.SwapTotalBytes = report.SwapTotalBytes
 	server.DiskBytes = report.DiskBytes
 	server.DiskTotalBytes = report.DiskTotalBytes
 	server.TCPConnectionCount = report.TCPConnectionCount
@@ -61,6 +63,9 @@ func TestServerResourceMetricsReturnsLiveStateWhenHistoryDisabled(t *testing.T) 
 	current := response["current"].(map[string]any)
 	if current["cpu_usage_percent"] != float64(64) || current["memory_used_bytes"] != float64(640) || current["memory_total_bytes"] != float64(1000) {
 		t.Fatalf("current resource snapshot = %#v", current)
+	}
+	if current["swap_used_bytes"] != float64(32) || current["swap_total_bytes"] != float64(512) {
+		t.Fatalf("current swap snapshot = %#v", current)
 	}
 	if current["disk_used_bytes"] != float64(800) || current["disk_total_bytes"] != float64(2000) || current["tcp_connection_count"] != float64(20) || current["udp_connection_count"] != float64(4) || current["process_count"] != float64(70) {
 		t.Fatalf("current extended resource snapshot = %#v", current)

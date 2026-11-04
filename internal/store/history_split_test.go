@@ -299,7 +299,7 @@ func TestHistoryMigrationPreviousSchemaAndRollback(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, q := range []string{
-				"insert into main.server_metric_samples select * from hist.server_metric_samples",
+				"insert into main.server_metric_samples(id,server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at) select id,server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at from hist.server_metric_samples",
 				"update main.server_metric_samples set cpu_usage_percent=77",
 				"insert into hist.server_metric_samples(id,server_id,sampled_at) values(9999,1,'2020-01-01T00:00:00Z')",
 				"insert into main.latency_rollup_state(id,schema_version,generation,live_cursor,updated_at) values(1,1,23,300,'2026-10-24T00:00:00Z')",

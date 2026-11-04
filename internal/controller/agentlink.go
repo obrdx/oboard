@@ -214,6 +214,8 @@ func (s *Server) handleStealthEnroll(session *agentlink.Session, auth *agentlink
 		server.CPUUsagePercent = health.CPUUsagePercent
 		server.MemoryUsedBytes = health.MemoryUsedBytes
 		server.MemoryTotalBytes = health.MemoryTotalBytes
+		server.SwapUsedBytes = health.SwapUsedBytes
+		server.SwapTotalBytes = health.SwapTotalBytes
 		server.AgentMemoryBytes = health.AgentMemoryBytes
 		server.AgentVersion = health.AgentVersion
 		server.AgentBuild = health.AgentBuild

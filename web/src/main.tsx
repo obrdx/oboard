@@ -434,14 +434,14 @@ type AgentFleetUpdateStatus = {
   message: string
 }
 type ServerMetricSample = { id: number; server_id: number; cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; resource_recorded: boolean; network_upload_bps: number; network_download_bps: number; traffic_upload_bytes: number; traffic_download_bytes: number; connectivity_available?: boolean; connectivity_latency_ms: number; sampled_at: string }
-type ServerResourceMetricPoint = { sampled_at: string; cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; disk_used_bytes: number; disk_total_bytes: number; tcp_connection_count: number; udp_connection_count: number; process_count: number; network_upload_bps: number; network_download_bps: number }
+type ServerResourceMetricPoint = { sampled_at: string; cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; swap_used_bytes?: number; swap_total_bytes?: number; disk_used_bytes: number; disk_total_bytes: number; tcp_connection_count: number; udp_connection_count: number; process_count: number; network_upload_bps: number; network_download_bps: number }
 type ServerResourceMetricsResponse = {
   history_enabled: boolean
   retention_days: number
   window_hours: number
   bucket_seconds: number
   points: ServerResourceMetricPoint[]
-  current: { cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; disk_used_bytes: number; disk_total_bytes: number; tcp_connection_count: number; udp_connection_count: number; process_count: number; network_upload_bps: number; network_download_bps: number; sampled_at?: string }
+  current: { cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; swap_used_bytes?: number; swap_total_bytes?: number; disk_used_bytes: number; disk_total_bytes: number; tcp_connection_count: number; udp_connection_count: number; process_count: number; network_upload_bps: number; network_download_bps: number; sampled_at?: string }
 }
 type LatencyProbeMode = 'tcp' | 'icmp'
 type LatencyProbeRegion = { province: string; carrier: string }
@@ -1119,7 +1119,7 @@ const fieldLabels: Record<string, string> = {
   subject_type: '授权类型', scope_type: '授权范围',
   ip_stack: 'IP 栈', udp_inbound_mode: 'UDP 入站', mtu_mode: 'MTU 模式', mtu_value: 'MTU 值', mtu_probe_host: 'MTU 探测主机', mtu_probe_port: 'MTU 探测端口', mtu_overhead_bytes: 'MTU 额外开销', stealth_enabled: '安全进程',
   bbr_qdisc: '拥塞控制', bbr_cake_bandwidth_mbit: 'CAKE 带宽',
-  os: '系统', system: '系统', distro_id: '发行版 ID', distro_version: '发行版版本', distro_name: '发行版', libc: 'libc', service_manager: '服务管理器', package_manager: '包管理器', arch: '架构', cpu: 'CPU', cpu_cores: 'CPU 核心', cpu_usage: 'CPU', cpu_usage_percent: 'CPU 使用率', memory: '内存', memory_used_bytes: '已用内存', memory_total_bytes: '总内存', agent_memory: 'Agent 内存', agent_memory_bytes: 'Agent 内存', agent_version: 'Agent 版本', agent_build: 'Agent 构建', sing_box_version: 'sing-box 版本', download_rate: '下载速率', upload_rate: '上传速率', period_traffic: '周期流量', monitoring_mode: '回报模式',
+  os: '系统', system: '系统', distro_id: '发行版 ID', distro_version: '发行版版本', distro_name: '发行版', libc: 'libc', service_manager: '服务管理器', package_manager: '包管理器', arch: '架构', cpu: 'CPU', cpu_cores: 'CPU 核心', cpu_usage: 'CPU', cpu_usage_percent: 'CPU 使用率', memory: '内存', memory_used_bytes: '已用内存', memory_total_bytes: '总内存', swap_used_bytes: '已用 Swap', swap_total_bytes: 'Swap 总量', agent_memory: 'Agent 内存', agent_memory_bytes: 'Agent 内存', agent_version: 'Agent 版本', agent_build: 'Agent 构建', sing_box_version: 'sing-box 版本', download_rate: '下载速率', upload_rate: '上传速率', period_traffic: '周期流量', monitoring_mode: '回报模式',
   tls: 'TLS', certificate_mode: '证书模式', certificate_id: '证书', certificate_domain: '证书域名', config_json: 'JSON 配置', match_json: '匹配规则 JSON', result_json: '结果 JSON', events: '事件',
   proxy_uuid: '代理 UUID', proxy_password: '代理密码', speed_limit_mbps: '限速 Mbps', traffic_limit_bytes: '流量额度', traffic_used_bytes: '已用流量', subscription_token: '订阅令牌',
   limit_policy: '限速策略', effective_speed_limit: '实际限速', effective_traffic_limit: '实际流量额度',
@@ -8411,7 +8411,7 @@ function ServerMonitorMetricCard({
 
   const toneColors: Record<string, { primary: string; secondary?: string }> = {
     cpu: { primary: '#3b82f6' },
-    memory: { primary: '#10b981' },
+    memory: { primary: '#10b981', secondary: '#f97316' },
     disk: { primary: '#f59e0b' },
     network: { primary: '#0ea5e9', secondary: '#8b5cf6' },
     connections: { primary: '#3b82f6', secondary: '#14b8a6' },
@@ -8486,7 +8486,9 @@ function ServerMonitorMetricCard({
       displaySub = hoverTimeLabel
     } else if (tone === 'memory') {
       displayMain = `${pVal.toFixed(1)}%`
-      displaySub = pt.memory_total_bytes ? `${formatBytes(pt.memory_used_bytes)} / ${formatBytes(pt.memory_total_bytes)} · ${hoverTimeLabel}` : hoverTimeLabel
+      const physical = pt.memory_total_bytes ? `${formatBytes(pt.memory_used_bytes)} / ${formatBytes(pt.memory_total_bytes)}` : ''
+      const swap = secondary.length === primary.length && pt.swap_total_bytes ? `Swap ${sVal.toFixed(1)}%` : ''
+      displaySub = [physical, swap, hoverTimeLabel].filter(Boolean).join(' · ')
     } else if (tone === 'disk') {
       displayMain = `${pVal.toFixed(1)}%`
       displaySub = pt.disk_total_bytes ? `${formatBytes(pt.disk_used_bytes)} / ${formatBytes(pt.disk_total_bytes)} · ${hoverTimeLabel}` : hoverTimeLabel
@@ -8644,6 +8646,8 @@ function ServerLoadPanel({ server, response, loading, error, windowHours, onWind
     cpu_usage_percent: server.cpu_usage_percent || 0,
     memory_used_bytes: server.memory_used_bytes || 0,
     memory_total_bytes: server.memory_total_bytes || 0,
+    swap_used_bytes: server.swap_used_bytes || 0,
+    swap_total_bytes: server.swap_total_bytes || 0,
     disk_used_bytes: server.disk_bytes || 0,
     disk_total_bytes: server.disk_total_bytes || 0,
     tcp_connection_count: server.tcp_connection_count || 0,
@@ -8656,6 +8660,11 @@ function ServerLoadPanel({ server, response, loading, error, windowHours, onWind
   const memoryPercent = current.memory_total_bytes > 0 ? current.memory_used_bytes / current.memory_total_bytes * 100 : 0
   const cpuValues = points.map(point => Number(point.cpu_usage_percent || 0))
   const memoryValues = points.map(point => point.memory_total_bytes > 0 ? Number(point.memory_used_bytes || 0) / Number(point.memory_total_bytes) * 100 : 0)
+  const swapTotal = Number(current.swap_total_bytes ?? server.swap_total_bytes ?? 0)
+  const swapUsed = Number(current.swap_used_bytes ?? server.swap_used_bytes ?? 0)
+  const hasSwap = swapTotal > 0 || points.some(point => Number(point.swap_total_bytes || 0) > 0)
+  const swapValues = hasSwap ? points.map(point => Number(point.swap_total_bytes || 0) > 0 ? Number(point.swap_used_bytes || 0) / Number(point.swap_total_bytes) * 100 : 0) : []
+  const memoryValue = [current.memory_total_bytes ? `${formatBytes(current.memory_used_bytes)} / ${formatBytes(current.memory_total_bytes)}` : '', swapTotal > 0 ? `Swap ${(swapUsed / swapTotal * 100).toFixed(1)}%` : ''].filter(Boolean).join(' · ') || '—'
   const diskPercent = current.disk_total_bytes > 0 ? current.disk_used_bytes / current.disk_total_bytes * 100 : 0
   const diskValues = points.map(point => point.disk_total_bytes > 0 ? Number(point.disk_used_bytes || 0) / Number(point.disk_total_bytes) * 100 : 0)
   const tcpValues = points.map(point => Number(point.tcp_connection_count || 0))
@@ -8692,7 +8701,7 @@ function ServerLoadPanel({ server, response, loading, error, windowHours, onWind
         {!server.resource_history_enabled ? <div className="server-monitor-notice"><Database size={15} aria-hidden="true" /><span>历史记录已关闭，当前只显示 Agent 最新上报值。</span></div> : null}
         <div className="server-monitor-metric-grid">
           <ServerMonitorMetricCard title="CPU" value={`${Number(current.cpu_usage_percent || 0).toFixed(1)}%`} points={points} primary={cpuValues} scaleMax={100} tone="cpu" />
-          <ServerMonitorMetricCard title="内存" value={current.memory_total_bytes ? `${formatBytes(current.memory_used_bytes)} / ${formatBytes(current.memory_total_bytes)}` : '—'} detail={`${memoryPercent.toFixed(1)}%`} points={points} primary={memoryValues} scaleMax={100} tone="memory" />
+          <ServerMonitorMetricCard title="内存" value={memoryValue} detail={`${memoryPercent.toFixed(1)}%`} points={points} primary={memoryValues} secondary={swapValues} scaleMax={100} primaryLabel={hasSwap ? '物理内存' : undefined} secondaryLabel={hasSwap ? 'Swap' : undefined} tone="memory" />
           <ServerMonitorMetricCard title="磁盘" value={current.disk_total_bytes ? `${formatBytes(current.disk_used_bytes)} / ${formatBytes(current.disk_total_bytes)}` : formatBytes(current.disk_used_bytes || 0)} detail={`${diskPercent.toFixed(1)}%`} points={points} primary={diskValues} scaleMax={100} tone="disk" />
           <ServerMonitorMetricCard title="网络" value={`↓ ${formatByteRate(current.network_download_bps || 0)}`} detail={`↑ ${formatByteRate(current.network_upload_bps || 0)}`} points={points} primary={downloadValues} secondary={uploadValues} scaleMax={networkMax} formatScale={formatByteRate} primaryLabel="下载" secondaryLabel="上传" tone="network" />
           <ServerMonitorMetricCard title="连接数" value={`TCP ${Math.round(current.tcp_connection_count || 0)}`} detail={`UDP ${Math.round(current.udp_connection_count || 0)}`} points={points} primary={tcpValues} secondary={udpValues} formatScale={value => `${Math.round(value)}`} primaryLabel="TCP" secondaryLabel="UDP" tone="connections" />

@@ -547,6 +547,8 @@ func (s *Server) serverMetricsRead(ctx context.Context, principal application.Pr
 			"cpu_usage_percent":    server.CPUUsagePercent,
 			"memory_used_bytes":    server.MemoryUsedBytes,
 			"memory_total_bytes":   server.MemoryTotalBytes,
+			"swap_used_bytes":      server.SwapUsedBytes,
+			"swap_total_bytes":     server.SwapTotalBytes,
 			"disk_used_bytes":      server.DiskBytes,
 			"disk_total_bytes":     server.DiskTotalBytes,
 			"tcp_connection_count": server.TCPConnectionCount,

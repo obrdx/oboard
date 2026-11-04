@@ -27,6 +27,7 @@ export function SystemOverviewTab({ server, connectivity }: { server: Server; co
         <dl className="server-detail-grid">
           <div className="server-about-item"><dt className="server-about-label">CPU</dt><dd className="server-about-value">{Number.isFinite(server.cpu_usage_percent) ? `${Number(server.cpu_usage_percent).toFixed(1)}%` : '—'}</dd></div>
           <div className="server-about-item"><dt className="server-about-label">内存</dt><dd className="server-about-value">{server.memory_total_bytes ? `${formatBytes(server.memory_used_bytes||0)} / ${formatBytes(server.memory_total_bytes)}` : '—'}</dd></div>
+          <div className="server-about-item"><dt className="server-about-label">Swap</dt><dd className="server-about-value">{server.swap_total_bytes ? `${formatBytes(server.swap_used_bytes||0)} / ${formatBytes(server.swap_total_bytes)}` : '未启用'}</dd></div>
           <div className="server-about-item"><dt className="server-about-label">磁盘</dt><dd className="server-about-value">{server.disk_total_bytes ? `${formatBytes(server.disk_bytes||0)} / ${formatBytes(server.disk_total_bytes)}` : formatBytes(server.disk_bytes||0) || '—'}</dd></div>
           <div className="server-about-item"><dt className="server-about-label">连接数</dt><dd className="server-about-value">TCP {server.tcp_connection_count||0} · UDP {server.udp_connection_count||0}</dd></div>
         </dl>

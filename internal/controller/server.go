@@ -4325,6 +4325,8 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 				"cpu_usage_percent":      server.CPUUsagePercent,
 				"memory_used_bytes":      server.MemoryUsedBytes,
 				"memory_total_bytes":     server.MemoryTotalBytes,
+				"swap_used_bytes":        server.SwapUsedBytes,
+				"swap_total_bytes":       server.SwapTotalBytes,
 				"disk_used_bytes":        server.DiskBytes,
 				"disk_total_bytes":       server.DiskTotalBytes,
 				"tcp_connection_count":   server.TCPConnectionCount,
@@ -15355,6 +15357,8 @@ func (s *Server) agentEnroll(w http.ResponseWriter, r *http.Request) {
 		server.CPUUsagePercent = req.Health.CPUUsagePercent
 		server.MemoryUsedBytes = req.Health.MemoryUsedBytes
 		server.MemoryTotalBytes = req.Health.MemoryTotalBytes
+		server.SwapUsedBytes = req.Health.SwapUsedBytes
+		server.SwapTotalBytes = req.Health.SwapTotalBytes
 		server.AgentMemoryBytes = req.Health.AgentMemoryBytes
 		server.AgentVersion = req.Health.AgentVersion
 		server.AgentBuild = req.Health.AgentBuild
@@ -15886,6 +15890,9 @@ func validateMetricReport(report *model.MetricReport, now time.Time) error {
 	if report.MemoryTotalBytes > 0 && report.MemoryUsedBytes > report.MemoryTotalBytes {
 		return errors.New("metric report memory usage is invalid")
 	}
+	if report.SwapUsedBytes > report.SwapTotalBytes {
+		return errors.New("metric report swap usage is invalid")
+	}
 	if report.DiskTotalBytes > 0 && report.DiskUsedBytes > report.DiskTotalBytes {
 		return errors.New("metric report disk usage is invalid")
 	}
@@ -15915,6 +15922,9 @@ func sanitizeServerHealthReport(report *model.HealthReport) {
 	}
 	if report.MemoryTotalBytes > 0 && report.MemoryUsedBytes > report.MemoryTotalBytes {
 		report.MemoryUsedBytes = report.MemoryTotalBytes
+	}
+	if report.SwapUsedBytes > report.SwapTotalBytes {
+		report.SwapUsedBytes = report.SwapTotalBytes
 	}
 	if report.DiskTotalBytes > 0 && report.DiskBytes > report.DiskTotalBytes {
 		report.DiskBytes = report.DiskTotalBytes
@@ -16015,6 +16025,8 @@ func applyHealthReportToServer(server *model.Server, result store.HealthApplyRes
 	server.CPUUsagePercent = result.Curr.CPUUsagePercent
 	server.MemoryUsedBytes = result.Curr.MemoryUsedBytes
 	server.MemoryTotalBytes = result.Curr.MemoryTotalBytes
+	server.SwapUsedBytes = result.Curr.SwapUsedBytes
+	server.SwapTotalBytes = result.Curr.SwapTotalBytes
 	server.AgentMemoryBytes = result.Curr.AgentMemoryBytes
 	server.DiskBytes = result.Curr.DiskBytes
 	server.DiskTotalBytes = result.Curr.DiskTotalBytes

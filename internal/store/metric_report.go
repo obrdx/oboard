@@ -28,10 +28,12 @@ func (s *Store) SaveMetricReport(ctx context.Context, serverID int64, report mod
 		return false, err
 	}
 	cpu, memoryUsed, memoryTotal := report.CPUUsagePercent, report.MemoryUsedBytes, report.MemoryTotalBytes
+	swapUsed, swapTotal := report.SwapUsedBytes, report.SwapTotalBytes
 	diskUsed, diskTotal := report.DiskUsedBytes, report.DiskTotalBytes
 	tcpConnections, udpConnections, processes := report.TCPConnectionCount, report.UDPConnectionCount, report.ProcessCount
 	if historyEnabled == 0 {
 		cpu, memoryUsed, memoryTotal = 0, 0, 0
+		swapUsed, swapTotal = 0, 0
 		diskUsed, diskTotal = 0, 0
 		tcpConnections, udpConnections, processes = 0, 0, 0
 	}
@@ -39,10 +41,10 @@ func (s *Store) SaveMetricReport(ctx context.Context, serverID int64, report mod
 	if err != nil {
 		return false, err
 	}
-	result, err := history.ExecContext(ctx, `insert into server_metric_samples(server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at)
-select ?,?,?,?,?,?,?,?,?,?,?,?,0,0,-1,0,?
+	result, err := history.ExecContext(ctx, `insert into server_metric_samples(server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,swap_used_bytes,swap_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at)
+select ?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,0,-1,0,?
 where not exists(select 1 from server_metric_samples where server_id=? and sampled_at>=? and sampled_at<?)`,
-		serverID, cpu, memoryUsed, memoryTotal, diskUsed, diskTotal, tcpConnections, udpConnections, processes, historyEnabled, report.NetworkUploadBPS, report.NetworkDownloadBPS, report.SampledAt.UTC().Format(time.RFC3339Nano), serverID, startKey, endKey)
+		serverID, cpu, memoryUsed, memoryTotal, swapUsed, swapTotal, diskUsed, diskTotal, tcpConnections, udpConnections, processes, historyEnabled, report.NetworkUploadBPS, report.NetworkDownloadBPS, report.SampledAt.UTC().Format(time.RFC3339Nano), serverID, startKey, endKey)
 	if err != nil {
 		return false, err
 	}

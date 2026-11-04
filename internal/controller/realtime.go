@@ -46,6 +46,8 @@ type realtimeServerSnapshot struct {
 	CPUUsagePercent       float64            `json:"cpu_usage_percent"`
 	MemoryUsedBytes       uint64             `json:"memory_used_bytes"`
 	MemoryTotalBytes      uint64             `json:"memory_total_bytes"`
+	SwapUsedBytes         uint64             `json:"swap_used_bytes"`
+	SwapTotalBytes        uint64             `json:"swap_total_bytes"`
 	AgentMemoryBytes      uint64             `json:"agent_memory_bytes"`
 	DiskBytes             uint64             `json:"disk_bytes"`
 	DiskTotalBytes        uint64             `json:"disk_total_bytes"`
@@ -435,6 +437,8 @@ func healthRealtimePatch(result store.HealthApplyResult) realtimeServerPatch {
 	set("cpu_usage_percent", previous.CPUUsagePercent != current.CPUUsagePercent, current.CPUUsagePercent)
 	set("memory_used_bytes", previous.MemoryUsedBytes != current.MemoryUsedBytes, current.MemoryUsedBytes)
 	set("memory_total_bytes", previous.MemoryTotalBytes != current.MemoryTotalBytes, current.MemoryTotalBytes)
+	set("swap_used_bytes", previous.SwapUsedBytes != current.SwapUsedBytes, current.SwapUsedBytes)
+	set("swap_total_bytes", previous.SwapTotalBytes != current.SwapTotalBytes, current.SwapTotalBytes)
 	set("agent_memory_bytes", previous.AgentMemoryBytes != current.AgentMemoryBytes, current.AgentMemoryBytes)
 	set("disk_bytes", previous.DiskBytes != current.DiskBytes, current.DiskBytes)
 	set("disk_total_bytes", previous.DiskTotalBytes != current.DiskTotalBytes, current.DiskTotalBytes)
@@ -629,6 +633,8 @@ func (s *Server) realtimeServerSnapshots(ctx context.Context) ([]realtimeServerS
 			CPUUsagePercent:       server.CPUUsagePercent,
 			MemoryUsedBytes:       server.MemoryUsedBytes,
 			MemoryTotalBytes:      server.MemoryTotalBytes,
+			SwapUsedBytes:         server.SwapUsedBytes,
+			SwapTotalBytes:        server.SwapTotalBytes,
 			AgentMemoryBytes:      server.AgentMemoryBytes,
 			DiskBytes:             server.DiskBytes,
 			DiskTotalBytes:        server.DiskTotalBytes,

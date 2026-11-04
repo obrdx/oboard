@@ -72,6 +72,8 @@ export type Server = {
   cpu_usage_percent: number
   memory_used_bytes: number
   memory_total_bytes: number
+  swap_used_bytes?: number
+  swap_total_bytes?: number
   agent_memory_bytes: number
   disk_bytes: number
   disk_total_bytes: number

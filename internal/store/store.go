@@ -118,7 +118,7 @@ const (
 	serverConnectivityEventsColumnsSQL = `(id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, kind text not null check(kind in ('probe_result','server_offline','probe_enabled','probe_disabled','probe_target_changed','controller_connected','controller_disconnected')), available integer check(available is null or available in (0,1)), latency_ms integer not null default 0, error text not null default '', source text not null default '', effective_at text not null, event_key text not null, created_at text not null, unique(server_id,event_key))`
 )
 
-const serverSelectSQL = `select id,name,coalesce(agent_id,''),coalesce(agent_token_hash,''),chain_secret,coalesce(enrollment_hash,''),enrollment_expires_at,entry_address,coalesce(public_ipv4,''),coalesce(public_ipv6,''),coalesce(interface_ipv6,''),coalesce(region_code,''),coalesce(detected_region_code,''),coalesce(region_mode,'auto'),coalesce(entry_ip_mode,'auto'),listen_ip,coalesce(listen_mode,'auto'),ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,stealth_enabled,coalesce(bbr_qdisc,''),coalesce(bbr_cake_bandwidth_mbit,0),port_range_start,port_range_end,internal_port_range_start,internal_port_range_end,port_policy_revision,status,os,coalesce(distro_id,''),coalesce(distro_version,''),coalesce(distro_name,''),coalesce(libc,''),coalesce(service_manager,''),coalesce(package_manager,''),arch,kernel,cpu,coalesce(cpu_cores,0),memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,coalesce(agent_version,''),coalesce(agent_build,''),sing_box_version,coalesce(kernel_capabilities_json,'[]'),coalesce(tcp_fastopen_state,''),coalesce(tcp_fastopen_value,0),host_booted_at,connection_audit_enabled,coalesce(display_tags_json,'[]'),last_seen_at,created_at,updated_at from servers`
+const serverSelectSQL = `select id,name,coalesce(agent_id,''),coalesce(agent_token_hash,''),chain_secret,coalesce(enrollment_hash,''),enrollment_expires_at,entry_address,coalesce(public_ipv4,''),coalesce(public_ipv6,''),coalesce(interface_ipv6,''),coalesce(region_code,''),coalesce(detected_region_code,''),coalesce(region_mode,'auto'),coalesce(entry_ip_mode,'auto'),listen_ip,coalesce(listen_mode,'auto'),ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,stealth_enabled,coalesce(bbr_qdisc,''),coalesce(bbr_cake_bandwidth_mbit,0),port_range_start,port_range_end,internal_port_range_start,internal_port_range_end,port_policy_revision,status,os,coalesce(distro_id,''),coalesce(distro_version,''),coalesce(distro_name,''),coalesce(libc,''),coalesce(service_manager,''),coalesce(package_manager,''),arch,kernel,cpu,coalesce(cpu_cores,0),memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,coalesce(swap_used_bytes,0),coalesce(swap_total_bytes,0),agent_memory_bytes,disk_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,coalesce(agent_version,''),coalesce(agent_build,''),sing_box_version,coalesce(kernel_capabilities_json,'[]'),coalesce(tcp_fastopen_state,''),coalesce(tcp_fastopen_value,0),host_booted_at,connection_audit_enabled,coalesce(display_tags_json,'[]'),last_seen_at,created_at,updated_at from servers`
 
 const serverTelemetrySelectSQL = `select server_id,monitoring_mode,resource_history_enabled,traffic_reset_mode,traffic_reset_day,traffic_limit_bytes,time_correction_mode,time_check_status,time_offset_ms,time_effective_offset_ms,time_check_source,time_check_error,time_logical_active,time_unsupported_paths_json,time_checked_at,period_start,period_end,traffic_upload_bytes,traffic_download_bytes,network_upload_bps,network_download_bps,last_reported_at,connectivity_available,connectivity_latency_ms,connectivity_checked_at,connectivity_error,offline_notify_enabled,offline_after_seconds,service_start_at,expires_at,renewal_cycle,auto_renew_enabled,expiry_notify_enabled,last_auto_renewed_at from server_telemetry`
 
@@ -662,7 +662,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists ssh_server_host_keys (server_id integer primary key references servers(id) on delete cascade, public_key text not null, fingerprint text not null, config_version integer not null, updated_at text not null)`,
 		`create table if not exists ssh_deployment_plans (server_id integer primary key references servers(id) on delete cascade, plan_digest text not null, config_version integer not null, updated_at text not null)`,
 		`create table if not exists ssh_password_deployments (server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, device_id_hash text not null default '', credential_epoch integer not null default 0, credential_status text not null default 'active', password_digest text not null, config_version integer not null, updated_at text not null, primary key(server_id,user_id,device_id_hash,credential_epoch))`,
-		`create table if not exists servers (id integer primary key autoincrement, name text not null, agent_id text unique, agent_token_hash text, chain_secret text not null, enrollment_hash text, enrollment_expires_at text, entry_address text, public_ipv4 text not null default '', public_ipv6 text not null default '', region_code text not null default '', detected_region_code text not null default '', region_mode text not null default 'auto', entry_ip_mode text not null default 'auto', listen_ip text, ip_stack text not null default 'auto', udp_inbound_mode text not null default 'allow', mtu_mode text not null default 'detect', mtu_value integer not null default 0, mtu_probe_host text not null default '1.1.1.1', mtu_probe_port integer not null default 443, mtu_overhead_bytes integer not null default 0, stealth_enabled integer not null default 0, bbr_qdisc text not null default '', bbr_cake_bandwidth_mbit integer not null default 0, port_range_start integer not null default 10000, port_range_end integer not null default 20000, internal_port_range_start integer not null default 30000, internal_port_range_end integer not null default 59999, port_policy_revision integer not null default 1, status text not null, os text, distro_id text not null default '', distro_version text not null default '', distro_name text not null default '', libc text not null default '', service_manager text not null default '', package_manager text not null default '', arch text, kernel text, cpu text, cpu_cores integer not null default 0, memory_bytes integer not null default 0, cpu_usage_percent real not null default 0, memory_used_bytes integer not null default 0, memory_total_bytes integer not null default 0, agent_memory_bytes integer not null default 0, disk_bytes integer not null default 0, disk_total_bytes integer not null default 0, tcp_connection_count integer not null default 0, udp_connection_count integer not null default 0, process_count integer not null default 0, agent_version text not null default '', agent_build text not null default '', sing_box_version text, kernel_capabilities_json text not null default '[]', tcp_fastopen_state text not null default '', tcp_fastopen_value integer not null default 0, host_booted_at text, connection_audit_enabled integer not null default 0, display_tags_json text not null default '[]', last_seen_at text, created_at text not null, updated_at text not null)`,
+		`create table if not exists servers (id integer primary key autoincrement, name text not null, agent_id text unique, agent_token_hash text, chain_secret text not null, enrollment_hash text, enrollment_expires_at text, entry_address text, public_ipv4 text not null default '', public_ipv6 text not null default '', region_code text not null default '', detected_region_code text not null default '', region_mode text not null default 'auto', entry_ip_mode text not null default 'auto', listen_ip text, ip_stack text not null default 'auto', udp_inbound_mode text not null default 'allow', mtu_mode text not null default 'detect', mtu_value integer not null default 0, mtu_probe_host text not null default '1.1.1.1', mtu_probe_port integer not null default 443, mtu_overhead_bytes integer not null default 0, stealth_enabled integer not null default 0, bbr_qdisc text not null default '', bbr_cake_bandwidth_mbit integer not null default 0, port_range_start integer not null default 10000, port_range_end integer not null default 20000, internal_port_range_start integer not null default 30000, internal_port_range_end integer not null default 59999, port_policy_revision integer not null default 1, status text not null, os text, distro_id text not null default '', distro_version text not null default '', distro_name text not null default '', libc text not null default '', service_manager text not null default '', package_manager text not null default '', arch text, kernel text, cpu text, cpu_cores integer not null default 0, memory_bytes integer not null default 0, cpu_usage_percent real not null default 0, memory_used_bytes integer not null default 0, memory_total_bytes integer not null default 0, swap_used_bytes integer not null default 0, swap_total_bytes integer not null default 0, agent_memory_bytes integer not null default 0, disk_bytes integer not null default 0, disk_total_bytes integer not null default 0, tcp_connection_count integer not null default 0, udp_connection_count integer not null default 0, process_count integer not null default 0, agent_version text not null default '', agent_build text not null default '', sing_box_version text, kernel_capabilities_json text not null default '[]', tcp_fastopen_state text not null default '', tcp_fastopen_value integer not null default 0, host_booted_at text, connection_audit_enabled integer not null default 0, display_tags_json text not null default '[]', last_seen_at text, created_at text not null, updated_at text not null)`,
 		`create table if not exists subscription_relays (id integer primary key autoincrement, name text not null, public_url text not null unique, status text not null default 'pending', token_hash text not null default '', signing_secret_encrypted text not null default '', enrollment_hash text, enrollment_expires_at text, version text not null default '', build text not null default '', commit_hash text not null default '', os text not null default '', arch text not null default '', service_manager text not null default '', update_target_version text not null default '', update_target_build text not null default '', update_requested_at text, last_update_error text not null default '', last_seen_at text, created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_credentials (id integer primary key autoincrement, name text not null unique, provider text not null, zone_name text not null, zone_id text not null default '', config_encrypted text not null, enabled integer not null default 1, verified_at text, last_error text not null default '', created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_credential_zones (id integer primary key autoincrement, credential_id integer not null references dns_credentials(id) on delete cascade, zone_name text not null, provider_zone_id text not null default '', server_id integer references servers(id) on delete set null, created_at text not null, updated_at text not null)`,
@@ -1190,6 +1190,12 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.ensureColumn(ctx, "servers", "display_tags_json", `alter table servers add column display_tags_json text not null default '[]'`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "servers", "swap_used_bytes", `alter table servers add column swap_used_bytes integer not null default 0`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "servers", "swap_total_bytes", `alter table servers add column swap_total_bytes integer not null default 0`); err != nil {
 		return err
 	}
 	if err := s.ensureColumn(ctx, "servers", "cpu_cores", `alter table servers add column cpu_cores integer not null default 0`); err != nil {
@@ -3215,8 +3221,8 @@ func (s *Store) UpdateServerSettings(ctx context.Context, v *model.Server, optio
 // that MCP plan/validate/submit operations depend on. Only administrative
 // edits (UpdateServer) advance updated_at.
 func (s *Store) UpdateServerRuntimeState(ctx context.Context, v *model.Server) error {
-	_, err := s.db.ExecContext(ctx, `update servers set status=?, os=?, distro_id=?, distro_version=?, distro_name=?, libc=?, service_manager=?, package_manager=?, arch=?, kernel=?, cpu=?, cpu_cores=?, memory_bytes=?, cpu_usage_percent=?, memory_used_bytes=?, memory_total_bytes=?, agent_memory_bytes=?, disk_bytes=?, disk_total_bytes=?, tcp_connection_count=?, udp_connection_count=?, process_count=?, agent_version=?, agent_build=?, sing_box_version=?, kernel_capabilities_json=?, tcp_fastopen_state=?, tcp_fastopen_value=?, host_booted_at=?, public_ipv4=?, public_ipv6=?, interface_ipv6=?, detected_region_code=?, last_seen_at=? where id=?`,
-		v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.CPUCores, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.DiskTotalBytes, v.TCPConnectionCount, v.UDPConnectionCount, v.ProcessCount, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, stringSliceJSON(v.KernelCapabilities), model.NormalizeTCPFastOpenState(v.TCPFastOpenState), v.TCPFastOpenValue, nilTime(v.HostBootedAt), v.PublicIPv4, v.PublicIPv6, v.InterfaceIPv6, v.DetectedRegionCode, nilTime(v.LastSeenAt), v.ID)
+	_, err := s.db.ExecContext(ctx, `update servers set status=?, os=?, distro_id=?, distro_version=?, distro_name=?, libc=?, service_manager=?, package_manager=?, arch=?, kernel=?, cpu=?, cpu_cores=?, memory_bytes=?, cpu_usage_percent=?, memory_used_bytes=?, memory_total_bytes=?, swap_used_bytes=?, swap_total_bytes=?, agent_memory_bytes=?, disk_bytes=?, disk_total_bytes=?, tcp_connection_count=?, udp_connection_count=?, process_count=?, agent_version=?, agent_build=?, sing_box_version=?, kernel_capabilities_json=?, tcp_fastopen_state=?, tcp_fastopen_value=?, host_booted_at=?, public_ipv4=?, public_ipv6=?, interface_ipv6=?, detected_region_code=?, last_seen_at=? where id=?`,
+		v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.CPUCores, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.SwapUsedBytes, v.SwapTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.DiskTotalBytes, v.TCPConnectionCount, v.UDPConnectionCount, v.ProcessCount, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, stringSliceJSON(v.KernelCapabilities), model.NormalizeTCPFastOpenState(v.TCPFastOpenState), v.TCPFastOpenValue, nilTime(v.HostBootedAt), v.PublicIPv4, v.PublicIPv6, v.InterfaceIPv6, v.DetectedRegionCode, nilTime(v.LastSeenAt), v.ID)
 	if err != nil {
 		return err
 	}
@@ -3408,7 +3414,7 @@ func scanServers(rows *sql.Rows) ([]model.Server, error) {
 		var v model.Server
 		var last, enrollExp, hostBooted sql.NullString
 		var kernelCapabilitiesJSON, displayTagsJSON, ca, ua string
-		if err := rows.Scan(&v.ID, &v.Name, &v.AgentID, &v.AgentTokenHash, &v.ChainSecret, &v.EnrollmentHash, &enrollExp, &v.EntryAddress, &v.PublicIPv4, &v.PublicIPv6, &v.InterfaceIPv6, &v.RegionCode, &v.DetectedRegionCode, &v.RegionMode, &v.EntryIPMode, &v.ListenIP, &v.ListenMode, &v.IPStack, &v.UDPInboundMode, &v.MTUMode, &v.MTUValue, &v.MTUProbeHost, &v.MTUProbePort, &v.MTUOverheadBytes, &v.StealthEnabled, &v.BBRQdisc, &v.BBRCakeBandwidthMbit, &v.PortRangeStart, &v.PortRangeEnd, &v.InternalPortRangeStart, &v.InternalPortRangeEnd, &v.PortPolicyRevision, &v.Status, &v.OS, &v.DistroID, &v.DistroVersion, &v.DistroName, &v.Libc, &v.ServiceManager, &v.PackageManager, &v.Arch, &v.Kernel, &v.CPU, &v.CPUCores, &v.MemoryBytes, &v.CPUUsagePercent, &v.MemoryUsedBytes, &v.MemoryTotalBytes, &v.AgentMemoryBytes, &v.DiskBytes, &v.DiskTotalBytes, &v.TCPConnectionCount, &v.UDPConnectionCount, &v.ProcessCount, &v.AgentVersion, &v.AgentBuild, &v.SingBoxVersion, &kernelCapabilitiesJSON, &v.TCPFastOpenState, &v.TCPFastOpenValue, &hostBooted, &v.ConnectionAuditEnabled, &displayTagsJSON, &last, &ca, &ua); err != nil {
+		if err := rows.Scan(&v.ID, &v.Name, &v.AgentID, &v.AgentTokenHash, &v.ChainSecret, &v.EnrollmentHash, &enrollExp, &v.EntryAddress, &v.PublicIPv4, &v.PublicIPv6, &v.InterfaceIPv6, &v.RegionCode, &v.DetectedRegionCode, &v.RegionMode, &v.EntryIPMode, &v.ListenIP, &v.ListenMode, &v.IPStack, &v.UDPInboundMode, &v.MTUMode, &v.MTUValue, &v.MTUProbeHost, &v.MTUProbePort, &v.MTUOverheadBytes, &v.StealthEnabled, &v.BBRQdisc, &v.BBRCakeBandwidthMbit, &v.PortRangeStart, &v.PortRangeEnd, &v.InternalPortRangeStart, &v.InternalPortRangeEnd, &v.PortPolicyRevision, &v.Status, &v.OS, &v.DistroID, &v.DistroVersion, &v.DistroName, &v.Libc, &v.ServiceManager, &v.PackageManager, &v.Arch, &v.Kernel, &v.CPU, &v.CPUCores, &v.MemoryBytes, &v.CPUUsagePercent, &v.MemoryUsedBytes, &v.MemoryTotalBytes, &v.SwapUsedBytes, &v.SwapTotalBytes, &v.AgentMemoryBytes, &v.DiskBytes, &v.DiskTotalBytes, &v.TCPConnectionCount, &v.UDPConnectionCount, &v.ProcessCount, &v.AgentVersion, &v.AgentBuild, &v.SingBoxVersion, &kernelCapabilitiesJSON, &v.TCPFastOpenState, &v.TCPFastOpenValue, &hostBooted, &v.ConnectionAuditEnabled, &displayTagsJSON, &last, &ca, &ua); err != nil {
 			return nil, err
 		}
 		if enrollExp.Valid && enrollExp.String != "" {
@@ -3581,7 +3587,7 @@ func (s *Store) updateServerTelemetrySettingsTx(ctx context.Context, tx *sql.Tx,
 		if err != nil {
 			return err
 		}
-		if _, err := history.ExecContext(ctx, `update server_metric_samples set cpu_usage_percent=0,memory_used_bytes=0,memory_total_bytes=0,disk_used_bytes=0,disk_total_bytes=0,tcp_connection_count=0,udp_connection_count=0,process_count=0,resource_recorded=0 where server_id=? and resource_recorded<>0`, server.ID); err != nil {
+		if _, err := history.ExecContext(ctx, `update server_metric_samples set cpu_usage_percent=0,memory_used_bytes=0,memory_total_bytes=0,swap_used_bytes=0,swap_total_bytes=0,disk_used_bytes=0,disk_total_bytes=0,tcp_connection_count=0,udp_connection_count=0,process_count=0,resource_recorded=0 where server_id=? and resource_recorded<>0`, server.ID); err != nil {
 			return err
 		}
 	}
@@ -3817,10 +3823,12 @@ func (s *Store) UpdateServerTelemetryReport(ctx context.Context, serverID int64,
 		return err
 	}
 	cpuUsage, memoryUsed, memoryTotal := report.CPUUsagePercent, report.MemoryUsedBytes, report.MemoryTotalBytes
+	swapUsed, swapTotal := report.SwapUsedBytes, report.SwapTotalBytes
 	diskUsed, diskTotal := report.DiskBytes, report.DiskTotalBytes
 	tcpConnections, udpConnections, processes := report.TCPConnectionCount, report.UDPConnectionCount, report.ProcessCount
 	if resourceHistoryEnabled == 0 {
 		cpuUsage, memoryUsed, memoryTotal = 0, 0, 0
+		swapUsed, swapTotal = 0, 0
 		diskUsed, diskTotal = 0, 0
 		tcpConnections, udpConnections, processes = 0, 0, 0
 	}
@@ -3844,7 +3852,7 @@ func (s *Store) UpdateServerTelemetryReport(ctx context.Context, serverID int64,
 		}
 	}
 	if !rateLimited {
-		if _, err := history.ExecContext(ctx, `insert into server_metric_samples(server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, serverID, cpuUsage, memoryUsed, memoryTotal, diskUsed, diskTotal, tcpConnections, udpConnections, processes, resourceHistoryEnabled, uploadBPS, downloadBPS, periodUp, periodDown, available, latency, nowText); err != nil {
+		if _, err := history.ExecContext(ctx, `insert into server_metric_samples(server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,swap_used_bytes,swap_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, serverID, cpuUsage, memoryUsed, memoryTotal, swapUsed, swapTotal, diskUsed, diskTotal, tcpConnections, udpConnections, processes, resourceHistoryEnabled, uploadBPS, downloadBPS, periodUp, periodDown, available, latency, nowText); err != nil {
 			s.recordHistoryError(err)
 		}
 	}
@@ -3986,7 +3994,7 @@ func (s *Store) ListServerResourceMetricPoints(ctx context.Context, serverID int
 		}
 		points = append(points, items...)
 	}
-	rows, err := history.QueryContext(ctx, `select cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,network_upload_bps,network_download_bps,sampled_at from server_metric_samples where server_id=? and resource_recorded=1 and sampled_at>=? order by sampled_at`, serverID, from.UTC().Format(time.RFC3339Nano))
+	rows, err := history.QueryContext(ctx, `select cpu_usage_percent,memory_used_bytes,memory_total_bytes,swap_used_bytes,swap_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,network_upload_bps,network_download_bps,sampled_at from server_metric_samples where server_id=? and resource_recorded=1 and sampled_at>=? order by sampled_at`, serverID, from.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
@@ -3996,6 +4004,8 @@ func (s *Store) ListServerResourceMetricPoints(ctx context.Context, serverID int
 		cpuTotal             float64
 		memoryUsedTotal      uint64
 		memoryTotalTotal     uint64
+		swapUsedTotal        uint64
+		swapTotalTotal       uint64
 		diskUsedTotal        uint64
 		diskTotalTotal       uint64
 		tcpConnectionTotal   uint64
@@ -4009,9 +4019,9 @@ func (s *Store) ListServerResourceMetricPoints(ctx context.Context, serverID int
 	order := []time.Time{}
 	for rows.Next() {
 		var cpu float64
-		var memoryUsed, memoryTotal, diskUsed, diskTotal, tcpConnections, udpConnections, processes, networkUpload, networkDownload uint64
+		var memoryUsed, memoryTotal, swapUsed, swapTotal, diskUsed, diskTotal, tcpConnections, udpConnections, processes, networkUpload, networkDownload uint64
 		var sampledAt string
-		if err := rows.Scan(&cpu, &memoryUsed, &memoryTotal, &diskUsed, &diskTotal, &tcpConnections, &udpConnections, &processes, &networkUpload, &networkDownload, &sampledAt); err != nil {
+		if err := rows.Scan(&cpu, &memoryUsed, &memoryTotal, &swapUsed, &swapTotal, &diskUsed, &diskTotal, &tcpConnections, &udpConnections, &processes, &networkUpload, &networkDownload, &sampledAt); err != nil {
 			return nil, err
 		}
 		at := parseTime(sampledAt)
@@ -4026,6 +4036,8 @@ func (s *Store) ListServerResourceMetricPoints(ctx context.Context, serverID int
 		group.cpuTotal += cpu
 		group.memoryUsedTotal += memoryUsed
 		group.memoryTotalTotal += memoryTotal
+		group.swapUsedTotal += swapUsed
+		group.swapTotalTotal += swapTotal
 		group.diskUsedTotal += diskUsed
 		group.diskTotalTotal += diskTotal
 		group.tcpConnectionTotal += tcpConnections
@@ -4049,6 +4061,8 @@ func (s *Store) ListServerResourceMetricPoints(ctx context.Context, serverID int
 			CPUUsagePercent:    group.cpuTotal / float64(group.count),
 			MemoryUsedBytes:    group.memoryUsedTotal / group.count,
 			MemoryTotalBytes:   group.memoryTotalTotal / group.count,
+			SwapUsedBytes:      group.swapUsedTotal / group.count,
+			SwapTotalBytes:     group.swapTotalTotal / group.count,
 			DiskUsedBytes:      group.diskUsedTotal / group.count,
 			DiskTotalBytes:     group.diskTotalTotal / group.count,
 			TCPConnectionCount: group.tcpConnectionTotal / group.count,
@@ -4073,7 +4087,7 @@ func queryAggregatedMetricPoints(ctx context.Context, db *countingDB, table stri
 	if !to.After(from) {
 		return []model.ServerResourceMetricPoint{}, nil
 	}
-	rows, err := db.QueryContext(ctx, `select cpu_avg,memory_used_avg,memory_total_avg,disk_used_avg,disk_total_avg,tcp_avg,udp_avg,process_avg,network_upload_avg,network_download_avg,bucket_start from `+table+` where server_id=? and bucket_start>=? and bucket_start<? order by bucket_start`, serverID, from.UTC().Format(time.RFC3339Nano), to.UTC().Format(time.RFC3339Nano))
+	rows, err := db.QueryContext(ctx, `select cpu_avg,memory_used_avg,memory_total_avg,swap_used_avg,swap_total_avg,disk_used_avg,disk_total_avg,tcp_avg,udp_avg,process_avg,network_upload_avg,network_download_avg,bucket_start from `+table+` where server_id=? and bucket_start>=? and bucket_start<? order by bucket_start`, serverID, from.UTC().Format(time.RFC3339Nano), to.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
@@ -4082,7 +4096,7 @@ func queryAggregatedMetricPoints(ctx context.Context, db *countingDB, table stri
 	for rows.Next() {
 		var point model.ServerResourceMetricPoint
 		var bucketStart string
-		if err := rows.Scan(&point.CPUUsagePercent, &point.MemoryUsedBytes, &point.MemoryTotalBytes, &point.DiskUsedBytes, &point.DiskTotalBytes, &point.TCPConnectionCount, &point.UDPConnectionCount, &point.ProcessCount, &point.NetworkUploadBPS, &point.NetworkDownloadBPS, &bucketStart); err != nil {
+		if err := rows.Scan(&point.CPUUsagePercent, &point.MemoryUsedBytes, &point.MemoryTotalBytes, &point.SwapUsedBytes, &point.SwapTotalBytes, &point.DiskUsedBytes, &point.DiskTotalBytes, &point.TCPConnectionCount, &point.UDPConnectionCount, &point.ProcessCount, &point.NetworkUploadBPS, &point.NetworkDownloadBPS, &bucketStart); err != nil {
 			return nil, err
 		}
 		point.SampledAt = parseTime(bucketStart)

@@ -38,6 +38,8 @@ type ServerRuntimeState struct {
 	CPUUsagePercent       float64
 	MemoryUsedBytes       uint64
 	MemoryTotalBytes      uint64
+	SwapUsedBytes         uint64
+	SwapTotalBytes        uint64
 	AgentMemoryBytes      uint64
 	DiskBytes             uint64
 	DiskTotalBytes        uint64
@@ -126,7 +128,7 @@ func (s *Store) ApplyHealthReportWithOptions(ctx context.Context, serverID int64
 	var prev ServerRuntimeState
 	var kernelCapabilitiesJSON string
 	var lastSeen, hostBooted sql.NullString
-	if err := tx.QueryRowContext(ctx, `select status,public_ipv4,public_ipv6,interface_ipv6,detected_region_code,os,distro_id,distro_version,distro_name,libc,service_manager,package_manager,arch,kernel,cpu,coalesce(cpu_cores,0),memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,agent_version,agent_build,sing_box_version,kernel_capabilities_json,coalesce(tcp_fastopen_state,''),coalesce(tcp_fastopen_value,0),host_booted_at,last_seen_at from servers where id=?`, serverID).Scan(&oldStatus, &prev.PublicIPv4, &prev.PublicIPv6, &prev.InterfaceIPv6, &prev.DetectedRegionCode, &prev.OS, &prev.DistroID, &prev.DistroVersion, &prev.DistroName, &prev.Libc, &prev.ServiceManager, &prev.PackageManager, &prev.Arch, &prev.Kernel, &prev.CPU, &prev.CPUCores, &prev.MemoryBytes, &prev.CPUUsagePercent, &prev.MemoryUsedBytes, &prev.MemoryTotalBytes, &prev.AgentMemoryBytes, &prev.DiskBytes, &prev.DiskTotalBytes, &prev.TCPConnectionCount, &prev.UDPConnectionCount, &prev.ProcessCount, &prev.AgentVersion, &prev.AgentBuild, &prev.SingBoxVersion, &kernelCapabilitiesJSON, &prev.TCPFastOpenState, &prev.TCPFastOpenValue, &hostBooted, &lastSeen); err != nil {
+	if err := tx.QueryRowContext(ctx, `select status,public_ipv4,public_ipv6,interface_ipv6,detected_region_code,os,distro_id,distro_version,distro_name,libc,service_manager,package_manager,arch,kernel,cpu,coalesce(cpu_cores,0),memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,coalesce(swap_used_bytes,0),coalesce(swap_total_bytes,0),agent_memory_bytes,disk_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,agent_version,agent_build,sing_box_version,kernel_capabilities_json,coalesce(tcp_fastopen_state,''),coalesce(tcp_fastopen_value,0),host_booted_at,last_seen_at from servers where id=?`, serverID).Scan(&oldStatus, &prev.PublicIPv4, &prev.PublicIPv6, &prev.InterfaceIPv6, &prev.DetectedRegionCode, &prev.OS, &prev.DistroID, &prev.DistroVersion, &prev.DistroName, &prev.Libc, &prev.ServiceManager, &prev.PackageManager, &prev.Arch, &prev.Kernel, &prev.CPU, &prev.CPUCores, &prev.MemoryBytes, &prev.CPUUsagePercent, &prev.MemoryUsedBytes, &prev.MemoryTotalBytes, &prev.SwapUsedBytes, &prev.SwapTotalBytes, &prev.AgentMemoryBytes, &prev.DiskBytes, &prev.DiskTotalBytes, &prev.TCPConnectionCount, &prev.UDPConnectionCount, &prev.ProcessCount, &prev.AgentVersion, &prev.AgentBuild, &prev.SingBoxVersion, &kernelCapabilitiesJSON, &prev.TCPFastOpenState, &prev.TCPFastOpenValue, &hostBooted, &lastSeen); err != nil {
 		return HealthApplyResult{}, err
 	}
 	prev.ServerID = serverID
@@ -170,6 +172,8 @@ func (s *Store) ApplyHealthReportWithOptions(ctx context.Context, serverID int64
 	curr.CPUUsagePercent = report.CPUUsagePercent
 	curr.MemoryUsedBytes = report.MemoryUsedBytes
 	curr.MemoryTotalBytes = report.MemoryTotalBytes
+	curr.SwapUsedBytes = report.SwapUsedBytes
+	curr.SwapTotalBytes = report.SwapTotalBytes
 	curr.AgentMemoryBytes = report.AgentMemoryBytes
 	curr.DiskBytes = report.DiskBytes
 	curr.DiskTotalBytes = report.DiskTotalBytes
@@ -193,8 +197,8 @@ func (s *Store) ApplyHealthReportWithOptions(ctx context.Context, serverID int64
 
 	coalesced := shouldCoalesceHealthRuntime(prev, curr, seenAt)
 	if !coalesced {
-		res, err := tx.ExecContext(ctx, `update servers set status=?,os=?,distro_id=?,distro_version=?,distro_name=?,libc=?,service_manager=?,package_manager=?,arch=?,kernel=?,cpu=?,cpu_cores=?,memory_bytes=?,cpu_usage_percent=?,memory_used_bytes=?,memory_total_bytes=?,agent_memory_bytes=?,disk_bytes=?,disk_total_bytes=?,tcp_connection_count=?,udp_connection_count=?,process_count=?,agent_version=?,agent_build=?,sing_box_version=?,kernel_capabilities_json=?,tcp_fastopen_state=?,tcp_fastopen_value=?,host_booted_at=?,public_ipv4=?,public_ipv6=?,interface_ipv6=?,detected_region_code=?,last_seen_at=? where id=? and status=?`,
-			newStatus, report.OS, report.DistroID, report.DistroVersion, report.DistroName, report.Libc, report.ServiceManager, report.PackageManager, report.Arch, report.Kernel, report.CPU, curr.CPUCores, report.MemoryBytes, report.CPUUsagePercent, report.MemoryUsedBytes, report.MemoryTotalBytes, report.AgentMemoryBytes, report.DiskBytes, report.DiskTotalBytes, report.TCPConnectionCount, report.UDPConnectionCount, report.ProcessCount, report.AgentVersion, curr.AgentBuild, report.SingBoxVersion, stringSliceJSON(report.KernelCapabilities), curr.TCPFastOpenState, curr.TCPFastOpenValue, nilTime(curr.HostBootedAt), server.PublicIPv4, server.PublicIPv6, server.InterfaceIPv6, server.DetectedRegionCode, nilTime(&seenAt), serverID, oldStatus)
+		res, err := tx.ExecContext(ctx, `update servers set status=?,os=?,distro_id=?,distro_version=?,distro_name=?,libc=?,service_manager=?,package_manager=?,arch=?,kernel=?,cpu=?,cpu_cores=?,memory_bytes=?,cpu_usage_percent=?,memory_used_bytes=?,memory_total_bytes=?,swap_used_bytes=?,swap_total_bytes=?,agent_memory_bytes=?,disk_bytes=?,disk_total_bytes=?,tcp_connection_count=?,udp_connection_count=?,process_count=?,agent_version=?,agent_build=?,sing_box_version=?,kernel_capabilities_json=?,tcp_fastopen_state=?,tcp_fastopen_value=?,host_booted_at=?,public_ipv4=?,public_ipv6=?,interface_ipv6=?,detected_region_code=?,last_seen_at=? where id=? and status=?`,
+			newStatus, report.OS, report.DistroID, report.DistroVersion, report.DistroName, report.Libc, report.ServiceManager, report.PackageManager, report.Arch, report.Kernel, report.CPU, curr.CPUCores, report.MemoryBytes, report.CPUUsagePercent, report.MemoryUsedBytes, report.MemoryTotalBytes, report.SwapUsedBytes, report.SwapTotalBytes, report.AgentMemoryBytes, report.DiskBytes, report.DiskTotalBytes, report.TCPConnectionCount, report.UDPConnectionCount, report.ProcessCount, report.AgentVersion, curr.AgentBuild, report.SingBoxVersion, stringSliceJSON(report.KernelCapabilities), curr.TCPFastOpenState, curr.TCPFastOpenValue, nilTime(curr.HostBootedAt), server.PublicIPv4, server.PublicIPv6, server.InterfaceIPv6, server.DetectedRegionCode, nilTime(&seenAt), serverID, oldStatus)
 		if err != nil {
 			return HealthApplyResult{}, err
 		}
@@ -291,6 +295,9 @@ func healthRuntimeVolatileChanged(prev, curr ServerRuntimeState) bool {
 		return true
 	}
 	if absUint64Diff(prev.MemoryUsedBytes, curr.MemoryUsedBytes) >= 16<<20 {
+		return true
+	}
+	if absUint64Diff(prev.SwapUsedBytes, curr.SwapUsedBytes) >= 16<<20 || prev.SwapTotalBytes != curr.SwapTotalBytes {
 		return true
 	}
 	if absUint64Diff(prev.DiskBytes, curr.DiskBytes) >= 64<<20 {
@@ -394,10 +401,12 @@ func (s *Store) updateServerTelemetryReportTx(ctx context.Context, tx *countingT
 		curr.ConnectivityCheckedAt = &checkedAt
 	}
 	cpuUsage, memoryUsed, memoryTotal := report.CPUUsagePercent, report.MemoryUsedBytes, report.MemoryTotalBytes
+	swapUsed, swapTotal := report.SwapUsedBytes, report.SwapTotalBytes
 	diskUsed, diskTotal := report.DiskBytes, report.DiskTotalBytes
 	tcpConnections, udpConnections, processes := report.TCPConnectionCount, report.UDPConnectionCount, report.ProcessCount
 	if resourceHistoryEnabled == 0 {
 		cpuUsage, memoryUsed, memoryTotal = 0, 0, 0
+		swapUsed, swapTotal = 0, 0
 		diskUsed, diskTotal = 0, 0
 		tcpConnections, udpConnections, processes = 0, 0, 0
 	}
@@ -420,7 +429,7 @@ func (s *Store) updateServerTelemetryReportTx(ctx context.Context, tx *countingT
 	if err != nil {
 		return false, true, nil
 	}
-	res, err := history.ExecContext(ctx, `insert into server_metric_samples(server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at) select ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? where not exists(select 1 from server_metric_samples where server_id=? and sampled_at>?)`, serverID, cpuUsage, memoryUsed, memoryTotal, diskUsed, diskTotal, tcpConnections, udpConnections, processes, resourceHistoryEnabled, uploadBPS, downloadBPS, periodUp, periodDown, connectivityAvailable, connectivityLatency, nowText, serverID, ts.Add(-interval).Format(time.RFC3339Nano))
+	res, err := history.ExecContext(ctx, `insert into server_metric_samples(server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,swap_used_bytes,swap_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at) select ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? where not exists(select 1 from server_metric_samples where server_id=? and sampled_at>?)`, serverID, cpuUsage, memoryUsed, memoryTotal, swapUsed, swapTotal, diskUsed, diskTotal, tcpConnections, udpConnections, processes, resourceHistoryEnabled, uploadBPS, downloadBPS, periodUp, periodDown, connectivityAvailable, connectivityLatency, nowText, serverID, ts.Add(-interval).Format(time.RFC3339Nano))
 	if err != nil {
 		s.recordHistoryError(err)
 		return false, true, nil
