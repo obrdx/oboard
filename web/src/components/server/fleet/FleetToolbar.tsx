@@ -5,6 +5,7 @@ import { RegionFlag } from '../../ui/RegionFlag'
 import { formatBytes } from '../../../shared/presentation'
 import type { ServerSortMode, ServerStatusFilter } from '../../../server-list'
 import type { Server } from '../../proxy-path/types'
+import type { LatencyChartStyle } from '../../../server-monitoring'
 import { formatByteRate, isServerEnrolled, isServerOnline, serverAttention, sumBy } from './fleet-format'
 
 export type FleetView = 'grid' | 'list'
@@ -224,7 +225,9 @@ export function RegionFilter({ value, onChange, regions, total }: { value: strin
 const statusOptions: [ServerStatusFilter, string][] = [['all', '全部'], ['online', '在线'], ['offline', '离线'], ['attention', '需关注'], ['unenrolled', '未接入']]
 const sortOptions: [ServerSortMode, string][] = [['created', '最近添加'], ['country', '按地区'], ['custom', '自定义']]
 
-export function FilterPopover({ statusFilter, onStatusFilterChange, sortMode, onSortModeChange }: { statusFilter: ServerStatusFilter; onStatusFilterChange: (value: ServerStatusFilter) => void; sortMode: ServerSortMode; onSortModeChange: (value: ServerSortMode) => void }) {
+const latencyChartOptions: [LatencyChartStyle, string][] = [['sparkline', '曲线'], ['bars', '色块']]
+
+export function FilterPopover({ statusFilter, onStatusFilterChange, sortMode, onSortModeChange, latencyChart = 'sparkline', onLatencyChartChange }: { statusFilter: ServerStatusFilter; onStatusFilterChange: (value: ServerStatusFilter) => void; sortMode: ServerSortMode; onSortModeChange: (value: ServerSortMode) => void; latencyChart?: LatencyChartStyle; onLatencyChartChange?: (value: LatencyChartStyle) => void }) {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -265,6 +268,12 @@ export function FilterPopover({ statusFilter, onStatusFilterChange, sortMode, on
             </div>
             {sortMode === 'custom' ? <p className="fleet-popover-note">拖动卡片左侧手柄，或使用上下箭头调整顺序。</p> : null}
           </fieldset>
+          {onLatencyChartChange ? <fieldset className="fleet-popover-field">
+            <legend>延迟图</legend>
+            <div className="fleet-choice-grid">
+              {latencyChartOptions.map(([value, label]) => <button key={value} type="button" aria-pressed={latencyChart === value} onClick={() => onLatencyChartChange(value)}>{label}</button>)}
+            </div>
+          </fieldset> : null}
         </div>,
         document.body,
       )}

@@ -2,7 +2,7 @@ import type { MouseEvent, ReactNode } from 'react'
 import { ArrowDown, ArrowUp, BadgeCheck, Building2, Loader2, MapPin, Package, Settings2, Zap } from 'lucide-react'
 import { formatBytes, formatDate } from '../../../shared/presentation'
 import { serverExpiryDateLabel } from '../../../server-expiry'
-import { serverMonitoring } from '../../../server-monitoring'
+import { serverMonitoring, sparklinePaths, type LatencyChartStyle, type MonitoringSeriesView, type QualityTone } from '../../../server-monitoring'
 import { RegionFlag, serverRegionCode } from '../../ui/RegionFlag'
 import type { Server } from '../../proxy-path/types'
 import { ServerActionMenu } from '../ServerActionMenu'
@@ -35,6 +35,7 @@ export type ServerItemProps = {
   expectedBuild?: string
   uninstalling?: boolean
   sortControls?: ReactNode
+  latencyChart?: LatencyChartStyle
   onAction: (type: string, server: Server) => void
 }
 
@@ -90,6 +91,41 @@ export function QualityBar({ segments, label }: { segments: string[]; label: str
   return <span className="fleet-quality-bar" aria-hidden="true" data-label={label}>{segments.map((tone, index) => <span key={index} className={tone ? `is-${tone}` : ''} />)}</span>
 }
 
+export function LatencySparkline({ series }: { series: MonitoringSeriesView }) {
+  const { line, area } = sparklinePaths(series.points, series.grade)
+  const tone: QualityTone = series.latencyTone || (series.status === 'available' ? 'ok' : '')
+  return (
+    <svg className={`fleet-sparkline${tone ? ` is-${tone}` : ''}`} viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+      {area ? <path className="fleet-sparkline-area" d={area} /> : null}
+      {line ? <path className="fleet-sparkline-line" d={line} vectorEffect="non-scaling-stroke" /> : <line className="fleet-sparkline-empty" x1="0" x2="100" y1="22" y2="22" vectorEffect="non-scaling-stroke" />}
+    </svg>
+  )
+}
+
+function LatencyChart({ series, style }: { series: MonitoringSeriesView; style: LatencyChartStyle }) {
+  return style === 'bars' ? <QualityBar segments={series.qualitySegments} label="延迟" /> : <LatencySparkline series={series} />
+}
+
+function seriesTitle(series: MonitoringSeriesView, name: string) {
+  return `${name} · ${series.label} · 最近 20 轮\n${series.gradeTitle}`
+}
+
+function LatencyRows({ series, name, style, online }: { series: MonitoringSeriesView[]; name: string; style: LatencyChartStyle; online: boolean }) {
+  return (
+    <ul className={`fleet-latency-rows is-${style}`} aria-label="延迟与丢包">
+      {series.map(item => (
+        <li key={item.key} className="fleet-latency-row" title={seriesTitle(item, name)}>
+          <span className={`fleet-latency-dot${item.latencyTone ? ` is-${item.latencyTone}` : ''}`} aria-hidden="true" />
+          <span className="fleet-latency-name">{item.label}</span>
+          <strong className={`fleet-latency-value${item.latencyTone ? ` tone-text-${item.latencyTone}` : ''}`}>{item.latency}</strong>
+          <span className="fleet-latency-chart"><LatencyChart series={item} style={style} /></span>
+          <span className="fleet-latency-loss"><span>丢包</span><strong className={item.lossTone && online ? `tone-text-${item.lossTone}` : ''}>{lossLabel(item.loss, online)}</strong></span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 function AttentionChips({ items, server, uninstalling, onAction }: { items: ServerAttention[]; server: Server; uninstalling?: boolean; onAction: ServerItemProps['onAction'] }) {
   const visible = items.filter(item => item.key === 'delivery' || item.key === 'time' || item.key === 'agent')
   return (
@@ -119,7 +155,7 @@ function TargetButton({ server, name, onAction }: { server: Server; name: string
   return <button type="button" className="fleet-target-button" aria-label={`选择 ${serverDisplayName(server)} 的监控目标，当前：${name}`} title={`监控目标：${name}`} onClick={event => { event.stopPropagation(); onAction('monitoring-target', server) }}><Settings2 size={12} aria-hidden="true" /></button>
 }
 
-export function ServerTile({ server, role, expectedBuild, uninstalling, sortControls, onAction }: ServerItemProps) {
+export function ServerTile({ server, role, expectedBuild, uninstalling, sortControls, latencyChart = 'sparkline', onAction }: ServerItemProps) {
   const name = serverDisplayName(server)
   const { online, cpu, memory, disk, monitoring, traffic } = serverMetrics(server)
   const attention = serverAttention(server, expectedBuild)
@@ -161,17 +197,12 @@ export function ServerTile({ server, role, expectedBuild, uninstalling, sortCont
           title={`↓ ${formatBytes(server.traffic_download_bytes || 0)} · ↑ ${formatBytes(server.traffic_upload_bytes || 0)}`}
         />
       </div>
-      <div className="fleet-tile-quality" title={`${monitoring.name} · 最近 20 轮探测`}>
-        <div className="fleet-quality">
-          <span className="fleet-quality-label">延迟</span>
-          <strong>{monitoring.latency}</strong>
-          <QualityBar segments={monitoring.qualitySegments} label="延迟" />
+      <div className="fleet-tile-quality">
+        <div className="fleet-latency-head">
+          <span className="fleet-quality-label">延迟 · {monitoring.name}</span>
+          {canManage(role) ? <TargetButton server={server} name={monitoring.name} onAction={onAction} /> : null}
         </div>
-        <div className="fleet-quality">
-          <span className="fleet-quality-label">丢包{canManage(role) ? <TargetButton server={server} name={monitoring.name} onAction={onAction} /> : null}</span>
-          <strong>{lossLabel(monitoring.loss, online)}</strong>
-          <QualityBar segments={monitoring.lossSegments} label="丢包" />
-        </div>
+        <LatencyRows series={monitoring.series} name={monitoring.name} style={latencyChart} online={online} />
       </div>
       <footer className="fleet-tile-foot">
         <span title={`到期 ${serverExpiryDateLabel(server.expires_at)}`}>到期 <strong className={`tone-${expiry.tone}`}>{expiry.label}</strong></span>
@@ -219,7 +250,7 @@ function CompactMeter({ percent, value, sub, tone = '', muted = false, label }: 
   )
 }
 
-export function ServerRow({ server, role, expectedBuild, uninstalling, sortControls, onAction }: ServerItemProps) {
+export function ServerRow({ server, role, expectedBuild, uninstalling, sortControls, latencyChart = 'sparkline', onAction }: ServerItemProps) {
   const name = serverDisplayName(server)
   const { online, cpu, memory, disk, monitoring, traffic } = serverMetrics(server)
   const attention = serverAttention(server, expectedBuild)
@@ -246,16 +277,22 @@ export function ServerRow({ server, role, expectedBuild, uninstalling, sortContr
         <span className="fleet-rate is-up"><ArrowUp size={12} aria-hidden="true" /><strong>{na ? '—' : formatByteRate(server.network_upload_bps || 0)}</strong></span>
       </div>
       <div className="fleet-cell fleet-cell-traffic" role="cell"><CompactMeter label="流量" percent={traffic.percent} tone={traffic.tone} value={formatBytes(traffic.used)} sub={traffic.limit > 0 ? `/ ${formatBytes(traffic.limit)}` : '不限'} /></div>
-      <div className="fleet-cell fleet-cell-quality" role="cell" title={`${monitoring.name} · 最近 20 轮探测`}>
-        <span className="fleet-quality-inline"><strong>{monitoring.latency}</strong><QualityBar segments={monitoring.qualitySegments} label="延迟" /></span>
-        <span className="fleet-quality-inline"><strong>{lossLabel(monitoring.loss, online)}</strong><QualityBar segments={monitoring.lossSegments} label="丢包" />{canManage(role) ? <TargetButton server={server} name={monitoring.name} onAction={onAction} /> : null}</span>
+      <div className="fleet-cell fleet-cell-quality" role="cell">
+        {monitoring.series.slice(0, 2).map((item, index) => (
+          <span key={item.key} className="fleet-quality-inline" title={seriesTitle(item, monitoring.name)}>
+            <strong className={item.latencyTone ? `tone-text-${item.latencyTone}` : ''}>{item.latency}</strong>
+            <LatencyChart series={item} style={latencyChart} />
+            <small className={item.lossTone && online ? `tone-text-${item.lossTone}` : ''} aria-label={`${item.label} 丢包`}>{lossLabel(item.loss, online)}</small>
+            {index === 0 && canManage(role) ? <TargetButton server={server} name={monitoring.name} onAction={onAction} /> : <span aria-hidden="true" />}
+          </span>
+        ))}
       </div>
       <div className="fleet-cell fleet-cell-expiry" role="cell" title={`到期 ${serverExpiryDateLabel(server.expires_at)}`}><strong className={`tone-${expiry.tone}`}>{expiry.label}</strong></div>
       <div className="fleet-row-metrics" aria-hidden="true">
         <CompactMeter label="CPU" percent={na ? 0 : cpu} value={na ? '—' : formatPercent(cpu)} muted={na} />
         <CompactMeter label="内存" percent={na ? 0 : memory} value={na || !server.memory_total_bytes ? '—' : formatPercent(memory)} muted={na} />
         <CompactMeter label="流量" percent={traffic.percent} tone={traffic.tone} value={formatBytes(traffic.used)} />
-        <span className="fleet-compact-meter"><span className="fleet-compact-value"><span className="fleet-compact-label">延迟</span>{monitoring.latency}</span><QualityBar segments={monitoring.qualitySegments} label="延迟" /></span>
+        <span className="fleet-compact-meter"><span className="fleet-compact-value"><span className="fleet-compact-label">延迟</span>{monitoring.series[0].latency}</span><LatencyChart series={monitoring.series[0]} style={latencyChart} /></span>
       </div>
       <div className="fleet-cell fleet-cell-actions" role="cell"><ServerActionMenu server={server} role={role} onAction={onAction} /></div>
     </article>

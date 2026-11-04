@@ -5,7 +5,7 @@ import { Dialog } from '../ui/dialog'
 import { ProbeMonitors } from './ProbeMonitors'
 import { ProbeDDNS } from './ProbeDDNS'
 import { Select } from '../ui/select'
-import type { LatencyProbeAddress, LatencyProbeRegion, LatencyProbeTask, Server } from '../proxy-path/types'
+import type { LatencyProbePreset, LatencyProbeTask, Server } from '../proxy-path/types'
 import { ReturnLatencySettings, type LatencyProbeTaskAssignmentChange } from './ReturnLatencySettings'
 import { ReturnLatencyTaskForm, targetLabel } from './ReturnLatencyTaskForm'
 import { RegionFlag, serverRegionCode } from '../ui/RegionFlag'
@@ -36,7 +36,7 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
 }) {
   const [tasks, setTasks] = useState<LatencyProbeTask[]>([])
   const [tasksState, setTasksState] = useState<{ loading: boolean; error: string }>({ loading: true, error: '' })
-  const [resource, setResource] = useState<{ regions: LatencyProbeRegion[]; targets: LatencyProbeAddress[]; loading: boolean; error: string }>({ regions: [], targets: [], loading: true, error: '' })
+  const [resource, setResource] = useState<{ presets: LatencyProbePreset[]; loading: boolean; error: string }>({ presets: [], loading: true, error: '' })
   const [resourceRevision, setResourceRevision] = useState(0)
   const [taskRevision, setTaskRevision] = useState(0)
   const [editing, setEditing] = useState<{ open: boolean; task: LatencyProbeTask | null }>({ open: false, task: null })
@@ -62,7 +62,7 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
     const controller = new AbortController()
     setResource(current => ({ ...current, loading: true, error: '' }))
     void client.request('/latency-probe-resource', { signal: controller.signal }).then(result => {
-      if (!controller.signal.aborted) setResource({ regions: result.regions || [], targets: result.targets || [], loading: false, error: '' })
+      if (!controller.signal.aborted) setResource({ presets: result.presets || [], loading: false, error: '' })
     }).catch(error => {
       if (!controller.signal.aborted) setResource(current => ({ ...current, loading: false, error: error?.message || '目标资源加载失败' }))
     })
@@ -220,7 +220,7 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
             const assigned = task.server_ids.map(id => serverByID.get(id)).filter(Boolean) as Server[]
             const live = assigned.filter(server => online(server) && server.latency_probe_enabled).length
             return <tr key={task.id} className="probe-task-card">
-              <td><strong>{task.name}</strong><span className="probe-task-target">{task.address ? `${task.address}${task.method === 'tcp' ? `:${task.port}` : ''}` : targetLabel(task.province, task.carrier)}</span></td>
+              <td><strong>{task.name}</strong><span className="probe-task-target">{task.address ? `${task.address}${task.method === 'tcp' ? `:${task.port}` : ''}` : task.preset_id ? targetLabel(task.province, task.carrier) : '预设已下线，请编辑后重新选择'}</span></td>
               <td data-label="方式"><span className="probe-task-badge">{task.method === 'http' ? 'HTTP' : task.method === 'icmp' ? 'Ping' : 'TCP'}</span></td>
               <td data-label="间隔">{formatInterval(task.interval_seconds)}</td>
               <td data-label="执行节点" title={assigned.map(server => server.name).join('、')}>{assigned.length} 台<small className="muted">{live} 台可执行</small></td>
@@ -282,8 +282,7 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
       <ReturnLatencyTaskForm
         key={editing.task?.id ?? 'new'}
         task={editing.task}
-        regions={resource.regions}
-        targets={resource.targets}
+        presets={resource.presets}
         servers={servers}
         loading={resource.loading}
         error={resource.error}

@@ -17,8 +17,7 @@ type latencyProbeTaskCreateInput struct {
 	Address         string                 `json:"address,omitempty"`
 	Port            int                    `json:"port,omitempty"`
 	Name            string                 `json:"name,omitempty"`
-	Province        string                 `json:"province"`
-	Carrier         string                 `json:"carrier"`
+	PresetID        string                 `json:"preset_id,omitempty"`
 	IntervalSeconds int                    `json:"interval_seconds,omitempty"`
 	Enabled         *bool                  `json:"enabled,omitempty"`
 	ServerIDs       []int64                `json:"server_ids,omitempty"`
@@ -31,8 +30,7 @@ type latencyProbeTaskUpdateInput struct {
 	Port            *int                    `json:"port,omitempty"`
 	ID              int64                   `json:"id"`
 	Name            *string                 `json:"name,omitempty"`
-	Province        *string                 `json:"province,omitempty"`
-	Carrier         *string                 `json:"carrier,omitempty"`
+	PresetID        *string                 `json:"preset_id,omitempty"`
 	IntervalSeconds *int                    `json:"interval_seconds,omitempty"`
 	Enabled         *bool                   `json:"enabled,omitempty"`
 	ServerIDs       *[]int64                `json:"server_ids,omitempty"`
@@ -92,11 +90,13 @@ func latencyProbeTaskFromUpdate(current model.LatencyProbeTask, request latencyP
 	if request.Name != nil {
 		next.Name = *request.Name
 	}
-	if request.Province != nil {
-		next.Province = *request.Province
-	}
-	if request.Carrier != nil {
-		next.Carrier = *request.Carrier
+	if request.PresetID != nil {
+		next.PresetID = *request.PresetID
+		// Picking a preset replaces a fixed address unless the same update
+		// sets one again.
+		if next.PresetID != "" && request.Address == nil {
+			next.Address = ""
+		}
 	}
 	if request.IntervalSeconds != nil {
 		next.IntervalSeconds = *request.IntervalSeconds
@@ -119,28 +119,34 @@ func (s *Server) registerLatencyProbeTaskOperations() {
 		if err := strictAutomationInput(input, &request); err != nil {
 			return nil, err
 		}
-		task := model.LatencyProbeTask{Method: request.Method, Address: request.Address, Port: request.Port, Name: request.Name, Province: request.Province, Carrier: request.Carrier, IntervalSeconds: request.IntervalSeconds, Enabled: true, ServerIDs: request.ServerIDs}
+		task := model.LatencyProbeTask{Method: request.Method, Address: request.Address, Port: request.Port, Name: request.Name, PresetID: request.PresetID, IntervalSeconds: request.IntervalSeconds, Enabled: true, ServerIDs: request.ServerIDs}
 		if request.Enabled != nil {
 			task.Enabled = *request.Enabled
 		}
 		if err := s.latencyProbeTaskServerBoundary(ctx, principal, task.ServerIDs); err != nil {
 			return nil, err
 		}
+		if err := bindLatencyProbeTaskPreset(ctx, &task); err != nil {
+			return nil, err
+		}
 		if err := s.store.ValidateLatencyProbeTask(ctx, &task); err != nil {
 			return nil, err
 		}
-		return map[string]any{"method": task.Method, "address": task.Address, "port": task.Port, "name": task.Name, "province": task.Province, "carrier": task.Carrier, "interval_seconds": task.IntervalSeconds, "server_count": len(task.ServerIDs)}, nil
+		return map[string]any{"method": task.Method, "address": task.Address, "port": task.Port, "name": task.Name, "preset_id": task.PresetID, "province": task.Province, "carrier": task.Carrier, "interval_seconds": task.IntervalSeconds, "server_count": len(task.ServerIDs)}, nil
 	})
 	s.automation.Register("latency_probe_tasks.create", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		var request latencyProbeTaskCreateInput
 		if err := strictAutomationInput(input, &request); err != nil {
 			return nil, err
 		}
-		task := model.LatencyProbeTask{Method: request.Method, Address: request.Address, Port: request.Port, Name: request.Name, Province: request.Province, Carrier: request.Carrier, IntervalSeconds: request.IntervalSeconds, Enabled: true, ServerIDs: request.ServerIDs}
+		task := model.LatencyProbeTask{Method: request.Method, Address: request.Address, Port: request.Port, Name: request.Name, PresetID: request.PresetID, IntervalSeconds: request.IntervalSeconds, Enabled: true, ServerIDs: request.ServerIDs}
 		if request.Enabled != nil {
 			task.Enabled = *request.Enabled
 		}
 		if err := s.latencyProbeTaskServerBoundary(ctx, principal, task.ServerIDs); err != nil {
+			return nil, err
+		}
+		if err := bindLatencyProbeTaskPreset(ctx, &task); err != nil {
 			return nil, err
 		}
 		if err := s.store.SaveLatencyProbeTask(ctx, &task); err != nil {
@@ -163,10 +169,13 @@ func (s *Server) registerLatencyProbeTaskOperations() {
 		if err := s.latencyProbeTaskServerBoundary(ctx, principal, next.ServerIDs); err != nil {
 			return nil, err
 		}
+		if err := bindLatencyProbeTaskPreset(ctx, &next); err != nil {
+			return nil, err
+		}
 		if err := s.store.ValidateLatencyProbeTask(ctx, &next); err != nil {
 			return nil, err
 		}
-		return map[string]any{"id": next.ID, "method": next.Method, "address": next.Address, "port": next.Port, "name": next.Name, "province": next.Province, "carrier": next.Carrier, "interval_seconds": next.IntervalSeconds, "server_count": len(next.ServerIDs)}, nil
+		return map[string]any{"id": next.ID, "method": next.Method, "address": next.Address, "port": next.Port, "name": next.Name, "preset_id": next.PresetID, "province": next.Province, "carrier": next.Carrier, "interval_seconds": next.IntervalSeconds, "server_count": len(next.ServerIDs)}, nil
 	})
 	s.automation.RegisterRevisionResolver("latency_probe_tasks.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
 		var request latencyProbeTaskUpdateInput
@@ -190,6 +199,9 @@ func (s *Server) registerLatencyProbeTaskOperations() {
 		}
 		next := latencyProbeTaskFromUpdate(*current, request)
 		if err := s.latencyProbeTaskServerBoundary(ctx, principal, next.ServerIDs); err != nil {
+			return nil, err
+		}
+		if err := bindLatencyProbeTaskPreset(ctx, &next); err != nil {
 			return nil, err
 		}
 		if err := s.store.SaveLatencyProbeTask(ctx, &next); err != nil {

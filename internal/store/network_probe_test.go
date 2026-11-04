@@ -97,7 +97,7 @@ func TestNetworkProbeFieldsMigratePreviousTaskSchema(t *testing.T) {
 	if err := db.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
-	task := model.LatencyProbeTask{Name: "地区任务", Province: "广东", Carrier: "中国电信", IntervalSeconds: 900, Enabled: true, ServerIDs: []int64{server.ID}}
+	task := model.LatencyProbeTask{Name: "地区任务", PresetID: "gd-ct", Province: "广东", Carrier: "中国电信", IntervalSeconds: 900, Enabled: true, ServerIDs: []int64{server.ID}}
 	if err := db.SaveLatencyProbeTask(ctx, &task); err != nil {
 		t.Fatal(err)
 	}

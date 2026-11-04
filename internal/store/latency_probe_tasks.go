@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 )
 
@@ -46,11 +47,15 @@ func normalizeLatencyProbeTask(task *model.LatencyProbeTask) error {
 	if task == nil {
 		return errors.New("延迟探测任务为空")
 	}
+	task.PresetID = strings.TrimSpace(task.PresetID)
 	task.Province = strings.TrimSpace(task.Province)
 	task.Carrier = strings.TrimSpace(task.Carrier)
 	task.Address = strings.TrimSpace(task.Address)
-	if task.Address == "" && (task.Province == "" || task.Carrier == "") {
-		return errors.New("请填写目标地址或选择完整的省份和运营商")
+	if task.Address == "" && task.PresetID == "" {
+		return errors.New("请填写目标地址或选择运营商预设")
+	}
+	if task.Address == "" && !ValidLatencyProbePresetID(task.PresetID) {
+		return errors.New("运营商预设无效")
 	}
 	if task.Method == "" {
 		task.Method = model.LatencyProbeModeTCP
@@ -84,11 +89,14 @@ func normalizeLatencyProbeTask(task *model.LatencyProbeTask) error {
 		} else {
 			task.Address = strings.ToLower(task.Address)
 		}
-		task.Province, task.Carrier = "", ""
+		task.PresetID, task.Province, task.Carrier = "", "", ""
 	}
 	task.Name = strings.TrimSpace(task.Name)
 	if task.Name == "" {
 		task.Name = latencyProbeTargetLabel(task.Province, task.Carrier)
+		if task.Name == "" {
+			task.Name = task.PresetID
+		}
 		if task.Name == "" {
 			task.Name = string([]rune(task.Address)[:min(len([]rune(task.Address)), latencyProbeTaskMaxNameLen)])
 		}
@@ -129,7 +137,7 @@ func (s *Store) scanLatencyProbeTasks(ctx context.Context, query string, args ..
 		var task model.LatencyProbeTask
 		var enabled int
 		var createdAt, updatedAt string
-		if err := rows.Scan(&task.ID, &task.Name, &task.Province, &task.Carrier, &task.IntervalSeconds, &task.Method, &task.Address, &task.Port, &enabled, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&task.ID, &task.Name, &task.PresetID, &task.Province, &task.Carrier, &task.IntervalSeconds, &task.Method, &task.Address, &task.Port, &enabled, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		task.Enabled = enabled == 1
@@ -171,7 +179,7 @@ func (s *Store) attachLatencyProbeTaskServers(ctx context.Context, tasks []model
 
 // ListLatencyProbeTasks returns every probe task with its assigned servers.
 func (s *Store) ListLatencyProbeTasks(ctx context.Context) ([]model.LatencyProbeTask, error) {
-	tasks, err := s.scanLatencyProbeTasks(ctx, `select id,name,province,carrier,interval_seconds,method,address,port,enabled,created_at,updated_at from latency_probe_tasks order by name,id`)
+	tasks, err := s.scanLatencyProbeTasks(ctx, `select id,name,preset_id,province,carrier,interval_seconds,method,address,port,enabled,created_at,updated_at from latency_probe_tasks order by name,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +191,7 @@ func (s *Store) ListLatencyProbeTasks(ctx context.Context) ([]model.LatencyProbe
 
 // GetLatencyProbeTask loads one probe task by identifier.
 func (s *Store) GetLatencyProbeTask(ctx context.Context, id int64) (*model.LatencyProbeTask, error) {
-	tasks, err := s.scanLatencyProbeTasks(ctx, `select id,name,province,carrier,interval_seconds,method,address,port,enabled,created_at,updated_at from latency_probe_tasks where id=?`, id)
+	tasks, err := s.scanLatencyProbeTasks(ctx, `select id,name,preset_id,province,carrier,interval_seconds,method,address,port,enabled,created_at,updated_at from latency_probe_tasks where id=?`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +206,7 @@ func (s *Store) GetLatencyProbeTask(ctx context.Context, id int64) (*model.Laten
 
 // ListLatencyProbeTasksForServer returns the enabled probe tasks assigned to one server.
 func (s *Store) ListLatencyProbeTasksForServer(ctx context.Context, serverID int64) ([]model.LatencyProbeTask, error) {
-	tasks, err := s.scanLatencyProbeTasks(ctx, `select t.id,t.name,t.province,t.carrier,t.interval_seconds,t.method,t.address,t.port,t.enabled,t.created_at,t.updated_at from latency_probe_tasks t join latency_probe_task_servers m on m.task_id=t.id where m.server_id=? and t.enabled=1 order by t.name,t.id`, serverID)
+	tasks, err := s.scanLatencyProbeTasks(ctx, `select t.id,t.name,t.preset_id,t.province,t.carrier,t.interval_seconds,t.method,t.address,t.port,t.enabled,t.created_at,t.updated_at from latency_probe_tasks t join latency_probe_task_servers m on m.task_id=t.id where m.server_id=? and t.enabled=1 order by t.name,t.id`, serverID)
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +251,7 @@ func (s *Store) SaveLatencyProbeTask(ctx context.Context, task *model.LatencyPro
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if task.ID == 0 {
-		result, err := tx.ExecContext(ctx, `insert into latency_probe_tasks(name,province,carrier,interval_seconds,method,address,port,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?)`, task.Name, task.Province, task.Carrier, task.IntervalSeconds, task.Method, task.Address, task.Port, boolInt(task.Enabled), now, now)
+		result, err := tx.ExecContext(ctx, `insert into latency_probe_tasks(name,preset_id,province,carrier,interval_seconds,method,address,port,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)`, task.Name, task.PresetID, task.Province, task.Carrier, task.IntervalSeconds, task.Method, task.Address, task.Port, boolInt(task.Enabled), now, now)
 		if err != nil {
 			return err
 		}
@@ -254,7 +262,7 @@ func (s *Store) SaveLatencyProbeTask(ctx context.Context, task *model.LatencyPro
 		task.ID = id
 		task.CreatedAt = parseTime(now)
 	} else {
-		result, err := tx.ExecContext(ctx, `update latency_probe_tasks set name=?,province=?,carrier=?,interval_seconds=?,method=?,address=?,port=?,enabled=?,updated_at=? where id=?`, task.Name, task.Province, task.Carrier, task.IntervalSeconds, task.Method, task.Address, task.Port, boolInt(task.Enabled), now, task.ID)
+		result, err := tx.ExecContext(ctx, `update latency_probe_tasks set name=?,preset_id=?,province=?,carrier=?,interval_seconds=?,method=?,address=?,port=?,enabled=?,updated_at=? where id=?`, task.Name, task.PresetID, task.Province, task.Carrier, task.IntervalSeconds, task.Method, task.Address, task.Port, boolInt(task.Enabled), now, task.ID)
 		if err != nil {
 			return err
 		}
@@ -423,7 +431,7 @@ func (s *Store) migrateLatencyProbeTasks(ctx context.Context) error {
 		if exists > 0 {
 			continue
 		}
-		result, err := tx.ExecContext(ctx, `insert into latency_probe_tasks(name,province,carrier,interval_seconds,enabled,created_at,updated_at) values(?,?,?,?,1,?,?)`, name, region.Province, region.Carrier, entry.interval, now, now)
+		result, err := tx.ExecContext(ctx, `insert into latency_probe_tasks(name,preset_id,province,carrier,interval_seconds,enabled,created_at,updated_at) values(?,?,?,?,?,1,?,?)`, name, LatencyProbePresetIDFor(region.Province, region.Carrier), region.Province, region.Carrier, entry.interval, now, now)
 		if err != nil {
 			return err
 		}
@@ -497,10 +505,84 @@ func (s *Store) migrateNetworkProbeTaskFields(ctx context.Context) error {
 		{"method", "alter table latency_probe_tasks add column method text not null default 'tcp'"},
 		{"address", "alter table latency_probe_tasks add column address text not null default ''"},
 		{"port", "alter table latency_probe_tasks add column port integer not null default 80"},
+		{"preset_id", "alter table latency_probe_tasks add column preset_id text not null default ''"},
 	} {
 		if err := s.ensureColumn(ctx, "latency_probe_tasks", column.name, column.ddl); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// ValidLatencyProbePresetID reports whether id has the shape of a stable
+// probe-resource identifier: lowercase ASCII words joined by single hyphens.
+func ValidLatencyProbePresetID(id string) bool {
+	if id == "" || len(id) > 64 || id[0] == '-' || id[len(id)-1] == '-' || strings.Contains(id, "--") {
+		return false
+	}
+	for _, c := range id {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+// latencyProbeCarrierCodes is the fixed carrier code table of the v2 probe
+// resource (resource/probe/probe-targets-cn-v2.json).
+var latencyProbeCarrierCodes = map[string]string{"中国移动": "cm", "中国电信": "ct", "中国联通": "cu", "中国广电": "cbn", "教育网": "edu"}
+
+// LatencyProbePresetIDFor derives the v2 preset ID for a province and
+// carrier name, or "" when either is not in the fixed tables.
+func LatencyProbePresetIDFor(province, carrier string) string {
+	provinceCode := core.LatencyProvinceCode(province)
+	carrierCode := latencyProbeCarrierCodes[strings.TrimSpace(carrier)]
+	if provinceCode == "" || carrierCode == "" {
+		return ""
+	}
+	return provinceCode + "-" + carrierCode
+}
+
+// migrateLatencyProbeTaskPresetIDs binds region tasks, which used to be
+// resolved by province and carrier name, to the stable v2 preset ID. A task
+// whose names are not in the fixed tables keeps an empty preset and resolves
+// no targets until an operator picks a preset again. It only touches rows
+// that have neither an address nor a preset, so it is safe on every start.
+func (s *Store) migrateLatencyProbeTaskPresetIDs(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `select id,province,carrier from latency_probe_tasks where address='' and preset_id=''`)
+	if err != nil {
+		return err
+	}
+	type binding struct {
+		id       int64
+		presetID string
+	}
+	bindings := []binding{}
+	for rows.Next() {
+		var id int64
+		var province, carrier string
+		if err := rows.Scan(&id, &province, &carrier); err != nil {
+			rows.Close()
+			return err
+		}
+		if presetID := LatencyProbePresetIDFor(province, carrier); presetID != "" {
+			bindings = append(bindings, binding{id, presetID})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, item := range bindings {
+		if _, err := tx.ExecContext(ctx, `update latency_probe_tasks set preset_id=? where id=? and preset_id=''`, item.presetID, item.id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

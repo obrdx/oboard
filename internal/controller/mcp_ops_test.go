@@ -134,7 +134,7 @@ func TestLatencyProbeCapabilityDeduplicatesActiveTask(t *testing.T) {
 	if err := db.CreateServer(ctx, node); err != nil {
 		t.Fatal(err)
 	}
-	resource, err := parseLatencyProbeResource([]byte(`{"广东":{"中国电信":["192.0.2.1"]}}`), time.Now())
+	resource, err := parseLatencyProbeResource(probeResourceBody("gd-ct|广东|中国电信|gd-ct-1-v4=192.0.2.1"), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

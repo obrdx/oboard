@@ -172,7 +172,7 @@ func latencyProbeResourceState() (version string, updatedAt time.Time, refreshDu
 	defer latencyProbeCache.Unlock()
 	version = latencyProbeCache.resource.Version
 	updatedAt = latencyProbeCache.resource.UpdatedAt
-	if len(latencyProbeCache.resource.Provinces) == 0 {
+	if len(latencyProbeCache.resource.Presets) == 0 {
 		return version, updatedAt, true
 	}
 	return version, updatedAt, time.Since(latencyProbeCache.fetched) >= latencyProbeCacheTTL

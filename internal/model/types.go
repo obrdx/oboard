@@ -2292,6 +2292,21 @@ type LatencyProbeTarget struct {
 	IntervalSeconds int `json:"interval_seconds,omitempty"`
 }
 
+// LatencyProbePreset is one carrier preset of the probe resource: a stable ID
+// and the targets currently published for it.
+type LatencyProbePreset struct {
+	ID       string                     `json:"id"`
+	Province string                     `json:"province"`
+	Carrier  string                     `json:"carrier"`
+	Targets  []LatencyProbePresetTarget `json:"targets"`
+}
+
+type LatencyProbePresetTarget struct {
+	ID     string `json:"id"`
+	Family string `json:"family"`
+	Host   string `json:"host"`
+}
+
 type LatencyProbeRegion struct {
 	Province string `json:"province"`
 	Carrier  string `json:"carrier"`
@@ -2300,18 +2315,22 @@ type LatencyProbeRegion struct {
 // LatencyProbeTask is one network target executed on a chosen set of servers
 // at its own cadence. Several tasks may share the same target with different servers or cadence.
 type LatencyProbeTask struct {
-	Method          LatencyProbeMode `json:"method"`
-	Address         string           `json:"address"`
-	Port            int              `json:"port"`
-	ID              int64            `json:"id"`
-	Name            string           `json:"name"`
-	Province        string           `json:"province"`
-	Carrier         string           `json:"carrier"`
-	IntervalSeconds int              `json:"interval_seconds"`
-	Enabled         bool             `json:"enabled"`
-	ServerIDs       []int64          `json:"server_ids"`
-	CreatedAt       time.Time        `json:"created_at"`
-	UpdatedAt       time.Time        `json:"updated_at"`
+	Method  LatencyProbeMode `json:"method"`
+	Address string           `json:"address"`
+	Port    int              `json:"port"`
+	ID      int64            `json:"id"`
+	Name    string           `json:"name"`
+	// PresetID binds the task to one carrier preset of the probe resource; its
+	// addresses follow resource updates. Province and Carrier are the preset's
+	// display names, refreshed from the resource on every save.
+	PresetID        string    `json:"preset_id"`
+	Province        string    `json:"province"`
+	Carrier         string    `json:"carrier"`
+	IntervalSeconds int       `json:"interval_seconds"`
+	Enabled         bool      `json:"enabled"`
+	ServerIDs       []int64   `json:"server_ids"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type LatencyProbeTargetsPlan struct {

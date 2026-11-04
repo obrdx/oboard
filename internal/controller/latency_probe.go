@@ -25,15 +25,30 @@ import (
 )
 
 const (
-	defaultProbeResourceURL     = "https://raw.githubusercontent.com/obrdx/resource/main/probe/probe-targets-cn.json"
+	defaultProbeResourceURL     = "https://raw.githubusercontent.com/obrdx/resource/main/probe/probe-targets-cn-v2.json"
 	latencyProbeCacheTTL        = 6 * time.Hour
 	latencyProbeRefreshCooldown = 30 * time.Second
 )
 
+const latencyProbeResourceSchema = "oboard.probe-targets.v2"
+
+// latencyProbeResource is the v2 carrier preset table. Presets and targets
+// carry stable IDs: tasks bind a preset ID, and probe IDs are derived from
+// target IDs, so a changed address, a reordered list or an added target
+// never moves history from one target to another.
 type latencyProbeResource struct {
-	Version   string                         `json:"version"`
-	UpdatedAt time.Time                      `json:"updated_at"`
-	Provinces map[string]map[string][]string `json:"provinces"`
+	Version   string                     `json:"version"`
+	UpdatedAt time.Time                  `json:"updated_at"`
+	Presets   []model.LatencyProbePreset `json:"presets"`
+}
+
+func (r latencyProbeResource) preset(id string) (model.LatencyProbePreset, bool) {
+	for _, preset := range r.Presets {
+		if preset.ID == id {
+			return preset, true
+		}
+	}
+	return model.LatencyProbePreset{}, false
 }
 
 var latencyProbeCache struct {
@@ -51,7 +66,7 @@ var latencyProbeResourceFetcher = fetchLatencyProbeResource
 func loadLatencyProbeResource(ctx context.Context, force bool) (latencyProbeResource, error) {
 	latencyProbeCache.Lock()
 	cached := latencyProbeCache.resource
-	hasCached := len(cached.Provinces) > 0
+	hasCached := len(cached.Presets) > 0
 	age := time.Since(latencyProbeCache.fetched)
 	sinceAttempt := time.Since(latencyProbeCache.attempted)
 	if hasCached && ((!force && age < latencyProbeCacheTTL) || sinceAttempt < latencyProbeRefreshCooldown) {
@@ -79,7 +94,7 @@ func loadLatencyProbeResource(ctx context.Context, force bool) (latencyProbeReso
 			resource := latencyProbeCache.resource
 			lastError := latencyProbeCache.lastError
 			latencyProbeCache.Unlock()
-			if len(resource.Provinces) > 0 {
+			if len(resource.Presets) > 0 {
 				return resource, nil
 			}
 			if lastError != nil {
@@ -143,31 +158,46 @@ func fetchLatencyProbeResource(ctx context.Context) (latencyProbeResource, error
 }
 
 func parseLatencyProbeResource(body []byte, updatedAt time.Time) (latencyProbeResource, error) {
-	var raw map[string]map[string][]string
+	var raw struct {
+		Schema  string                     `json:"schema"`
+		Presets []model.LatencyProbePreset `json:"presets"`
+	}
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return latencyProbeResource{}, fmt.Errorf("invalid probe resource: %w", err)
 	}
-	if len(raw) == 0 || len(raw) > 40 {
-		return latencyProbeResource{}, errors.New("probe resource has invalid province count")
+	if raw.Schema != latencyProbeResourceSchema {
+		return latencyProbeResource{}, fmt.Errorf("probe resource schema %q is not %s", raw.Schema, latencyProbeResourceSchema)
 	}
-	for province, carriers := range raw {
-		if strings.TrimSpace(province) == "" || len(carriers) > 8 {
-			return latencyProbeResource{}, errors.New("probe resource has invalid province")
+	if len(raw.Presets) == 0 || len(raw.Presets) > 400 {
+		return latencyProbeResource{}, errors.New("probe resource has invalid preset count")
+	}
+	presetIDs := make(map[string]bool, len(raw.Presets))
+	targetIDs := map[string]bool{}
+	for i := range raw.Presets {
+		preset := &raw.Presets[i]
+		preset.Province = strings.TrimSpace(preset.Province)
+		preset.Carrier = strings.TrimSpace(preset.Carrier)
+		if !store.ValidLatencyProbePresetID(preset.ID) || presetIDs[preset.ID] || preset.Province == "" || preset.Carrier == "" || len(preset.Targets) > 16 {
+			return latencyProbeResource{}, fmt.Errorf("probe resource has invalid preset %q", preset.ID)
 		}
-		for carrier, ips := range carriers {
-			if strings.TrimSpace(carrier) == "" || len(ips) > 64 {
-				return latencyProbeResource{}, errors.New("probe resource has invalid carrier")
+		presetIDs[preset.ID] = true
+		for j := range preset.Targets {
+			target := &preset.Targets[j]
+			family := core.LatencyProbeTargetFamily(target.ID)
+			if !store.ValidLatencyProbePresetID(target.ID) || targetIDs[target.ID] || family == "" || target.Family != family {
+				return latencyProbeResource{}, fmt.Errorf("probe resource has invalid target id %q", target.ID)
 			}
-			for _, value := range ips {
-				if _, _, ok := parseLatencyProbeResourceTarget(value); !ok {
-					return latencyProbeResource{}, fmt.Errorf("probe resource contains invalid target %q", value)
-				}
+			targetIDs[target.ID] = true
+			host, ip, ok := parseLatencyProbeResourceTarget(target.Host)
+			if !ok || (ip != "" && family != "ipv4") {
+				return latencyProbeResource{}, fmt.Errorf("probe resource contains invalid target %q", target.Host)
 			}
+			target.Host = host
 		}
 	}
 	sum := sha256.Sum256(body)
 	version := hex.EncodeToString(sum[:8])
-	return latencyProbeResource{Version: version, UpdatedAt: updatedAt.UTC(), Provinces: raw}, nil
+	return latencyProbeResource{Version: version, UpdatedAt: updatedAt.UTC(), Presets: raw.Presets}, nil
 }
 
 func parseLatencyProbeResourceTarget(value string) (host, ip string, ok bool) {
@@ -267,7 +297,7 @@ func latencyProbeTargets(resource latencyProbeResource, server model.Server, tas
 		interval int
 		province string
 		carrier  string
-		ips      []string
+		targets  []model.LatencyProbePresetTarget
 		method   model.LatencyProbeMode
 		port     int
 	}
@@ -300,9 +330,11 @@ func latencyProbeTargets(resource latencyProbeResource, server model.Server, tas
 			items = append(items, model.LatencyProbeTarget{ProbeID: fmt.Sprintf("t%d-0", task.ID), Kind: "custom", TaskID: task.ID, TaskName: task.Name, Mode: task.Method, Host: host, IP: ip, Port: port, URL: targetURL, IntervalSeconds: task.IntervalSeconds})
 			continue
 		}
-		ips := resource.Provinces[task.Province][task.Carrier]
-		if len(ips) > 0 {
-			groups = append(groups, targetGroup{taskID: task.ID, taskName: task.Name, interval: task.IntervalSeconds, province: task.Province, carrier: task.Carrier, ips: ips, method: task.Method, port: task.Port})
+		// A preset task follows the preset's current targets. Names come from
+		// the resource, not the task row, so a renamed province or carrier is
+		// picked up without editing the task.
+		if preset, ok := resource.preset(task.PresetID); ok && len(preset.Targets) > 0 {
+			groups = append(groups, targetGroup{taskID: task.ID, taskName: task.Name, interval: task.IntervalSeconds, province: preset.Province, carrier: preset.Carrier, targets: preset.Targets, method: task.Method, port: task.Port})
 		}
 	}
 	sort.Slice(groups, func(i, j int) bool {
@@ -311,17 +343,18 @@ func latencyProbeTargets(resource latencyProbeResource, server model.Server, tas
 		}
 		return groups[i].taskName < groups[j].taskName
 	})
-	for ipIndex := 0; ; ipIndex++ {
+	for targetIndex := 0; ; targetIndex++ {
 		added := false
 		for _, group := range groups {
-			if ipIndex >= len(group.ips) {
+			if targetIndex >= len(group.targets) {
 				continue
 			}
 			added = true
 			if server.LatencyProbeMaxTargets > 0 && len(items) >= server.LatencyProbeMaxTargets {
 				return items
 			}
-			host, ip, ok := parseLatencyProbeResourceTarget(group.ips[ipIndex])
+			target := group.targets[targetIndex]
+			host, ip, ok := parseLatencyProbeResourceTarget(target.Host)
 			if !ok {
 				continue
 			}
@@ -332,7 +365,7 @@ func latencyProbeTargets(resource latencyProbeResource, server model.Server, tas
 					port = 0
 				}
 			}
-			items = append(items, model.LatencyProbeTarget{Mode: group.method, ProbeID: fmt.Sprintf("t%d-%d", group.taskID, ipIndex), Kind: "regional", TaskID: group.taskID, TaskName: group.taskName, Province: group.province, Carrier: group.carrier, Host: host, IP: ip, Port: port, IntervalSeconds: group.interval})
+			items = append(items, model.LatencyProbeTarget{Mode: group.method, ProbeID: latencyProbePresetProbeID(group.taskID, target.ID), Kind: "regional", TaskID: group.taskID, TaskName: group.taskName, Province: group.province, Carrier: group.carrier, Host: host, IP: ip, Port: port, IntervalSeconds: group.interval})
 		}
 		if !added {
 			break
@@ -353,20 +386,52 @@ func effectiveLatencyProbePublicTarget(server model.Server) model.ConnectivityTa
 	return model.ConnectivityProbeTargetCloudflare
 }
 
-func latencyProbeRegionOptions(resource latencyProbeResource) []model.LatencyProbeRegion {
-	options := make([]model.LatencyProbeRegion, 0)
-	for province, carriers := range resource.Provinces {
-		for carrier := range carriers {
-			options = append(options, model.LatencyProbeRegion{Province: province, Carrier: carrier})
+// latencyProbePresetProbeID is the probe ID of one preset target of a task.
+// It embeds the stable target ID, never an array position.
+func latencyProbePresetProbeID(taskID int64, targetID string) string {
+	return fmt.Sprintf("t%d-%s", taskID, targetID)
+}
+
+var latencyProbeCarrierOrder = map[string]int{"中国电信": 0, "中国联通": 1, "中国移动": 2, "中国广电": 3, "教育网": 4}
+
+func latencyProbePresetOptions(resource latencyProbeResource) []model.LatencyProbePreset {
+	options := append([]model.LatencyProbePreset{}, resource.Presets...)
+	sort.SliceStable(options, func(i, j int) bool {
+		if options[i].Province != options[j].Province {
+			return options[i].Province < options[j].Province
 		}
-	}
-	sort.Slice(options, func(i, j int) bool {
-		if options[i].Province == options[j].Province {
-			return options[i].Carrier < options[j].Carrier
+		ri, iok := latencyProbeCarrierOrder[options[i].Carrier]
+		rj, jok := latencyProbeCarrierOrder[options[j].Carrier]
+		if iok != jok {
+			return iok
 		}
-		return options[i].Province < options[j].Province
+		if ri != rj {
+			return ri < rj
+		}
+		return options[i].Carrier < options[j].Carrier
 	})
 	return options
+}
+
+// bindLatencyProbeTaskPreset resolves a task's preset ID against the probe
+// resource and refreshes its display names. Fixed-address tasks are left
+// alone; they never depend on the resource.
+func bindLatencyProbeTaskPreset(ctx context.Context, task *model.LatencyProbeTask) error {
+	task.Address = strings.TrimSpace(task.Address)
+	task.PresetID = strings.TrimSpace(task.PresetID)
+	if task.Address != "" || task.PresetID == "" {
+		return nil
+	}
+	resource, err := loadLatencyProbeResource(ctx, false)
+	if err != nil {
+		return err
+	}
+	preset, ok := resource.preset(task.PresetID)
+	if !ok {
+		return errors.New("运营商预设不存在或已下线，请重新选择")
+	}
+	task.Province, task.Carrier = preset.Province, preset.Carrier
+	return nil
 }
 
 func (s *Server) serverLatencyProbe(w http.ResponseWriter, r *http.Request, serverID int64) {
@@ -383,16 +448,16 @@ func (s *Server) serverLatencyProbe(w http.ResponseWriter, r *http.Request, serv
 			fail(w, resultErr, 500)
 			return
 		}
-		regions := []model.LatencyProbeRegion{}
+		presets := []model.LatencyProbePreset{}
 		if resourceErr == nil {
-			regions = latencyProbeRegionOptions(resource)
+			presets = latencyProbePresetOptions(resource)
 		}
 		tasks, taskErr := s.store.ListLatencyProbeTasksForServer(r.Context(), serverID)
 		if taskErr != nil {
 			fail(w, taskErr, 500)
 			return
 		}
-		write(w, 200, map[string]any{"server": server, "resource_version": resource.Version, "resource_updated_at": resource.UpdatedAt, "resource_error": errorString(resourceErr), "regions": regions, "tasks": tasks, "results": results})
+		write(w, 200, map[string]any{"server": server, "resource_version": resource.Version, "resource_updated_at": resource.UpdatedAt, "resource_error": errorString(resourceErr), "presets": presets, "tasks": tasks, "results": results})
 	case http.MethodPost:
 		if !server.LatencyProbeEnabled {
 			fail(w, errors.New("服务器未启用延迟测试"), http.StatusConflict)
@@ -452,8 +517,7 @@ func (s *Server) latencyProbeResource(w http.ResponseWriter, r *http.Request) {
 	write(w, http.StatusOK, map[string]any{
 		"resource_version":    resource.Version,
 		"resource_updated_at": resource.UpdatedAt,
-		"regions":             latencyProbeRegionOptions(resource),
-		"targets":             latencyProbeAddressOptions(resource),
+		"presets":             latencyProbePresetOptions(resource),
 	})
 }
 
@@ -713,8 +777,7 @@ func (s *Server) resolveLatencyProbeReportTasks(ctx context.Context, serverID in
 			}
 		} else if item.Kind != "regional" || item.Mode != string(task.Method) || item.Port != task.Port {
 			return errors.New("网络探测回报与任务方式不一致")
-		}
-		if item.Province != task.Province || item.Carrier != task.Carrier {
+		} else if !latencyProbeReportMatchesPreset(task, *item) {
 			return errors.New("延迟测试回报与探测任务目标不一致")
 		}
 		item.TaskName = task.Name
@@ -736,9 +799,13 @@ func (s *Server) latencyProbeTasks(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &req) {
 			return
 		}
-		task := model.LatencyProbeTask{Method: req.Method, Address: req.Address, Port: req.Port, Name: req.Name, Province: req.Province, Carrier: req.Carrier, IntervalSeconds: req.IntervalSeconds, Enabled: true, ServerIDs: req.ServerIDs}
+		task := model.LatencyProbeTask{Method: req.Method, Address: req.Address, Port: req.Port, Name: req.Name, PresetID: req.PresetID, IntervalSeconds: req.IntervalSeconds, Enabled: true, ServerIDs: req.ServerIDs}
 		if req.Enabled != nil {
 			task.Enabled = *req.Enabled
+		}
+		if err := bindLatencyProbeTaskPreset(r.Context(), &task); err != nil {
+			fail(w, err, 400)
+			return
 		}
 		if err := s.store.SaveLatencyProbeTask(r.Context(), &task); err != nil {
 			fail(w, err, 400)
@@ -772,6 +839,10 @@ func (s *Server) latencyProbeTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		next := latencyProbeTaskFromUpdate(*current, req)
+		if err := bindLatencyProbeTaskPreset(r.Context(), &next); err != nil {
+			fail(w, err, 400)
+			return
+		}
 		if err := s.store.SaveLatencyProbeTask(r.Context(), &next); err != nil {
 			fail(w, err, 400)
 			return
@@ -801,12 +872,31 @@ func effectiveLatencyTargetMode(target model.LatencyProbeTarget, fallback model.
 	return fallback
 }
 
-func latencyProbeAddressOptions(resource latencyProbeResource) []map[string]string {
-	options := []map[string]string{}
-	for _, region := range latencyProbeRegionOptions(resource) {
-		for _, address := range resource.Provinces[region.Province][region.Carrier] {
-			options = append(options, map[string]string{"province": region.Province, "carrier": region.Carrier, "address": address})
+// latencyProbeReportMatchesPreset checks a regional result against the task's
+// preset. The probe ID must name one of the task's target IDs; when the
+// resource is cached, the target must still belong to the preset under the
+// same names. With a cold cache the names saved on the task, refreshed from
+// the resource on every save, stand in.
+func latencyProbeReportMatchesPreset(task model.LatencyProbeTask, item model.LatencyProbeResult) bool {
+	prefix := fmt.Sprintf("t%d-", task.ID)
+	targetID := strings.TrimPrefix(item.ProbeID, prefix)
+	if task.PresetID == "" || targetID == item.ProbeID || core.LatencyProbeTargetFamily(targetID) == "" {
+		return false
+	}
+	latencyProbeCache.Lock()
+	resource := latencyProbeCache.resource
+	latencyProbeCache.Unlock()
+	if len(resource.Presets) == 0 {
+		return item.Province == task.Province && item.Carrier == task.Carrier
+	}
+	preset, ok := resource.preset(task.PresetID)
+	if !ok || item.Province != preset.Province || item.Carrier != preset.Carrier {
+		return false
+	}
+	for _, target := range preset.Targets {
+		if target.ID == targetID {
+			return true
 		}
 	}
-	return options
+	return false
 }

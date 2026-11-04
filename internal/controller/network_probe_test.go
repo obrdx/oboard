@@ -234,7 +234,7 @@ func TestNetworkProbeRESTTaskLifecycle(t *testing.T) {
 }
 
 func TestNetworkProbePresetsWebAndMachine(t *testing.T) {
-	resource, err := parseLatencyProbeResource([]byte(`{"广东":{"中国电信":["gd.example.com","1.1.1.1"]}}`), time.Now())
+	resource, err := parseLatencyProbeResource(probeResourceBody("gd-ct|广东|中国电信|gd-ct-v4=gd.example.com;gd-ct-1-v4=1.1.1.1"), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,8 @@ func TestNetworkProbePresetsWebAndMachine(t *testing.T) {
 	raw, _ := json.Marshal(machine)
 	var result map[string]any
 	json.Unmarshal(raw, &result)
-	if !reflect.DeepEqual(web["targets"], result["targets"]) || len(result["targets"].([]any)) != 2 {
+	presets, _ := result["presets"].([]any)
+	if !reflect.DeepEqual(web["presets"], result["presets"]) || len(presets) != 1 || len(presets[0].(map[string]any)["targets"].([]any)) != 2 || presets[0].(map[string]any)["id"] != "gd-ct" {
 		t.Fatalf("preset contracts differ: %s", raw)
 	}
 }

@@ -1101,6 +1101,7 @@ table latency_probe_task_servers
 table latency_probe_tasks
     id INTEGER notnull=0 default=- pk=1
     name TEXT notnull=1 default=- pk=0
+    preset_id TEXT notnull=1 default='' pk=0
     province TEXT notnull=1 default=- pk=0
     carrier TEXT notnull=1 default=- pk=0
     method TEXT notnull=1 default='tcp' pk=0

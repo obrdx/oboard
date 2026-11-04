@@ -749,25 +749,50 @@ button.fleet-chip:hover:not(:disabled).is-danger { background: color-mix(in srgb
 .fleet-rates { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 
 .fleet-tile-quality {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   align-self: start;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 8px;
   padding-top: 14px;
-}
-
-.fleet-quality {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: 20px 8px;
-  align-items: center;
-  gap: 5px 8px;
   min-width: 0;
 }
 
-.fleet-quality .fleet-quality-bar { grid-column: 1 / -1; }
 .fleet-quality-label { display: inline-flex; align-items: center; gap: 2px; color: var(--text-muted); font-size: 12px; }
-.fleet-quality strong { font-family: var(--font-numeric); font-size: 13px; font-weight: 600; }
+.fleet-latency-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.fleet-latency-head .fleet-quality-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.fleet-latency-rows { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+
+.fleet-latency-row {
+  display: grid;
+  grid-template-columns: 8px minmax(2.5em, max-content) 50px minmax(48px, 1fr) max-content;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12.5px;
+}
+
+.fleet-latency-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--fleet-track); }
+.fleet-latency-dot.is-ok { background: var(--fleet-green-fill); }
+.fleet-latency-dot.is-fair { background: var(--fleet-amber-fill); }
+.fleet-latency-dot.is-poor { background: var(--fleet-red-fill); }
+.fleet-latency-name { overflow: hidden; color: var(--text-secondary, var(--text-muted)); text-overflow: ellipsis; white-space: nowrap; }
+.fleet-latency-value { font-family: var(--font-numeric); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fleet-latency-chart { display: flex; align-items: center; min-width: 0; height: 22px; }
+.fleet-latency-chart .fleet-quality-bar { height: 8px; gap: 1px; }
+.fleet-latency-loss { display: inline-flex; align-items: baseline; gap: 6px; color: var(--text-muted); white-space: nowrap; }
+.fleet-latency-loss strong { min-width: 3.6em; color: var(--text-primary); font-family: var(--font-numeric); font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+
+.fleet-sparkline { display: block; width: 100%; height: 100%; overflow: visible; color: var(--fleet-green-fill); }
+.fleet-sparkline.is-fair { color: var(--fleet-amber-fill); }
+.fleet-sparkline.is-poor { color: var(--fleet-red-fill); }
+.fleet-sparkline-area { fill: currentColor; fill-opacity: 0.22; stroke: none; }
+.fleet-sparkline-line { fill: none; stroke: currentColor; stroke-width: 1.5px; stroke-linejoin: round; stroke-linecap: round; }
+.fleet-sparkline-empty { stroke: var(--fleet-track); stroke-width: 1.5px; }
+
+:is(.fleet-tile-quality, .fleet-cell-quality, .fleet-row-metrics) .tone-text-ok { color: var(--fleet-green); }
+:is(.fleet-tile-quality, .fleet-cell-quality, .fleet-row-metrics) .tone-text-fair { color: var(--fleet-amber); }
+:is(.fleet-tile-quality, .fleet-cell-quality, .fleet-row-metrics) .tone-text-poor { color: var(--fleet-red); }
 
 .fleet-tile-foot {
   display: flex;
@@ -849,9 +874,12 @@ button.fleet-chip:hover:not(:disabled).is-danger { background: color-mix(in srgb
 .fleet-compact-label { display: none; margin-right: 4px; color: var(--text-muted); font-family: var(--font-sans); font-size: 11px; font-weight: 500; }
 .fleet-compact-meter small { overflow: hidden; color: var(--text-muted); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
 
-.fleet-quality-inline { display: grid; grid-template-columns: 50px minmax(0, 1fr) 18px; align-items: center; gap: 8px; }
+.fleet-quality-inline { display: grid; grid-template-columns: 46px minmax(0, 1fr) 38px 18px; align-items: center; gap: 6px; height: 18px; }
 .fleet-quality-inline strong { font-family: var(--font-numeric); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.fleet-quality-inline small { font-family: var(--font-numeric); font-size: 11.5px; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 .fleet-quality-inline .fleet-quality-bar { height: 7px; gap: 1px; }
+.fleet-quality-inline .fleet-sparkline { height: 16px; }
+.fleet-row-metrics .fleet-sparkline { height: 14px; }
 .fleet-quality-inline .fleet-target-button { width: 18px; height: 18px; min-height: 18px; }
 
 @container fleet-list (max-width: 1180px) {

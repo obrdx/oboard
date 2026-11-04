@@ -588,7 +588,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists traffic_policy_revision (id integer primary key check(id=1), revision integer not null default 0)`,
 		`insert or ignore into traffic_policy_revision(id,revision) values(1,0)`,
 		`create table if not exists server_latency_probe_settings (server_id integer primary key references servers(id) on delete cascade, enabled integer not null default 1, mode text not null default 'tcp', public_target text not null default 'auto', monitoring_target_task_id integer not null default 0, interval_seconds integer not null default 120, sample_count integer not null default 3, regions_json text not null default '[]', provinces_json text not null default '[]', carriers_json text not null default '[]', max_targets integer not null default 64, resource_version text not null default '', plan_version integer not null default 0, plan_digest text not null default '', updated_at text not null)`,
-		`create table if not exists latency_probe_tasks (id integer primary key autoincrement, name text not null, province text not null, carrier text not null, method text not null default 'tcp', address text not null default '', port integer not null default 80, interval_seconds integer not null default 60, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create table if not exists latency_probe_tasks (id integer primary key autoincrement, name text not null, preset_id text not null default '', province text not null, carrier text not null, method text not null default 'tcp', address text not null default '', port integer not null default 80, interval_seconds integer not null default 60, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create unique index if not exists idx_latency_probe_tasks_name on latency_probe_tasks(name)`,
 		`create table if not exists latency_probe_task_servers (task_id integer not null references latency_probe_tasks(id) on delete cascade, server_id integer not null references servers(id) on delete cascade, primary key(task_id,server_id))`,
 		`create index if not exists idx_latency_probe_task_servers_server on latency_probe_task_servers(server_id)`,
@@ -1002,6 +1002,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.migrateLatencyProbeTasks(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateLatencyProbeTaskPresetIDs(ctx); err != nil {
 		return err
 	}
 	if s.legacyHistory {

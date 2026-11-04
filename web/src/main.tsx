@@ -13,7 +13,7 @@ import { MatrixLogoLoader } from './components/MatrixLogoLoader'
 import { SnellShapingFields, normalizeSnellShaping, snellShapingChecker, type SnellShapingChecker, type SnellShapingPolicy } from './components/SnellShapingFields'
 import { userAccountDisplay, userPlanDisplay, userUsageDisplay } from './components/users/user-display'
 import { useUserAction } from './components/users/useUserAction'
-import { connectivityLatencyLabel, serverMonitoring } from './server-monitoring'
+import { connectivityLatencyLabel, serverMonitoring, type LatencyChartStyle } from './server-monitoring'
 import { ServerMonitoringTargetDialog } from './components/server/ServerMonitoringTargetDialog'
 import { ServerTile, ServerRow, ServerListHeader } from './components/server/fleet/ServerTile'
 import { FleetSummary, FleetSearch, RegionFilter, FilterPopover, ViewToggle, fleetStats, serverNeedsAttention, type FleetView } from './components/server/fleet/FleetToolbar'
@@ -6314,7 +6314,7 @@ function ServerDisplayTagsEditor({ tags, onChange }: { tags: { text: string; ton
   )
 }
 
-type ServerListPreferences = { sortMode: ServerSortMode; customOrder: number[]; view: FleetView }
+type ServerListPreferences = { sortMode: ServerSortMode; customOrder: number[]; view: FleetView; latencyChart: LatencyChartStyle }
 
 const serverListPreferencesKey = 'oboard.server-list.preferences.v1'
 
@@ -6324,9 +6324,10 @@ function loadServerListPreferences(): ServerListPreferences {
     const sortMode: ServerSortMode = value?.sortMode === 'country' || value?.sortMode === 'custom' ? value.sortMode : 'created'
     const customOrder = Array.isArray(value?.customOrder) ? value.customOrder.map(Number).filter((id: number) => Number.isSafeInteger(id) && id > 0) : []
     const view: FleetView = value?.view === 'list' ? 'list' : 'grid'
-    return { sortMode, customOrder, view }
+    const latencyChart: LatencyChartStyle = value?.latencyChart === 'bars' ? 'bars' : 'sparkline'
+    return { sortMode, customOrder, view, latencyChart }
   } catch {
-    return { sortMode: 'created', customOrder: [], view: 'grid' }
+    return { sortMode: 'created', customOrder: [], view: 'grid', latencyChart: 'sparkline' }
   }
 }
 
@@ -7019,6 +7020,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
       expectedBuild: expectedAgentBuild,
       uninstalling: uninstallingServerIDs.has(server.id),
       sortControls,
+      latencyChart: listPreferences.latencyChart,
       onAction: handleServerAction,
     }
     return <div
@@ -7088,6 +7090,8 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
           onStatusFilterChange={setServerStatusFilter}
           sortMode={listPreferences.sortMode}
           onSortModeChange={mode => setListPreferences(current => ({ ...current, sortMode: mode }))}
+          latencyChart={listPreferences.latencyChart}
+          onLatencyChartChange={latencyChart => setListPreferences(current => ({ ...current, latencyChart }))}
         />
         <ViewToggle value={fleetView} onChange={view => setListPreferences(current => ({ ...current, view }))} />
         {serverPageCount === 1 && <span className="fleet-count" role="status">{serverResultCount}</span>}

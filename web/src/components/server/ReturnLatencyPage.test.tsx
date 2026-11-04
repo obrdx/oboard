@@ -9,14 +9,18 @@ import { ReturnLatencyPage } from './ReturnLatencyPage'
 import { ServerActionMenu } from './ServerActionMenu'
 import { ReturnLatencyTaskForm } from './ReturnLatencyTaskForm'
 
-const regions = ['广东', '北京'].flatMap(province => ['中国电信', '中国联通', '中国移动'].map(carrier => ({ province, carrier })))
+const code: Record<string, string> = { 广东: 'gd', 北京: 'bj', 中国电信: 'ct', 中国联通: 'cu', 中国移动: 'cm' }
+const presets = ['广东', '北京'].flatMap(province => ['中国电信', '中国联通', '中国移动'].map(carrier => {
+  const id = `${code[province]}-${code[carrier]}`
+  return { id, province, carrier, targets: [{ id: `${id}-v4`, family: 'ipv4' as const, host: `${id}-v4.example.com` }, { id: `${id}-v6`, family: 'ipv6' as const, host: `${id}-v6.example.com` }] }
+}))
 const servers = [
   { id: 1, name: 'Hong Kong', agent_id: 'agent-1', status: 'online', latency_probe_enabled: true, latency_probe_mode: 'tcp', latency_probe_interval_seconds: 60, latency_probe_sample_count: 3, latency_probe_max_targets: 64, latency_probe_public_target: 'auto' },
   { id: 2, name: 'Tokyo', agent_id: 'agent-2', status: 'offline', latency_probe_enabled: true },
 ] as Server[]
 const tasks: LatencyProbeTask[] = [
-  { id: 7, method: 'tcp', address: '', port: 80, name: '广州电信', province: '广东', carrier: '中国电信', interval_seconds: 300, enabled: true, server_ids: [1] },
-  { id: 8, method: 'icmp', address: '', port: 0, name: '北京移动巡检', province: '北京', carrier: '中国移动', interval_seconds: 3600, enabled: false, server_ids: [] },
+  { id: 7, method: 'tcp', address: '', port: 80, name: '广州电信', preset_id: 'gd-ct', province: '广东', carrier: '中国电信', interval_seconds: 300, enabled: true, server_ids: [1] },
+  { id: 8, method: 'icmp', address: '', port: 0, name: '北京移动巡检', preset_id: 'bj-cm', province: '北京', carrier: '中国移动', interval_seconds: 3600, enabled: false, server_ids: [] },
 ]
 
 describe('return latency probe tasks', () => {
@@ -52,7 +56,7 @@ describe('return latency probe tasks', () => {
 
   it('creates one task per target with its own interval and executing servers', async () => {
     const submit = vi.fn()
-    await act(async () => root.render(<ReturnLatencyTaskForm regions={regions} servers={servers} onSubmit={submit} onCancel={() => {}} />))
+    await act(async () => root.render(<ReturnLatencyTaskForm presets={presets} servers={servers} onSubmit={submit} onCancel={() => {}} />))
     expect(container.querySelector('.probe-task-form-scroll')).toBeTruthy()
     expect(container.querySelector('.probe-task-form-scroll .return-latency-form-actions')).toBeNull()
     expect(container.querySelector('.return-latency-fields > .return-latency-form-actions')).toBeTruthy()
@@ -60,12 +64,12 @@ describe('return latency probe tasks', () => {
     await setInput(container.querySelector<HTMLInputElement>('[aria-label="目标地址"]')!, 'example.com')
     await click(container.querySelector<HTMLInputElement>('[aria-label="选择 Hong Kong"]')!)
     await click(buttonIn(container, '创建任务')!)
-    expect(submit).toHaveBeenCalledWith({ name: 'example.com', method: 'tcp', address: 'example.com', port: 80, province: '', carrier: '', interval_seconds: 300, enabled: true, server_ids: [1] })
+    expect(submit).toHaveBeenCalledWith({ name: 'example.com', method: 'tcp', address: 'example.com', port: 80, preset_id: '', province: '', carrier: '', interval_seconds: 300, enabled: true, server_ids: [1] })
   })
 
   it.each(['127.0.0.1', '10.0.0.1', '::1', 'fd00::1', 'fe80::1%eth0', 'localhost', 'router1'])('creates a probe for internal target %s', async address => {
     const submit = vi.fn()
-    await act(async () => root.render(<ReturnLatencyTaskForm regions={[]} servers={servers} onSubmit={submit} onCancel={() => {}} />))
+    await act(async () => root.render(<ReturnLatencyTaskForm presets={[]} servers={servers} onSubmit={submit} onCancel={() => {}} />))
     await setInput(container.querySelector<HTMLInputElement>('[aria-label="目标地址"]')!, address)
     await click(buttonIn(container, '创建任务')!)
     expect(submit.mock.calls[0][0]).toMatchObject({ address, method: 'tcp' })
@@ -73,7 +77,7 @@ describe('return latency probe tasks', () => {
 
   it('keeps an explicit task name so several tasks can share one target', async () => {
     const submit = vi.fn()
-    await act(async () => root.render(<ReturnLatencyTaskForm regions={regions} servers={servers} onSubmit={submit} onCancel={() => {}} />))
+    await act(async () => root.render(<ReturnLatencyTaskForm presets={presets} servers={servers} onSubmit={submit} onCancel={() => {}} />))
     await setInput(container.querySelector<HTMLInputElement>('[aria-label="目标地址"]')!, 'example.com')
     await setInput(container.querySelector<HTMLInputElement>('[aria-label="任务名称"]')!, '广州电信 高频')
     await click(buttonIn(container, '创建任务')!)
@@ -81,7 +85,7 @@ describe('return latency probe tasks', () => {
   })
 
   it('requires a complete target before the task can be created', async () => {
-    await act(async () => root.render(<ReturnLatencyTaskForm regions={regions} servers={servers} onSubmit={vi.fn()} onCancel={() => {}} />))
+    await act(async () => root.render(<ReturnLatencyTaskForm presets={presets} servers={servers} onSubmit={vi.fn()} onCancel={() => {}} />))
     expect(buttonIn(container, '创建任务')!.disabled).toBe(true)
     await setInput(container.querySelector<HTMLInputElement>('[aria-label="目标地址"]')!, 'https://example.com')
     expect(buttonIn(container, '创建任务')!.disabled).toBe(true)
@@ -89,13 +93,9 @@ describe('return latency probe tasks', () => {
     expect(buttonIn(container, '创建任务')!.disabled).toBe(false)
   })
 
-  it('filters optional presets and fills just the selected address', async () => {
+  it('filters presets and binds the selected preset id instead of copying an address', async () => {
     const submit = vi.fn()
-    const targets = [
-      { province: '广东', carrier: '中国电信', address: 'gd.example.com' },
-      { province: '北京', carrier: '中国移动', address: 'bj.example.com' },
-    ]
-    await act(async () => root.render(<ReturnLatencyTaskForm regions={regions} targets={targets} servers={servers} onSubmit={submit} onCancel={() => {}} />))
+    await act(async () => root.render(<ReturnLatencyTaskForm presets={presets} servers={servers} onSubmit={submit} onCancel={() => {}} />))
     await click(buttonIn(container, '从预设中选择')!)
     expect(container.querySelector('.probe-task-form')?.classList.contains('is-preset-open')).toBe(true)
     expect(container.querySelector('.probe-task-layout')).toBeTruthy()
@@ -106,14 +106,16 @@ describe('return latency probe tasks', () => {
     expect(container.querySelectorAll('.probe-preset-option')).toHaveLength(1)
     await click(container.querySelector<HTMLButtonElement>('.probe-preset-option')!)
     expect(container.querySelector('[aria-label="预设目标"]')).toBeNull()
-    expect(container.querySelector<HTMLInputElement>('[aria-label="目标地址"]')!.value).toBe('gd.example.com')
+    expect(container.querySelector<HTMLInputElement>('[aria-label="目标地址"]')!.value).toBe('')
+    expect(container.textContent).toContain('已绑定预设：广东 · 中国电信')
+    expect(container.textContent).toContain('地址随预设更新')
     await click(buttonIn(container, '创建任务')!)
-    expect(submit.mock.calls[0][0]).toMatchObject({ name: '广东 · 中国电信', address: 'gd.example.com', province: '', carrier: '', method: 'tcp', port: 80 })
+    expect(submit.mock.calls[0][0]).toMatchObject({ name: '广东 · 中国电信', address: '', preset_id: 'gd-ct', method: 'tcp', port: 80 })
   })
 
   it.each(['Ping', 'HTTP'])('saves %s without presets and reports submission errors in the dialog', async method => {
     const submit = vi.fn().mockRejectedValue(new Error('任务名称已存在'))
-    await act(async () => root.render(<ReturnLatencyTaskForm regions={[]} servers={servers} error="资源不可用" onSubmit={submit} onCancel={() => {}} />))
+    await act(async () => root.render(<ReturnLatencyTaskForm presets={[]} servers={servers} error="资源不可用" onSubmit={submit} onCancel={() => {}} />))
     await click(buttonIn(container, method)!)
     expect(container.querySelector('[aria-label="目标端口"]')).toBeNull()
     const address = method === 'HTTP' ? 'https://example.com/health' : 'example.com'
@@ -125,7 +127,7 @@ describe('return latency probe tasks', () => {
   })
 
   it('switches between separate horizontal task and node tables with the keyboard', async () => {
-    const request = vi.fn(async (path: string) => path === '/latency-probe-resource' ? { regions } : { latency_probe_tasks: tasks })
+    const request = vi.fn(async (path: string) => path === '/latency-probe-resource' ? { presets } : { latency_probe_tasks: tasks })
     await act(async () => root.render(<ReturnLatencyPage servers={servers} client={{ request }} canManage={false} onRefresh={() => {}} renderHistory={() => null} />))
     expect(container.querySelector('#probe-targets-panel table')).toBeTruthy()
     expect(container.querySelector('#probe-nodes-panel')).toBeNull()
@@ -139,7 +141,7 @@ describe('return latency probe tasks', () => {
   })
 
   it('lists tasks by name and target without the removed wizard and subtitle', async () => {
-    const request = vi.fn(async (path: string) => path === '/latency-probe-resource' ? { regions } : { latency_probe_tasks: tasks })
+    const request = vi.fn(async (path: string) => path === '/latency-probe-resource' ? { presets } : { latency_probe_tasks: tasks })
     await act(async () => root.render(<ReturnLatencyPage servers={servers} client={{ request }} canManage onRefresh={() => {}} renderHistory={() => null} />))
     expect(container.textContent).toContain('广州电信')
     expect(container.textContent).toContain('广东 · 中国电信')
@@ -152,7 +154,7 @@ describe('return latency probe tasks', () => {
   })
 
   it('toggles and deletes a task through the task endpoints', async () => {
-    const request = vi.fn(async (path: string) => path === '/latency-probe-resource' ? { regions } : { latency_probe_tasks: tasks })
+    const request = vi.fn(async (path: string) => path === '/latency-probe-resource' ? { presets } : { latency_probe_tasks: tasks })
     await act(async () => root.render(<ReturnLatencyPage servers={servers} client={{ request }} canManage onRefresh={() => {}} renderHistory={() => null} />))
     const cards = Array.from(container.querySelectorAll('.probe-task-card'))
     await click(buttonIn(cards[0], '停用')!)
@@ -164,7 +166,7 @@ describe('return latency probe tasks', () => {
   })
 
   it('saves per-server probe parameters without any target list', async () => {
-    const request = vi.fn(async (path: string) => path === '/latency-probe-resource' ? { regions } : { latency_probe_tasks: tasks })
+    const request = vi.fn(async (path: string) => path === '/latency-probe-resource' ? { presets } : { latency_probe_tasks: tasks })
     const refresh = vi.fn()
     await act(async () => root.render(<ReturnLatencyPage servers={servers} client={{ request }} canManage onRefresh={refresh} renderHistory={() => null} />))
     await click(container.querySelector<HTMLButtonElement>('#probe-nodes-tab')!)
@@ -181,7 +183,7 @@ describe('return latency probe tasks', () => {
   })
 
   it('reassigns which probe tasks a server executes from its own settings dialog', async () => {
-    const request = vi.fn(async (path: string) => path === '/latency-probe-resource' ? { regions } : { latency_probe_tasks: tasks })
+    const request = vi.fn(async (path: string) => path === '/latency-probe-resource' ? { presets } : { latency_probe_tasks: tasks })
     await act(async () => root.render(<ReturnLatencyPage servers={servers} client={{ request }} canManage onRefresh={() => {}} renderHistory={() => null} />))
     await click(container.querySelector<HTMLButtonElement>('#probe-nodes-tab')!)
     const card = Array.from(container.querySelectorAll('.return-latency-server')).find(element => element.textContent?.includes('Hong Kong'))!
@@ -202,7 +204,7 @@ describe('return latency probe tasks', () => {
 
   it('queues an immediate probe only for an online server with probing enabled', async () => {
     const request = vi.fn(async (path: string) => {
-      if (path === '/latency-probe-resource') return { regions }
+      if (path === '/latency-probe-resource') return { presets }
       if (path === '/latency-probe-tasks') return { latency_probe_tasks: tasks }
       return { task_id: 17 }
     })
@@ -236,7 +238,7 @@ describe('return latency probe tasks', () => {
   })
 
   it('integrates network probe tabs and toolbar in a unified header bar', async () => {
-    const request = vi.fn(async (path: string) => path === '/latency-probe-resource' ? { regions } : { latency_probe_tasks: tasks })
+    const request = vi.fn(async (path: string) => path === '/latency-probe-resource' ? { presets } : { latency_probe_tasks: tasks })
     await act(async () => root.render(<ReturnLatencyPage servers={servers} client={{ request }} canManage onRefresh={() => {}} renderHistory={() => null} />))
     const header = container.querySelector('.network-probe-header')!
     expect(header).toBeTruthy()

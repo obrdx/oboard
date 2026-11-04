@@ -100,3 +100,35 @@ it('does not open details when a menu item inside a portal is clicked', async ()
   await act(async () => settings.click())
   expect(onAction).toHaveBeenCalledExactlyOnceWith('edit', server)
 })
+
+it('draws one latency row per target with its own scale and keeps the bar style selectable', async () => {
+  const at = (minute: number) => `2026-11-04T00:${String(minute).padStart(2, '0')}:00Z`
+  const grade = { excellent_ms: 165, fair_ms: 270, basis: 'route' as const }
+  const monitored = {
+    ...server,
+    monitoring_display: {
+      name: '广东 · 中国移动',
+      enabled: true,
+      series: [
+        { probe_id: 't1-gd-cm-v4', label: '移动', family: 'ipv4' as const, grade, samples: [0, 1, 2].map(minute => ({ available: true, latency_ms: 160, sample_count: 10, success_count: 4, checked_at: at(minute) })) },
+        { probe_id: 't1-gd-cm-v6', label: '移动v6', family: 'ipv6' as const, grade, samples: [0, 1, 2].map(minute => ({ available: true, latency_ms: 300, sample_count: 5, success_count: 5, checked_at: at(minute) })) },
+      ],
+    },
+  } as Server
+  await act(async () => root.render(<ServerTile server={monitored} onAction={() => {}} />))
+  const rows = Array.from(host.querySelectorAll('.fleet-latency-row'))
+  expect(rows.map(row => row.querySelector('.fleet-latency-name')?.textContent)).toEqual(['移动', '移动v6'])
+  expect(rows[0].querySelector('.fleet-latency-value')?.textContent).toBe('160 ms')
+  expect(rows[0].querySelector('.fleet-latency-dot')?.classList.contains('is-ok')).toBe(true)
+  expect(rows[1].querySelector('.fleet-latency-dot')?.classList.contains('is-poor')).toBe(true)
+  expect(rows[0].querySelector('.fleet-latency-loss strong')?.textContent).toBe('60%')
+  expect(rows[0].querySelector('svg.fleet-sparkline path.fleet-sparkline-line')).toBeTruthy()
+  expect(rows[0].getAttribute('title')).toContain('≤ 165 ms 优秀')
+
+  await act(async () => root.render(<ServerTile server={monitored} latencyChart="bars" onAction={() => {}} />))
+  expect(host.querySelector('.fleet-latency-row svg.fleet-sparkline')).toBeNull()
+  expect(host.querySelectorAll('.fleet-latency-row .fleet-quality-bar')).toHaveLength(2)
+
+  await act(async () => root.render(<ServerRow server={monitored} onAction={() => {}} />))
+  expect(host.querySelectorAll('.fleet-cell-quality .fleet-quality-inline')).toHaveLength(2)
+})

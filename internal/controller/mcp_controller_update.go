@@ -117,7 +117,7 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"resource_version": resource.Version, "resource_updated_at": resource.UpdatedAt, "targets": latencyProbeAddressOptions(resource)}, nil
+		return map[string]any{"resource_version": resource.Version, "resource_updated_at": resource.UpdatedAt, "presets": latencyProbePresetOptions(resource)}, nil
 	case "latency_probe_tasks.list":
 		var request struct{}
 		if err := strictAutomationInput(input, &request); err != nil {

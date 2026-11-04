@@ -3,9 +3,11 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -21,15 +23,14 @@ import (
 )
 
 func TestLatencyProbeTargetsUseExactProvinceCarrierPairs(t *testing.T) {
-	resource := latencyProbeResource{Version: "v1", Provinces: map[string]map[string][]string{
-		"广东": {"中国电信": {"192.0.2.1", "192.0.2.2"}, "中国联通": {"192.0.2.3"}},
-		"浙江": {"中国电信": {"192.0.2.4"}, "中国联通": {"192.0.2.5"}},
-	}}
+	resource := probeResource(t,
+		"gd-ct|广东|中国电信|gd-ct-1-v4=192.0.2.1;gd-ct-2-v4=192.0.2.2", "gd-cu|广东|中国联通|gd-cu-1-v4=192.0.2.3",
+		"zj-ct|浙江|中国电信|zj-ct-1-v4=192.0.2.4", "zj-cu|浙江|中国联通|zj-cu-1-v4=192.0.2.5")
 	server := model.Server{LatencyProbeMaxTargets: 3}
 	tasks := []model.LatencyProbeTask{
-		{ID: 1, Name: "广东 · 中国电信", Province: "广东", Carrier: "中国电信", IntervalSeconds: 120, Enabled: true},
-		{ID: 2, Name: "浙江 · 中国联通", Province: "浙江", Carrier: "中国联通", IntervalSeconds: 900, Enabled: true},
-		{ID: 3, Name: "已停用", Province: "广东", Carrier: "中国联通", IntervalSeconds: 60},
+		{ID: 1, Name: "广东 · 中国电信", PresetID: "gd-ct", Province: "广东", Carrier: "中国电信", IntervalSeconds: 120, Enabled: true},
+		{ID: 2, Name: "浙江 · 中国联通", PresetID: "zj-cu", Province: "浙江", Carrier: "中国联通", IntervalSeconds: 900, Enabled: true},
+		{ID: 3, Name: "已停用", PresetID: "gd-cu", Province: "广东", Carrier: "中国联通", IntervalSeconds: 60},
 	}
 	targets := latencyProbeTargets(resource, server, tasks)
 	if len(targets) != 3 || targets[0].Kind != "public" || targets[1].Province != "广东" || targets[1].Carrier != "中国电信" || targets[2].Province != "浙江" || targets[2].Carrier != "中国联通" {
@@ -48,12 +49,10 @@ func TestLatencyProbeTargetsUseExactProvinceCarrierPairs(t *testing.T) {
 // TestLatencyProbeTargetsSeparateTasksOnOneTarget covers two tasks that watch the
 // same province and carrier at different cadences: they must stay distinct probes.
 func TestLatencyProbeTargetsSeparateTasksOnOneTarget(t *testing.T) {
-	resource := latencyProbeResource{Version: "v1", Provinces: map[string]map[string][]string{
-		"广东": {"中国电信": {"192.0.2.1"}},
-	}}
+	resource := probeResource(t, "gd-ct|广东|中国电信|gd-ct-1-v4=192.0.2.1")
 	tasks := []model.LatencyProbeTask{
-		{ID: 4, Name: "华南备线", Province: "广东", Carrier: "中国电信", IntervalSeconds: 1800, Enabled: true},
-		{ID: 5, Name: "华南主线", Province: "广东", Carrier: "中国电信", IntervalSeconds: 60, Enabled: true},
+		{ID: 4, Name: "华南备线", PresetID: "gd-ct", Province: "广东", Carrier: "中国电信", IntervalSeconds: 1800, Enabled: true},
+		{ID: 5, Name: "华南主线", PresetID: "gd-ct", Province: "广东", Carrier: "中国电信", IntervalSeconds: 60, Enabled: true},
 	}
 	targets := latencyProbeTargets(resource, model.Server{LatencyProbeMaxTargets: 8}, tasks)
 	if len(targets) != 3 {
@@ -69,13 +68,11 @@ func TestLatencyProbeTargetsSeparateTasksOnOneTarget(t *testing.T) {
 }
 
 func TestLatencyProbeTargetsKeepHostnameWithoutLiteralIP(t *testing.T) {
-	resource := latencyProbeResource{Version: "v1", Provinces: map[string]map[string][]string{
-		"广东": {"中国电信": {"gd-ct-v4.ip.zstaticcdn.com"}, "教育网": {"192.0.2.8"}},
-	}}
+	resource := probeResource(t, "gd-ct|广东|中国电信|gd-ct-v4=gd-ct-v4.ip.zstaticcdn.com", "gd-edu|广东|教育网|gd-edu-1-v4=192.0.2.8")
 	server := model.Server{LatencyProbeMaxTargets: 8}
 	tasks := []model.LatencyProbeTask{
-		{ID: 1, Name: "广东 · 中国电信", Province: "广东", Carrier: "中国电信", IntervalSeconds: 300, Enabled: true},
-		{ID: 2, Name: "广东 · 教育网", Province: "广东", Carrier: "教育网", IntervalSeconds: 300, Enabled: true},
+		{ID: 1, Name: "广东 · 中国电信", PresetID: "gd-ct", Province: "广东", Carrier: "中国电信", IntervalSeconds: 300, Enabled: true},
+		{ID: 2, Name: "广东 · 教育网", PresetID: "gd-edu", Province: "广东", Carrier: "教育网", IntervalSeconds: 300, Enabled: true},
 	}
 	targets := latencyProbeTargets(resource, server, tasks)
 	if len(targets) != 3 {
@@ -111,32 +108,32 @@ func TestValidateAutonomousLatencyProbeReportAcceptsHostnameRegionalTarget(t *te
 }
 
 func TestLoadLatencyProbeResourceValidationAndCache(t *testing.T) {
-	firstBody := []byte(`{"广东":{"中国电信":["192.0.2.1"]}}`)
+	firstBody := probeResourceBody("gd-ct|广东|中国电信|gd-ct-1-v4=192.0.2.1")
 	resource, err := parseLatencyProbeResource(firstBody, time.Unix(100, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	changed, err := parseLatencyProbeResource([]byte(`{"广东":{"中国电信":["192.0.2.2"]}}`), time.Unix(200, 0))
+	changed, err := parseLatencyProbeResource(probeResourceBody("gd-ct|广东|中国电信|gd-ct-1-v4=192.0.2.2"), time.Unix(200, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resource.Version == changed.Version || resource.UpdatedAt.Equal(changed.UpdatedAt) {
 		t.Fatalf("resource versions did not change: first=%#v changed=%#v", resource, changed)
 	}
-	if _, err := parseLatencyProbeResource([]byte(`{"广东":{"中国电信":["2001:db8::1"]}}`), time.Now()); err == nil {
+	if _, err := parseLatencyProbeResource(probeResourceBody("gd-ct|广东|中国电信|gd-ct-v6=2001:db8::1"), time.Now()); err == nil {
 		t.Fatal("IPv6 resource target was accepted")
 	}
-	if _, err := parseLatencyProbeResource([]byte(`{"广东":{"中国电信":["127.0.0.1"]}}`), time.Now()); err == nil {
+	if _, err := parseLatencyProbeResource(probeResourceBody("gd-ct|广东|中国电信|gd-ct-1-v4=127.0.0.1"), time.Now()); err == nil {
 		t.Fatal("non-public resource target was accepted")
 	}
-	if _, err := parseLatencyProbeResource([]byte(`{"广东":{"中国电信":["localhost"]}}`), time.Now()); err == nil {
+	if _, err := parseLatencyProbeResource(probeResourceBody("gd-ct|广东|中国电信|gd-ct-v4=localhost"), time.Now()); err == nil {
 		t.Fatal("single-label hostname was accepted")
 	}
-	hostnameResource, err := parseLatencyProbeResource([]byte(`{"广东":{"中国电信":["gd-ct-v4.ip.zstaticcdn.com"]}}`), time.Now())
+	hostnameResource, err := parseLatencyProbeResource(probeResourceBody("gd-ct|广东|中国电信|gd-ct-v4=gd-ct-v4.ip.zstaticcdn.com"), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hostnameResource.Provinces["广东"]["中国电信"][0] != "gd-ct-v4.ip.zstaticcdn.com" {
+	if hostnameResource.Presets[0].Targets[0].Host != "gd-ct-v4.ip.zstaticcdn.com" {
 		t.Fatalf("hostname resource = %#v", hostnameResource)
 	}
 	latencyProbeCache.Lock()
@@ -147,7 +144,7 @@ func TestLoadLatencyProbeResourceValidationAndCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cached.Version != resource.Version || cached.Provinces["广东"]["中国电信"][0] != "192.0.2.1" {
+	if cached.Version != resource.Version || cached.Presets[0].Targets[0].Host != "192.0.2.1" {
 		t.Fatalf("cached resource = %#v", cached)
 	}
 }
@@ -161,7 +158,7 @@ func TestLoadLatencyProbeResourceCoalescesConcurrentRefresh(t *testing.T) {
 		requests.Add(1)
 		once.Do(func() { close(entered) })
 		<-release
-		return parseLatencyProbeResource([]byte(`{"广东":{"中国电信":["192.0.2.1"]}}`), time.Now())
+		return parseLatencyProbeResource(probeResourceBody("gd-ct|广东|中国电信|gd-ct-1-v4=192.0.2.1"), time.Now())
 	}
 	resetLatencyProbeCacheForTest()
 	t.Cleanup(func() {
@@ -195,11 +192,11 @@ func TestLatencyProbeManualRunDeduplicatesAndStoresCallback(t *testing.T) {
 	if err := db.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
-	probeTask := model.LatencyProbeTask{Method: model.LatencyProbeModeICMP, Name: "广东 · 中国电信", Province: "广东", Carrier: "中国电信", IntervalSeconds: 300, Enabled: true, ServerIDs: []int64{server.ID}}
+	probeTask := model.LatencyProbeTask{Method: model.LatencyProbeModeICMP, Name: "广东 · 中国电信", PresetID: "gd-ct", Province: "广东", Carrier: "中国电信", IntervalSeconds: 300, Enabled: true, ServerIDs: []int64{server.ID}}
 	if err := db.SaveLatencyProbeTask(ctx, &probeTask); err != nil {
 		t.Fatal(err)
 	}
-	resource, err := parseLatencyProbeResource([]byte(`{"广东":{"中国电信":["192.0.2.1"]}}`), time.Now())
+	resource, err := parseLatencyProbeResource(probeResourceBody("gd-ct|广东|中国电信|gd-ct-1-v4=192.0.2.1"), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,8 +263,8 @@ func TestLatencyProbeAutonomousReportResolvesTasksFromAssignment(t *testing.T) {
 	if err := db.CreateServer(ctx, other); err != nil {
 		t.Fatal(err)
 	}
-	assigned := model.LatencyProbeTask{Name: "华南主线", Province: "广东", Carrier: "中国电信", IntervalSeconds: 300, Enabled: true, ServerIDs: []int64{server.ID}}
-	foreign := model.LatencyProbeTask{Name: "别人的任务", Province: "浙江", Carrier: "中国联通", IntervalSeconds: 300, Enabled: true, ServerIDs: []int64{other.ID}}
+	assigned := model.LatencyProbeTask{Name: "华南主线", PresetID: "gd-ct", Province: "广东", Carrier: "中国电信", IntervalSeconds: 300, Enabled: true, ServerIDs: []int64{server.ID}}
+	foreign := model.LatencyProbeTask{Name: "别人的任务", PresetID: "zj-cu", Province: "浙江", Carrier: "中国联通", IntervalSeconds: 300, Enabled: true, ServerIDs: []int64{other.ID}}
 	if err := db.SaveLatencyProbeTask(ctx, &assigned); err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +275,7 @@ func TestLatencyProbeAutonomousReportResolvesTasksFromAssignment(t *testing.T) {
 
 	report := model.LatencyProbeResultReport{ReportID: "auto-1", ResourceVersion: "v1", CheckedAt: time.Now().UTC(), Items: []model.LatencyProbeResult{
 		{ProbeID: "public-cloudflare", Kind: "public", TaskID: 99, TaskName: "伪造", Mode: "tcp", Host: "cp.cloudflare.com", Port: 443, Available: true, LatencyMS: 20, MinLatencyMS: 18, P95LatencyMS: 22, SampleCount: 3, SuccessCount: 3},
-		{ProbeID: "t1-0", Kind: "regional", TaskID: assigned.ID, TaskName: "Agent 自己编的名字", Mode: "tcp", Province: "广东", Carrier: "中国电信", Host: "192.0.2.1", IP: "192.0.2.1", Port: 80, Available: true, LatencyMS: 30, MinLatencyMS: 28, P95LatencyMS: 32, SampleCount: 3, SuccessCount: 3},
+		{ProbeID: fmt.Sprintf("t%d-gd-ct-1-v4", assigned.ID), Kind: "regional", TaskID: assigned.ID, TaskName: "Agent 自己编的名字", Mode: "tcp", Province: "广东", Carrier: "中国电信", Host: "192.0.2.1", IP: "192.0.2.1", Port: 80, Available: true, LatencyMS: 30, MinLatencyMS: 28, P95LatencyMS: 32, SampleCount: 3, SuccessCount: 3},
 	}}
 	if err := app.resolveLatencyProbeReportTasks(ctx, server.ID, &report); err != nil {
 		t.Fatal(err)
@@ -302,6 +299,13 @@ func TestLatencyProbeAutonomousReportResolvesTasksFromAssignment(t *testing.T) {
 	mismatched.Items[1].Carrier = "中国移动"
 	if err := app.resolveLatencyProbeReportTasks(ctx, server.ID, &mismatched); err == nil {
 		t.Fatal("a result whose target contradicts its task was accepted")
+	}
+
+	positional := report
+	positional.Items = append([]model.LatencyProbeResult(nil), report.Items...)
+	positional.Items[1].ProbeID = fmt.Sprintf("t%d-0", assigned.ID)
+	if err := app.resolveLatencyProbeReportTasks(ctx, server.ID, &positional); err == nil {
+		t.Fatal("a positional probe id was accepted for a preset task")
 	}
 }
 
@@ -361,4 +365,72 @@ func resetLatencyProbeCacheForTest() {
 	latencyProbeCache.refreshed = nil
 	latencyProbeCache.lastError = nil
 	latencyProbeCache.Unlock()
+}
+
+func TestLatencyProbePresetTargetsFollowUpdatesWithoutShiftingHistory(t *testing.T) {
+	server := model.Server{LatencyProbeMaxTargets: 16}
+	tasks := []model.LatencyProbeTask{{ID: 7, Name: "广东 · 中国移动", PresetID: "gd-cm", Province: "广东", Carrier: "中国移动", Method: model.LatencyProbeModeTCP, Port: 80, IntervalSeconds: 60, Enabled: true}}
+	byProbe := func(resource latencyProbeResource) map[string]string {
+		out := map[string]string{}
+		for _, target := range latencyProbeTargets(resource, server, tasks) {
+			if target.Kind == "regional" {
+				out[target.ProbeID] = target.Host
+			}
+		}
+		return out
+	}
+	before := byProbe(probeResource(t, "gd-cm|广东|中国移动|gd-cm-v4=gd-cm-v4.example.com;gd-cm-v6=gd-cm-v6.example.com"))
+	if before["t7-gd-cm-v4"] != "gd-cm-v4.example.com" || before["t7-gd-cm-v6"] != "gd-cm-v6.example.com" || len(before) != 2 {
+		t.Fatalf("initial targets = %#v", before)
+	}
+	// The resource publishes a new IPv4 address, inserts an extra target at the
+	// front and renames the province; another carrier is added too.
+	after := byProbe(probeResource(t,
+		"gd-ct|广东|中国电信|gd-ct-v4=gd-ct-v4.example.com",
+		"gd-cm|广东省|中国移动|gd-cm-2-v4=203.0.113.9;gd-cm-v6=gd-cm-v6.example.com;gd-cm-v4=new-gd-cm-v4.example.com"))
+	if after["t7-gd-cm-v4"] != "new-gd-cm-v4.example.com" || after["t7-gd-cm-v6"] != "gd-cm-v6.example.com" || after["t7-gd-cm-2-v4"] != "203.0.113.9" || len(after) != 3 {
+		t.Fatalf("updated targets = %#v", after)
+	}
+	if missing := byProbe(probeResource(t, "gd-ct|广东|中国电信|gd-ct-v4=gd-ct-v4.example.com")); len(missing) != 0 {
+		t.Fatalf("a withdrawn preset still produced targets: %#v", missing)
+	}
+}
+
+func TestParseLatencyProbeResourceRejectsUnstableIdentifiers(t *testing.T) {
+	for name, body := range map[string][]byte{
+		"duplicate target": probeResourceBody("gd-cm|广东|中国移动|gd-cm-v4=a.example.com", "gd-ct|广东|中国电信|gd-cm-v4=b.example.com"),
+		"duplicate preset": probeResourceBody("gd-cm|广东|中国移动|gd-cm-v4=a.example.com", "gd-cm|广东|中国移动|gd-cm-v6=b.example.com"),
+		"no family suffix": probeResourceBody("gd-cm|广东|中国移动|gd-cm-a=a.example.com"),
+		"v1 schema":        []byte(`{"广东":{"中国电信":["192.0.2.1"]}}`),
+	} {
+		if _, err := parseLatencyProbeResource(body, time.Now()); err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+	}
+	var mislabeled struct {
+		Schema  string                     `json:"schema"`
+		Presets []model.LatencyProbePreset `json:"presets"`
+	}
+	_ = json.Unmarshal(probeResourceBody("gd-cm|广东|中国移动|gd-cm-v6=a.example.com"), &mislabeled)
+	mislabeled.Presets[0].Targets[0].Family = "ipv4"
+	body, _ := json.Marshal(mislabeled)
+	if _, err := parseLatencyProbeResource(body, time.Now()); err == nil {
+		t.Fatal("a family that contradicts the target id was accepted")
+	}
+}
+
+func TestLatencyProbeShippedResourceParses(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "..", "resource", "probe", "probe-targets-cn-v2.json"))
+	if err != nil {
+		t.Skip("resource checkout not present")
+	}
+	resource, err := parseLatencyProbeResource(body, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, preset := range resource.Presets {
+		if store.LatencyProbePresetIDFor(preset.Province, preset.Carrier) != preset.ID {
+			t.Fatalf("preset %s does not match the migration tables (%s/%s)", preset.ID, preset.Province, preset.Carrier)
+		}
+	}
 }

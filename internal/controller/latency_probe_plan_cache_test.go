@@ -194,14 +194,14 @@ func TestProbePlanResourceFailureKeepsLastValidPlan(t *testing.T) {
 	db := openHotPathDedupStore(t)
 	srv := newTestServer(db, "hotpath-secret", "")
 	server := createHotPathDedupServer(t, db, "resource-node", "resource-agent")
-	task := model.LatencyProbeTask{Name: "广东 · 中国电信", Province: "广东", Carrier: "中国电信", Method: model.LatencyProbeModeTCP, Port: 80, Enabled: true, ServerIDs: []int64{server.ID}}
+	task := model.LatencyProbeTask{Name: "广东 · 中国电信", PresetID: "gd-ct", Province: "广东", Carrier: "中国电信", Method: model.LatencyProbeModeTCP, Port: 80, Enabled: true, ServerIDs: []int64{server.ID}}
 	if err := db.SaveLatencyProbeTask(ctx, &task); err != nil {
 		t.Fatal(err)
 	}
 
 	resetLatencyProbeCacheForTest()
 	latencyProbeResourceFetcher = func(context.Context) (latencyProbeResource, error) {
-		return parseLatencyProbeResource([]byte(`{"广东":{"中国电信":["203.0.113.10"]}}`), time.Now().UTC())
+		return parseLatencyProbeResource(probeResourceBody("gd-ct|广东|中国电信|gd-ct-1-v4=203.0.113.10"), time.Now().UTC())
 	}
 	t.Cleanup(func() {
 		latencyProbeResourceFetcher = fetchLatencyProbeResource

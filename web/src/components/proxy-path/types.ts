@@ -12,9 +12,10 @@ export type CertificateMode = 'external' | 'auto' | 'exact' | 'wildcard' | 'expl
 export type TimeCorrectionMode = 'off' | 'auto' | 'ntp'
 export type ConnectivityProbeTarget = 'auto' | 'cloudflare' | '12306' | 'google'
 export type LatencyProbeMode = 'tcp' | 'icmp'
-export type LatencyProbeRegion = { province: string; carrier: string }
-
-export type LatencyProbeAddress = LatencyProbeRegion & { address: string }
+// A carrier preset of the probe resource. Tasks bind the stable preset id and
+// follow its published targets; target ids keep history apart across updates.
+export type LatencyProbePresetTarget = { id: string; family: 'ipv4' | 'ipv6'; host: string }
+export type LatencyProbePreset = { id: string; province: string; carrier: string; targets: LatencyProbePresetTarget[] }
 export type NetworkProbeMethod = 'tcp' | 'icmp' | 'http'
 
 export type LatencyProbeTask = {
@@ -23,6 +24,7 @@ export type LatencyProbeTask = {
   port: number
   id: number
   name: string
+  preset_id: string
   province: string
   carrier: string
   interval_seconds: number

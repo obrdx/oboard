@@ -26,7 +26,7 @@ func TestLatencyProbeTaskRoundTripAndAssignment(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	task := model.LatencyProbeTask{Province: " 广东 ", Carrier: " 中国电信 ", Enabled: true, ServerIDs: []int64{second.ID, first.ID, first.ID, 0, first.ID + second.ID + 999}}
+	task := model.LatencyProbeTask{PresetID: " gd-ct ", Province: "广东", Carrier: "中国电信", Enabled: true, ServerIDs: []int64{second.ID, first.ID, first.ID, 0, first.ID + second.ID + 999}}
 	if err := db.SaveLatencyProbeTask(ctx, &task); err != nil {
 		t.Fatal(err)
 	}
@@ -37,18 +37,18 @@ func TestLatencyProbeTaskRoundTripAndAssignment(t *testing.T) {
 		t.Fatalf("assigned servers = %#v", task.ServerIDs)
 	}
 
-	duplicate := model.LatencyProbeTask{Name: "广东 · 中国电信", Province: "广东", Carrier: "中国移动", Enabled: true}
+	duplicate := model.LatencyProbeTask{Name: "广东 · 中国电信", PresetID: "gd-cm", Province: "广东", Carrier: "中国移动", Enabled: true}
 	if err := db.SaveLatencyProbeTask(ctx, &duplicate); err == nil {
 		t.Fatal("duplicate task name was accepted")
 	}
-	if err := db.SaveLatencyProbeTask(ctx, &model.LatencyProbeTask{Name: "太快", Province: "广东", Carrier: "中国移动", IntervalSeconds: 5}); err == nil {
+	if err := db.SaveLatencyProbeTask(ctx, &model.LatencyProbeTask{Name: "太快", PresetID: "gd-cm", IntervalSeconds: 5}); err == nil {
 		t.Fatal("out-of-range interval was accepted")
 	}
-	if err := db.SaveLatencyProbeTask(ctx, &model.LatencyProbeTask{Name: "缺目标", Province: "广东"}); err == nil {
+	if err := db.SaveLatencyProbeTask(ctx, &model.LatencyProbeTask{Name: "缺目标", Province: "广东", Carrier: "中国移动"}); err == nil {
 		t.Fatal("task without a carrier was accepted")
 	}
 
-	other := model.LatencyProbeTask{Name: "浙江联通", Province: "浙江", Carrier: "中国联通", IntervalSeconds: 60, Enabled: false, ServerIDs: []int64{first.ID}}
+	other := model.LatencyProbeTask{Name: "浙江联通", PresetID: "zj-cu", Province: "浙江", Carrier: "中国联通", IntervalSeconds: 60, Enabled: false, ServerIDs: []int64{first.ID}}
 	if err := db.SaveLatencyProbeTask(ctx, &other); err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestLatencyProbeTasksMigrateFromPerServerRegions(t *testing.T) {
 		t.Fatalf("shared target servers = %#v", telecom.ServerIDs)
 	}
 	unicom, ok := byName["浙江 · 中国联通"]
-	if !ok || unicom.IntervalSeconds != 600 || len(unicom.ServerIDs) != 1 || unicom.ServerIDs[0] != shared.ID {
+	if !ok || unicom.PresetID != "zj-cu" || unicom.IntervalSeconds != 600 || len(unicom.ServerIDs) != 1 || unicom.ServerIDs[0] != shared.ID {
 		t.Fatalf("single target task = %#v", unicom)
 	}
 
@@ -313,7 +313,7 @@ func TestDeleteLatencyProbeTaskRemovesResultsAndIgnoresLateReports(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	task := model.LatencyProbeTask{Name: "中国广电", Province: "广东", Carrier: "中国广电", Enabled: true, ServerIDs: []int64{servers[0].ID, servers[1].ID}}
+	task := model.LatencyProbeTask{Name: "中国广电", PresetID: "gd-cbn", Province: "广东", Carrier: "中国广电", Enabled: true, ServerIDs: []int64{servers[0].ID, servers[1].ID}}
 	other := task
 	other.Name = "广电另一任务"
 	for _, target := range []*model.LatencyProbeTask{&task, &other} {
@@ -361,6 +361,64 @@ func TestDeleteLatencyProbeTaskRemovesResultsAndIgnoresLateReports(t *testing.T)
 	for _, item := range items {
 		if item.TaskID == task.ID {
 			t.Fatal("late report resurrected deleted task")
+		}
+	}
+}
+
+func TestLatencyProbeTasksBindPresetIDsFromPreviousSchema(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "preset-ids.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The previous schema had no preset_id: region tasks were resolved by
+	// province and carrier name.
+	if _, err := raw.Exec(`alter table latency_probe_tasks drop column preset_id`); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, row := range [][4]string{
+		{"广东 · 中国移动", "广东", "中国移动", ""},
+		{"上海广电", "上海", "中国广电", ""},
+		{"未知地区", "火星", "中国移动", ""},
+		{"固定地址", "", "", "203.0.113.8"},
+	} {
+		if _, err := raw.Exec(`insert into latency_probe_tasks(name,province,carrier,address,interval_seconds,enabled,created_at,updated_at) values(?,?,?,?,60,1,?,?)`, row[0], row[1], row[2], row[3], now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		db, err = Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tasks, err := db.ListLatencyProbeTasks(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]string{}
+		for _, task := range tasks {
+			got[task.Name] = task.PresetID
+		}
+		want := map[string]string{"广东 · 中国移动": "gd-cm", "上海广电": "sh-cbn", "未知地区": "", "固定地址": ""}
+		for name, preset := range want {
+			if got[name] != preset {
+				t.Fatalf("%s preset = %q, want %q (all %#v)", name, got[name], preset, got)
+			}
+		}
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
 		}
 	}
 }
