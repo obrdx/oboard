@@ -16,7 +16,7 @@ OBoard is a Linux control panel for personal-use multi-node proxy networks. It c
 
 OBoard Controller runs as a binary.
 
-[Install](https://oboardproject.github.io/)
+[Install](https://obrdx.github.io/)
 
 The default install root is `/opt/oboard`, and the default port is `2787`.
 

@@ -16,7 +16,7 @@ OBoard 是一个面向个人使用的多节点代理网络的 Linux 控制面板
 
 Oboard 面板基于二进制运行
 
-[安装](https://oboardproject.github.io/)
+[安装](https://obrdx.github.io/)
 
 默认安装根目录为 `/opt/oboard`，默认端口为 `2787`
 
