@@ -51,6 +51,21 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 			return nil, err
 		}
 		return s.readProxyDSCP(ctx, principal, req.ServerID)
+	case "servers.agent_policy.read":
+		var req struct {
+			ServerID int64 `json:"server_id"`
+		}
+		if err := strictAutomationInput(input, &req); err != nil {
+			return nil, err
+		}
+		if !principal.AllowsInt64("server_ids", req.ServerID) {
+			return nil, errors.New("authorized server_id is required")
+		}
+		server, err := s.store.GetServer(ctx, req.ServerID)
+		if err != nil {
+			return nil, err
+		}
+		return s.agentPolicyView(ctx, server)
 	case "servers.runtime_security.read":
 		var inputValue runtimeSecurityOperation
 		if err := strictAutomationInput(input, &inputValue); err != nil {

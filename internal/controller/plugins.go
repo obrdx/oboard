@@ -384,7 +384,8 @@ func (s *Server) apiV1PluginItem(w http.ResponseWriter, r *http.Request) {
 		pluginOK(w, r, http.StatusOK, map[string]any{"saved": true})
 	case parts[1] == "draft" && len(parts) == 3 && parts[2] == "publish" && r.Method == http.MethodPost:
 		var input struct {
-			Confirm bool `json:"confirm"`
+			Confirm      bool   `json:"confirm"`
+			DraftVersion string `json:"draft_version"`
 		}
 		if !pluginDecode(w, r, &input, 1<<16) {
 			return
@@ -393,7 +394,7 @@ func (s *Server) apiV1PluginItem(w http.ResponseWriter, r *http.Request) {
 			pluginFail(w, r, plugin.Fail(plugin.CodeInvalidArgument, "confirm is required"))
 			return
 		}
-		result, err := s.plugins.Publish(ctx, principal, id, draftCandidate)
+		result, err := s.plugins.Publish(ctx, principal, id, input.DraftVersion, draftCandidate)
 		if err != nil {
 			pluginFail(w, r, err)
 			return
@@ -970,6 +971,117 @@ func (s *Server) registerPluginAutomationOperations() {
 			return nil, err
 		}
 		return map[string]any{"deleted": true}, s.plugins.ClearState(ctx, principal, id, in.Key)
+	})
+	register("plugins.publish", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
+			PluginID     string `json:"plugin_id"`
+			DraftVersion string `json:"draft_version"`
+		}
+		if err := strictAutomationInput(input, &in); err != nil {
+			return nil, err
+		}
+		id, err := idOf(in.PluginID)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(in.DraftVersion) == "" {
+			return nil, plugin.FailField(plugin.CodeInvalidArgument, "draft_version", "draft_version is required")
+		}
+		result, err := s.plugins.Publish(ctx, principal, id, in.DraftVersion, draftCandidate)
+		if err == nil {
+			s.publishRealtime("plugins")
+		}
+		return result, err
+	})
+	register("plugins.drafts.test_run", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
+			PluginID       string `json:"plugin_id"`
+			InstanceID     string `json:"instance_id"`
+			IdempotencyKey string `json:"idempotency_key"`
+		}
+		if err := strictAutomationInput(input, &in); err != nil {
+			return nil, err
+		}
+		id, err := idOf(in.PluginID)
+		if err != nil {
+			return nil, err
+		}
+		instanceID, err := idOf(in.InstanceID)
+		if err != nil {
+			return nil, err
+		}
+		run, err := s.plugins.RunDraft(ctx, principal, id, instanceID, in.IdempotencyKey, draftCandidate)
+		if err == nil {
+			s.publishRealtime("plugins")
+		}
+		return map[string]any{"run": run}, err
+	})
+	setInstanceEnabled := func(enabled bool) func(context.Context, application.Principal, json.RawMessage) (any, error) {
+		return func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+			var in struct {
+				InstanceID string `json:"instance_id"`
+			}
+			if err := strictAutomationInput(input, &in); err != nil {
+				return nil, err
+			}
+			id, err := idOf(in.InstanceID)
+			if err != nil {
+				return nil, err
+			}
+			detail, err := s.plugins.UpdateInstance(ctx, principal, id, plugin.InstanceUpdate{Enabled: &enabled})
+			if err == nil {
+				s.publishRealtime("plugins")
+			}
+			return detail, err
+		}
+	}
+	register("plugin_instances.enable", setInstanceEnabled(true))
+	register("plugin_instances.disable", setInstanceEnabled(false))
+	register("plugin_instances.grant", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
+			InstanceID       string          `json:"instance_id"`
+			Capabilities     json.RawMessage `json:"capabilities"`
+			Servers          []int64         `json:"servers"`
+			LANTargets       []string        `json:"lan_targets"`
+			ExpectedRevision *int64          `json:"expected_revision"`
+		}
+		if err := strictAutomationInput(input, &in); err != nil {
+			return nil, err
+		}
+		id, err := idOf(in.InstanceID)
+		if err != nil {
+			return nil, err
+		}
+		grant, err := plugin.GrantInput{Capabilities: in.Capabilities, Servers: in.Servers, LANTargets: in.LANTargets}.Grant()
+		if err != nil {
+			return nil, err
+		}
+		revision := plugin.AnyGrantRevision
+		if in.ExpectedRevision != nil {
+			revision = *in.ExpectedRevision
+		}
+		detail, err := s.plugins.SetGrant(ctx, principal, id, revision, grant)
+		if err == nil {
+			s.publishRealtime("plugins")
+		}
+		return detail, err
+	})
+	register("plugin_instances.grant.revoke", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
+			InstanceID string `json:"instance_id"`
+		}
+		if err := strictAutomationInput(input, &in); err != nil {
+			return nil, err
+		}
+		id, err := idOf(in.InstanceID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.plugins.RevokeGrant(ctx, principal, id); err != nil {
+			return nil, err
+		}
+		s.publishRealtime("plugins")
+		return map[string]any{"revoked": true}, nil
 	})
 	register("plugins.drafts.create", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		var in struct {

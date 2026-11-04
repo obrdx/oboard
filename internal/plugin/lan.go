@@ -36,6 +36,9 @@ func lanTargetFor(call callContext, id string) (LANTarget, error) {
 		if !ok || drafted.canonical() != target.canonical() {
 			return LANTarget{}, Fail(CodeTargetNotAllowed, "LAN target "+id+" differs between the draft and the published version; publish and review it first")
 		}
+		if target.SideEffect {
+			return LANTarget{}, Fail(CodeDraftSideEffectBlocked, "LAN target "+id+" is marked side_effect and is blocked in a draft trial run; publish the draft to use it")
+		}
 	}
 	if !call.grant.AllowsLANTarget(id) {
 		return LANTarget{}, Fail(CodeTargetNotAllowed, "LAN target "+id+" ("+target.Endpoint()+") is not approved in the administrator grant")

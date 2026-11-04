@@ -2151,6 +2151,7 @@ const (
 	AgentTaskTypeApplyStealth          = "apply_stealth"
 	AgentTaskTypeApplyVPNGatePool      = "apply_vpngate_pool"
 	AgentTaskTypeProbeVPNGate          = "probe_vpngate_candidates"
+	AgentTaskTypeApplyLocalPolicy      = "apply_agent_local_policy"
 )
 
 const AgentCapabilityTrafficPolicy = "traffic_policy_v1"

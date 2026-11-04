@@ -516,6 +516,7 @@ func defaultDescriptors() []Descriptor {
 	descriptors = append(descriptors, ipDataDescriptors(stringValue, boolValue)...)
 	descriptors = append(descriptors, vpngateDescriptors(positiveID, stringValue, boolValue)...)
 	descriptors = append(descriptors, proxyDSCPDescriptors(positiveID, stringValue, boolValue)...)
+	descriptors = append(descriptors, agentPolicyDescriptors(positiveID, stringValue, boolValue)...)
 	descriptors = append(descriptors, configHealthDescriptors(positiveID, stringValue, boolValue)...)
 	descriptors = append(descriptors, forwardsDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	descriptors = append(descriptors, opsDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)

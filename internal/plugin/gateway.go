@@ -179,7 +179,7 @@ func (s *Service) audit(ctx context.Context, call callContext, resource string, 
 	if err != nil {
 		result, code = "failed", CodeOf(err)
 		switch code {
-		case CodeCapabilityDenied, CodeResourceDenied, CodeHTTPHostDenied, CodeHTTPPrivateAddressDenied, CodeTargetNotAllowed, CodeAgentPolicyDenied:
+		case CodeCapabilityDenied, CodeResourceDenied, CodeHTTPHostDenied, CodeHTTPPrivateAddressDenied, CodeTargetNotAllowed, CodeAgentPolicyDenied, CodeDraftSideEffectBlocked:
 			result = "denied"
 		}
 		if message := AsError(err).Message; message != "" {
@@ -215,6 +215,9 @@ func decodeArgs(raw json.RawMessage, target any) error {
 }
 
 func (s *Service) dispatch(ctx context.Context, call callContext, raw json.RawMessage) (any, string, map[string]any, error) {
+	if call.draft != nil && draftBlockedCapability(call.spec.Name) {
+		return nil, "", nil, Fail(CodeDraftSideEffectBlocked, call.spec.Name+" is blocked in a draft trial run because it reaches real recipients; publish the draft to use it")
+	}
 	switch call.spec.Name {
 	case CapServersRead, CapServersHealthRead, CapServersMetricsRead:
 		return s.handleServers(ctx, call, raw)
@@ -806,4 +809,14 @@ func (s *Service) handleNotify(ctx context.Context, call callContext, raw json.R
 		sent = append(sent, strconv.FormatInt(id, 10))
 	}
 	return map[string]any{"sent": sent}, "channels", map[string]any{"channels": len(sent)}, nil
+}
+
+// draftBlockedCapability lists the capabilities a draft trial run never
+// performs: notifications reach real administrators and users.
+func draftBlockedCapability(name string) bool {
+	switch name {
+	case CapNotificationsSend, CapUsersNotify, CapPlansNotify:
+		return true
+	}
+	return false
 }

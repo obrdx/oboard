@@ -405,6 +405,10 @@ func (s *Server) apiV1Server(w http.ResponseWriter, r *http.Request) {
 		s.apiProxyDSCP(w, r, principal, id)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "agent-policy" {
+		s.apiAgentPolicy(w, r, principal, id)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "runtime-security" {
 		s.apiRuntimeSecurity(w, r, principal, id)
 		return
@@ -824,6 +828,7 @@ func (s *Server) registerAutomationHandlers() {
 	s.registerNodeIncidentAutomationOperations()
 	s.registerNodeWorkspaceAutomationOperations()
 	s.registerRemoteAccessPolicyOperation()
+	s.registerAgentPolicyOperation()
 	s.registerRuntimeSecurityOperations()
 	s.registerProxyDSCPOperations()
 	s.registerPluginAutomationOperations()

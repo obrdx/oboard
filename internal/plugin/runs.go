@@ -154,7 +154,7 @@ func (s *Service) enqueueRun(ctx context.Context, loaded loadedInstallation, ins
 // instance's failure streak. Running unpublished code is an install-level
 // action, so only an interactive administrator may start it.
 func (s *Service) RunDraft(ctx context.Context, actor application.Principal, installationID, instanceID int64, idempotencyKey string, check func(DraftInput) (PackageCandidate, error)) (model.PluginRun, error) {
-	if err := s.require(actor, PermInstall); err != nil {
+	if err := s.requireDelegable(actor, PermInstall); err != nil {
 		return model.PluginRun{}, err
 	}
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
@@ -195,6 +195,9 @@ func (s *Service) RunDraft(ctx context.Context, actor application.Principal, ins
 	}
 	if created {
 		s.Wake()
+		if err := s.auditManagement(ctx, actor, loaded, instanceID, AuditManageDraftRun, map[string]any{"run_uuid": run.UUID, "draft_version": DraftVersion(installation.DraftManifestJSON, installation.DraftSource)}); err != nil {
+			return run, err
+		}
 	}
 	return run, nil
 }

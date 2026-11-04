@@ -423,8 +423,11 @@ func (s *Service) SaveDraft(ctx context.Context, actor application.Principal, in
 
 // Publish validates the draft as a package, stores it as a new immutable
 // local version and activates it with the normal permission-diff rules.
-func (s *Service) Publish(ctx context.Context, actor application.Principal, installationID int64, check func(DraftInput) (PackageCandidate, error)) (InstallResult, error) {
-	if err := s.require(actor, PermInstall); err != nil {
+//
+// expectedDraftVersion, when set, must equal DraftVersion of the stored draft;
+// machine callers always pass it so they publish exactly what they reviewed.
+func (s *Service) Publish(ctx context.Context, actor application.Principal, installationID int64, expectedDraftVersion string, check func(DraftInput) (PackageCandidate, error)) (InstallResult, error) {
+	if err := s.requireDelegable(actor, PermInstall); err != nil {
 		return InstallResult{}, err
 	}
 	installation, err := s.store.GetPluginInstallation(ctx, installationID)
@@ -433,6 +436,10 @@ func (s *Service) Publish(ctx context.Context, actor application.Principal, inst
 	}
 	if installation.PublisherIdentity != model.PluginPublisherLocal || len(installation.DraftManifestJSON) == 0 {
 		return InstallResult{}, Fail(CodeConflict, "没有可发布的草稿")
+	}
+	draftVersion := DraftVersion(installation.DraftManifestJSON, installation.DraftSource)
+	if expectedDraftVersion != "" && expectedDraftVersion != draftVersion {
+		return InstallResult{}, FailField(CodeConflict, "draft_version", "草稿已被修改，请重新读取后再发布")
 	}
 	candidate, err := check(DraftInput{Manifest: installation.DraftManifestJSON, Source: installation.DraftSource})
 	if err != nil {
@@ -474,6 +481,19 @@ func (s *Service) Publish(ctx context.Context, actor application.Principal, inst
 			if err := s.store.CreatePluginInstance(ctx, &instance); err == nil {
 				result.InstanceID = instance.ID
 			}
+		}
+	}
+	audited := loadedInstallation{installation: installation, manifest: &candidate.Manifest}
+	detail := map[string]any{"draft_version": draftVersion, "package_id": result.PackageID, "version": candidate.Manifest.Version, "sha256": candidate.SHA256, "permission_diff": result.Diff, "review_required": review}
+	instances, _ := s.store.ListPluginInstances(ctx, installationID)
+	if len(instances) == 0 {
+		if err := s.auditManagement(ctx, actor, audited, 0, AuditManagePublish, detail); err != nil {
+			return result, err
+		}
+	}
+	for _, instance := range instances {
+		if err := s.auditManagement(ctx, actor, audited, instance.ID, AuditManagePublish, detail); err != nil {
+			return result, err
 		}
 	}
 	return result, nil

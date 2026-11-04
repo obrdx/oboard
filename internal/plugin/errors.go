@@ -47,6 +47,9 @@ const (
 	CodeNotFound                 = "NOT_FOUND"
 	CodeConflict                 = "CONFLICT"
 	CodeInternal                 = "INTERNAL_ERROR"
+	// CodeDraftSideEffectBlocked refuses a call a draft trial run may not
+	// make: a side_effect LAN target or a notification that reaches people.
+	CodeDraftSideEffectBlocked = "DRAFT_SIDE_EFFECT_BLOCKED"
 )
 
 // Error carries a stable code and a short message. Messages never include

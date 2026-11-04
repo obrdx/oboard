@@ -81,6 +81,7 @@ type VersionView struct {
 }
 
 type DraftView struct {
+	Version   string     `json:"version"`
 	Manifest  string     `json:"manifest"`
 	Source    string     `json:"source"`
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
@@ -306,7 +307,7 @@ func (s *Service) GetInstallation(ctx context.Context, actor application.Princip
 			detail.Source = loaded.pkg.Source
 		}
 		if len(loaded.installation.DraftManifestJSON) > 0 {
-			detail.Draft = &DraftView{Manifest: string(loaded.installation.DraftManifestJSON), Source: loaded.installation.DraftSource, UpdatedAt: loaded.installation.DraftUpdatedAt}
+			detail.Draft = &DraftView{Version: DraftVersion(loaded.installation.DraftManifestJSON, loaded.installation.DraftSource), Manifest: string(loaded.installation.DraftManifestJSON), Source: loaded.installation.DraftSource, UpdatedAt: loaded.installation.DraftUpdatedAt}
 		}
 	}
 	return detail, nil
@@ -425,7 +426,7 @@ func (s *Service) UpdateInstance(ctx context.Context, actor application.Principa
 		return InstanceDetail{}, err
 	}
 	if update.Enabled != nil {
-		if err := s.require(actor, PermInstall); err != nil {
+		if err := s.requireDelegable(actor, PermInstall); err != nil {
 			return InstanceDetail{}, err
 		}
 	}
@@ -450,6 +451,15 @@ func (s *Service) UpdateInstance(ctx context.Context, actor application.Principa
 	}
 	if !enabled {
 		_ = s.store.CancelPluginRunsForInstance(ctx, instanceID, "插件实例已停用")
+	}
+	if update.Enabled != nil && *update.Enabled != instance.Enabled {
+		action := AuditManageDisable
+		if enabled {
+			action = AuditManageEnable
+		}
+		if err := s.auditManagement(ctx, actor, loaded, instanceID, action, map[string]any{"previous_enabled": instance.Enabled, "enabled": enabled}); err != nil {
+			return InstanceDetail{}, err
+		}
 	}
 	instance, err = s.store.GetPluginInstance(ctx, instanceID)
 	if err != nil {
@@ -569,7 +579,7 @@ func secretNameExpected(manifest *Manifest, instance model.PluginInstance, name 
 
 // SetGrant records the administrator decision for the active version.
 func (s *Service) SetGrant(ctx context.Context, actor application.Principal, instanceID, expectedRevision int64, grant Grant) (InstanceDetail, error) {
-	if err := s.require(actor, PermAuthorize); err != nil {
+	if err := s.requireDelegable(actor, PermAuthorize); err != nil {
 		return InstanceDetail{}, err
 	}
 	loaded, _, err := s.loadInstance(ctx, instanceID)
@@ -597,9 +607,28 @@ func (s *Service) SetGrant(ctx context.Context, actor application.Principal, ins
 			return InstanceDetail{}, FailField(CodeInvalidArgument, "capabilities", "授权的服务器数量少于插件声明的最低要求")
 		}
 	}
+	before := Grant{Capabilities: map[string]CapabilityGrant{}}
+	var beforeRevision int64
+	if current, err := s.store.GetPluginGrant(ctx, instanceID); err == nil {
+		beforeRevision = current.Revision
+		if parsed, err := ParseGrant(current.GrantJSON); err == nil {
+			before = parsed
+		}
+	}
+	if expectedRevision == AnyGrantRevision {
+		expectedRevision = beforeRevision
+	}
 	record := model.PluginGrant{InstanceID: instanceID, PackageID: loaded.pkg.ID, GrantJSON: grant.CanonicalJSON(), ApprovedByUserID: actorUserID(actor)}
-	if _, err := s.store.SetPluginGrant(ctx, record, expectedRevision); err != nil {
+	stored, err := s.store.SetPluginGrant(ctx, record, expectedRevision)
+	if err != nil {
 		return InstanceDetail{}, storeError(err)
+	}
+	added, removed := GrantDiff(before, grant)
+	if err := s.auditManagement(ctx, actor, loaded, instanceID, AuditManageGrant, map[string]any{
+		"previous_revision": beforeRevision, "revision": stored.Revision, "package_id": loaded.pkg.ID,
+		"added": added, "removed": removed, "previous_grant": before, "grant": grant,
+	}); err != nil {
+		return InstanceDetail{}, err
 	}
 	return s.GetInstance(ctx, actor, instanceID)
 }
@@ -607,13 +636,28 @@ func (s *Service) SetGrant(ctx context.Context, actor application.Principal, ins
 // RevokeGrant removes every capability from an instance immediately; the
 // gateway refuses further calls of running runs on their next call.
 func (s *Service) RevokeGrant(ctx context.Context, actor application.Principal, instanceID int64) error {
-	if err := s.require(actor, PermAuthorize); err != nil {
+	if err := s.requireDelegable(actor, PermAuthorize); err != nil {
 		return err
 	}
-	if _, err := s.store.GetPluginInstance(ctx, instanceID); err != nil {
+	loaded, _, err := s.loadInstance(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	before := Grant{Capabilities: map[string]CapabilityGrant{}}
+	var beforeRevision int64
+	if current, err := s.store.GetPluginGrant(ctx, instanceID); err == nil {
+		beforeRevision = current.Revision
+		if parsed, err := ParseGrant(current.GrantJSON); err == nil {
+			before = parsed
+		}
+	}
+	if err := s.store.DeletePluginGrant(ctx, instanceID); err != nil {
 		return storeError(err)
 	}
-	return storeError(s.store.DeletePluginGrant(ctx, instanceID))
+	_, removed := GrantDiff(before, Grant{})
+	return s.auditManagement(ctx, actor, loaded, instanceID, AuditManageRevoke, map[string]any{
+		"previous_revision": beforeRevision, "added": []string{}, "removed": removed, "previous_grant": before,
+	})
 }
 
 // ScheduleInput creates or updates one trigger.

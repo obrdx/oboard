@@ -71,7 +71,8 @@ type RemoteAccessLocalAllow struct {
 	MCPEnabled     bool `json:"mcp_enabled"`
 	PluginsEnabled bool `json:"plugins_enabled"`
 	// LANRequests is the Agent-local switch for plugin lan.request, closed by
-	// default in every mode; Controller can never raise it.
+	// default in every mode. Controller may open it on a Standard node with
+	// apply_agent_local_policy; on a Hardened node it can only close it.
 	LANRequests bool `json:"lan_requests_enabled"`
 }
 
@@ -247,4 +248,34 @@ type StepUpChallenge struct {
 	ConsumedAt          *time.Time `json:"consumed_at,omitempty"`
 	ExpiresAt           time.Time  `json:"expires_at"`
 	CreatedAt           time.Time  `json:"created_at"`
+}
+
+// AgentCapabilityLocalPolicyRemote is advertised by Agents that accept the
+// signed apply_agent_local_policy task for the plugins and lan gates.
+const AgentCapabilityLocalPolicyRemote = "agent_local_policy_remote_v1"
+
+const (
+	LocalPolicyFeaturePlugins = "plugins"
+	LocalPolicyFeatureLAN     = "lan"
+	// LocalPolicyErrorHardened is returned when a Hardened node is asked to
+	// open a gate; only the node operator can open it there.
+	LocalPolicyErrorHardened = "hardened_local_only"
+)
+
+// AgentLocalPolicyPlan is the apply_agent_local_policy payload.
+type AgentLocalPolicyPlan struct {
+	Feature string `json:"feature"`
+	Allow   bool   `json:"allow"`
+}
+
+// AgentLocalPolicyResult is the Agent-reported outcome with the gates the
+// node enforces after the change.
+type AgentLocalPolicyResult struct {
+	Feature    string                 `json:"feature"`
+	Allow      bool                   `json:"allow"`
+	Changed    bool                   `json:"changed"`
+	LocalMode  string                 `json:"local_mode"`
+	LocalAllow RemoteAccessLocalAllow `json:"local_allow"`
+	Error      string                 `json:"error,omitempty"`
+	Message    string                 `json:"message,omitempty"`
 }

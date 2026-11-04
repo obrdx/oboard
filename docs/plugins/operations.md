@@ -6,7 +6,7 @@
 
 管理员在插件页开启“插件执行”，并可设置运行策略：暂停全部计划、全局并发（1–8）、单次最长时间（5–120 秒）、日志与执行记录保留天数。
 
-节点侧诊断受 Agent 本地 `plugins_enabled` 开关约束：Standard 模式默认允许，可在节点上执行 `obag remote-access deny plugins` 关闭；Hardened 模式默认拒绝，需在节点上执行 `obag remote-access allow plugins`。主控无法远程开启。
+节点侧诊断受 Agent 本地 `plugins_enabled` 开关约束：Standard 模式默认允许，可在节点上执行 `obag remote-access deny plugins` 关闭；Hardened 模式默认拒绝，需在节点上执行 `obag remote-access allow plugins`。Standard 节点可由主控在节点设置或 MCP `servers.agent_policy.set` 远程开关（需 Agent 支持 `agent_local_policy_remote_v1`）；Hardened 节点主控只能关闭。
 
 `lan.request` 另有节点本地 `lan` 开关，任何模式下默认关闭：需要插件访问该节点内网设备时，在节点上执行 `obag remote-access allow lan`（`deny lan` 关闭，`obag remote-access status` 查看）。
 

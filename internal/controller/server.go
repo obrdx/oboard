@@ -16203,6 +16203,9 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 	if task.Type == model.AgentTaskTypeApplyTrafficPolicy {
 		s.recordAuthorizationTaskResult(r.Context(), server, *task, req.Status)
 	}
+	if task.Type == model.AgentTaskTypeApplyLocalPolicy {
+		s.applyAgentLocalPolicyTaskResult(r.Context(), server, req.ResultJSON)
+	}
 	if task.Type == model.AgentTaskTypeProbeVPNGate {
 		if err := s.applyVPNGateProbeResult(r.Context(), server.ID, *task, req.Status, req.ResultJSON); err != nil {
 			fail(w, err, http.StatusBadRequest)
