@@ -37,7 +37,7 @@ const ROUNDS = 20
 
 export function connectivityLatencyLabel(status: string, latency: number | null | undefined) {
   if (status !== 'available' || latency == null || !Number.isFinite(latency) || latency < 0) return '—'
-  return latency < 1 ? '<1 ms' : `${Math.round(latency)} ms`
+  return `${Math.max(1, Math.round(latency))} ms`
 }
 
 export function monitoringLoss(samples: MonitoringSample[]) {

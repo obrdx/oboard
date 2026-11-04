@@ -6,14 +6,15 @@ const fixed: LatencyGrade = { excellent_ms: 80, fair_ms: 180, basis: 'fixed' }
 const series = (samples: MonitoringSample[], overrides: Partial<MonitoringSeries> = {}): MonitoringSeries => ({ probe_id: 'public-cloudflare', label: '公网探测', grade: fixed, samples, ...overrides })
 
 describe('server monitoring targets', () => {
-  it('shows sub-millisecond successes without mistaking absent or failed readings for zero', () => {
-    expect(connectivityLatencyLabel('available', 0)).toBe('<1 ms')
-    expect(connectivityLatencyLabel('available', 0.3)).toBe('<1 ms')
+  it('shows sub-millisecond successes as 1 ms without mistaking absent or failed readings for zero', () => {
+    expect(connectivityLatencyLabel('available', 0)).toBe('1 ms')
+    expect(connectivityLatencyLabel('available', 0.3)).toBe('1 ms')
+    expect(connectivityLatencyLabel('available', 0.6)).toBe('1 ms')
     expect(connectivityLatencyLabel('available', 1)).toBe('1 ms')
     for (const value of [null, undefined, NaN, -1]) expect(connectivityLatencyLabel('available', value)).toBe('—')
     expect(connectivityLatencyLabel('unavailable', 0)).toBe('—')
     const card = serverMonitoring({ name: '公网探测', enabled: true, series: [series([sample()])] }, true)
-    expect(card.series[0].latency).toBe('<1 ms')
+    expect(card.series[0].latency).toBe('1 ms')
     expect(card.series[0].qualitySegments.at(-1)).toBe('ok')
   })
 
