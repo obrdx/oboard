@@ -539,7 +539,7 @@ const maxSecretBytes = 8 << 10
 // secret. Only names declared as secret fields or custom secret variables are
 // accepted, and the value is never returned by any API.
 func (s *Service) SetSecret(ctx context.Context, actor application.Principal, instanceID int64, name, value string) error {
-	if err := s.require(actor, PermAuthorize); err != nil {
+	if err := s.requireDelegable(actor, PermAuthorize); err != nil {
 		return err
 	}
 	loaded, instance, err := s.loadInstance(ctx, instanceID)
@@ -550,7 +550,10 @@ func (s *Service) SetSecret(ctx context.Context, actor application.Principal, in
 		return FailField(CodeInvalidArgument, name, "该名称不是此实例声明的密钥")
 	}
 	if value == "" {
-		return storeError(s.store.DeletePluginSecret(ctx, instanceID, name))
+		if err := s.store.DeletePluginSecret(ctx, instanceID, name); err != nil {
+			return storeError(err)
+		}
+		return s.auditManagement(ctx, actor, loaded, instanceID, AuditManageSecret, map[string]any{"name": name, "configured": false})
 	}
 	if len(value) > maxSecretBytes || !utf8.ValidString(value) || strings.ContainsRune(value, 0) {
 		return FailField(CodeInvalidArgument, name, "密钥最多 8 KiB 的 UTF-8 文本")
@@ -559,7 +562,10 @@ func (s *Service) SetSecret(ctx context.Context, actor application.Principal, in
 	if err != nil {
 		return Fail(CodeInternal, "无法加密密钥")
 	}
-	return storeError(s.store.SetPluginSecret(ctx, instanceID, name, encrypted))
+	if err := s.store.SetPluginSecret(ctx, instanceID, name, encrypted); err != nil {
+		return storeError(err)
+	}
+	return s.auditManagement(ctx, actor, loaded, instanceID, AuditManageSecret, map[string]any{"name": name, "configured": true})
 }
 
 func secretNameExpected(manifest *Manifest, instance model.PluginInstance, name string) bool {

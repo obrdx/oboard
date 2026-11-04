@@ -23,7 +23,7 @@ func changesetRequestDigest(item *model.AutomationChangeset) ([32]byte, error) {
 		return [32]byte{}, err
 	}
 	for _, op := range item.Operations {
-		input, err := canonicalObject(op.Input)
+		input, err := canonicalObject(sealedDigestForm(op.Input))
 		if err != nil {
 			return [32]byte{}, err
 		}

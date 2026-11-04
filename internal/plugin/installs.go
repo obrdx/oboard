@@ -82,7 +82,7 @@ func permissionLines(manifest Manifest) []PermissionLine {
 }
 
 func (s *Service) PreviewPackage(ctx context.Context, actor application.Principal, candidate PackageCandidate) (PackagePreview, error) {
-	if err := s.require(actor, PermInstall); err != nil {
+	if err := s.requireDelegable(actor, PermInstall); err != nil {
 		return PackagePreview{}, err
 	}
 	return s.preview(ctx, candidate)
@@ -153,9 +153,26 @@ type InstallResult struct {
 // or updates an existing one from the same publisher. The confirmed digest
 // must match the reviewed preview.
 func (s *Service) InstallPackage(ctx context.Context, actor application.Principal, candidate PackageCandidate, expectedSHA256 string) (InstallResult, error) {
-	if err := s.require(actor, PermInstall); err != nil {
+	if err := s.requireDelegable(actor, PermInstall); err != nil {
 		return InstallResult{}, err
 	}
+	result, err := s.installPackage(ctx, actor, candidate, expectedSHA256)
+	if err != nil {
+		return result, err
+	}
+	action := AuditManageInstall
+	if result.Action == "update" {
+		action = AuditManageUpdate
+	}
+	return result, s.auditInstallationChange(ctx, actor, result.InstallationID, action, map[string]any{
+		"package_id": result.PackageID, "version": candidate.Manifest.Version, "sha256": candidate.SHA256,
+		"source_kind": candidate.SourceKind, "source_repository": candidate.SourceRepository, "source_ref": candidate.SourceRef, "source_commit": candidate.SourceCommit,
+		"publisher_identity": candidate.PublisherIdentity, "signature_state": candidate.SignatureState,
+		"permission_diff": result.Diff, "review_required": result.ReviewRequired,
+	})
+}
+
+func (s *Service) installPackage(ctx context.Context, actor application.Principal, candidate PackageCandidate, expectedSHA256 string) (InstallResult, error) {
 	if expectedSHA256 == "" || expectedSHA256 != candidate.SHA256 {
 		return InstallResult{}, Fail(CodeConflict, "安装内容与预览不一致，请重新预览")
 	}
@@ -207,7 +224,7 @@ type UpdateSource struct {
 // ResolveUpdateSource returns the active version's GitHub origin. A ref that is
 // a full commit ID is pinned: it never moves, so there is nothing to update to.
 func (s *Service) ResolveUpdateSource(ctx context.Context, actor application.Principal, installationID int64) (UpdateSource, error) {
-	if err := s.require(actor, PermInstall); err != nil {
+	if err := s.requireDelegable(actor, PermInstall); err != nil {
 		return UpdateSource{}, err
 	}
 	installation, err := s.store.GetPluginInstallation(ctx, installationID)
@@ -242,7 +259,7 @@ func isHexString(value string) bool {
 // ActivateVersion switches to an already stored version (rollback or
 // forward) with the same permission-diff rules as an update.
 func (s *Service) ActivateVersion(ctx context.Context, actor application.Principal, installationID, packageID int64) (InstallResult, error) {
-	if err := s.require(actor, PermInstall); err != nil {
+	if err := s.requireDelegable(actor, PermInstall); err != nil {
 		return InstallResult{}, err
 	}
 	pkg, err := s.store.GetPluginPackage(ctx, packageID)
@@ -267,7 +284,11 @@ func (s *Service) ActivateVersion(ctx context.Context, actor application.Princip
 	if err != nil {
 		return InstallResult{}, err
 	}
-	return InstallResult{InstallationID: installationID, PackageID: pkg.ID, Action: "activate", Diff: DiffPermissions(previous, manifest), ReviewRequired: review}, nil
+	result := InstallResult{InstallationID: installationID, PackageID: pkg.ID, Action: "activate", Diff: DiffPermissions(previous, manifest), ReviewRequired: review}
+	return result, s.auditInstallationChange(ctx, actor, installationID, AuditManageActivate, map[string]any{
+		"package_id": pkg.ID, "previous_package_id": installation.ActivePackageID, "version": manifest.Version, "sha256": pkg.SHA256,
+		"permission_diff": result.Diff, "review_required": review,
+	})
 }
 
 // activate switches every instance to pkg. Grants are restricted to what the
@@ -354,10 +375,21 @@ func (s *Service) SetInstallationEnabled(ctx context.Context, actor application.
 // and schedules at once and cancels unfinished runs. Run history and audit
 // records are retained.
 func (s *Service) Uninstall(ctx context.Context, actor application.Principal, installationID int64) error {
-	if err := s.require(actor, PermInstall); err != nil {
+	if err := s.requireDelegable(actor, PermInstall); err != nil {
 		return err
 	}
-	return storeError(s.store.DeletePluginInstallation(ctx, installationID))
+	loaded, err := s.loadInstallation(ctx, installationID)
+	if err != nil {
+		return err
+	}
+	instances, err := s.store.ListPluginInstances(ctx, installationID)
+	if err != nil {
+		return storeError(err)
+	}
+	if err := s.store.DeletePluginInstallation(ctx, installationID); err != nil {
+		return storeError(err)
+	}
+	return s.auditInstances(ctx, actor, loaded, instances, AuditManageUninstall, map[string]any{"package_id": loaded.installation.ActivePackageID})
 }
 
 // --- editor ---

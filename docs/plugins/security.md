@@ -54,7 +54,7 @@
 
 每次 SDK 调用都重新检查：执行租约仍有效、全局与插件开关仍开启、能力在当前版本清单中、授权包含该能力且资源在范围内、发起者（手动执行时的用户或服务账号）仍有权访问该资源、配额与速率未超。授权按实例保存，只能是清单声明的子集；环境变量中的服务器选择从不构成授权。新版本若扩大权限（新增能力、主机、方法、事件、密钥或资源上限），所有实例进入“待审核权限”，管理员重新保存授权前不会运行。
 
-发布草稿（`plugins.publish`）、授权与撤销（`plugin_instances.grant` / `plugin_instances.grant.revoke`）、启停实例（`plugin_instances.enable` / `disable`）与草稿试运行（`plugins.drafts.test_run`）是管理员操作：管理员账号在面板上能做，该账号授权的 MCP 也能做，调用即生效，没有单独的审批。两道保险始终有效：授权只能是清单声明过的能力、主机与内网目标，多出来的直接报错；每次变更写入实例审计（`manage.*`），记录操作者、OAuth 授权、新增与移除的权限项以及上一版授权，可用上一版授权再次调用撤回，或一键撤销全部授权。服务账号不能执行这些操作。安装与更新插件包、切换版本、卸载、密钥与运行策略仍只允许交互式管理员在面板操作。
+发布草稿（`plugins.publish`）、授权与撤销（`plugin_instances.grant` / `plugin_instances.grant.revoke`）、启停实例（`plugin_instances.enable` / `disable`）与草稿试运行（`plugins.drafts.test_run`）是管理员操作：管理员账号在面板上能做，该账号授权的 MCP 也能做，调用即生效，没有单独的审批。两道保险始终有效：授权只能是清单声明过的能力、主机与内网目标，多出来的直接报错；每次变更写入实例审计（`manage.*`），记录操作者、OAuth 授权、新增与移除的权限项以及上一版授权，可用上一版授权再次调用撤回，或一键撤销全部授权。服务账号不能执行这些操作。安装与更新插件包（`plugins.packages.preview` / `install`，绑定预览得到的 `expected_sha256` 与提交）、检查与执行来源更新（`plugins.source.check` / `update`，只从安装时记录的仓库与分支读取，来源地址不能修改）、切换版本与回滚（`plugins.versions.activate`）、卸载（`plugins.uninstall`）和写入实例密钥（`plugin_instances.secrets.update`）同样属于这类管理员操作，安装或更新带来的新权限不会自动授予。密钥写入的审计只记录名称；经 MCP 写入时，密钥值在保存变更集之前就用 `OBOARD_SESSION_SECRET` 加密，只在执行时解开，明文不会进入变更集、计划、审计或响应。整个插件的启停、删除实例与运行策略仍只允许交互式管理员在面板操作。
 
 ## Agent 诊断
 

@@ -537,8 +537,8 @@ func (s *Server) apiV1PluginPackages(w http.ResponseWriter, r *http.Request, pri
 		if !pluginDecode(w, r, &input, pluginPackageBodyLimit) {
 			return
 		}
-		if !s.plugins.Can(principal, plugin.PermInstall) {
-			pluginFail(w, r, plugin.Fail(plugin.CodePermissionDenied, "仅交互式管理员可安装插件"))
+		if !s.plugins.CanDelegate(principal, plugin.PermInstall) {
+			pluginFail(w, r, plugin.Fail(plugin.CodePermissionDenied, "仅管理员账号或其授权的 MCP 可安装插件"))
 			return
 		}
 		candidate, err := s.resolvePackageCandidate(r.Context(), input.Source, false)
@@ -565,8 +565,8 @@ func (s *Server) apiV1PluginPackages(w http.ResponseWriter, r *http.Request, pri
 			pluginFail(w, r, plugin.Fail(plugin.CodeInvalidArgument, "confirm is required"))
 			return
 		}
-		if !s.plugins.Can(principal, plugin.PermInstall) {
-			pluginFail(w, r, plugin.Fail(plugin.CodePermissionDenied, "仅交互式管理员可安装插件"))
+		if !s.plugins.CanDelegate(principal, plugin.PermInstall) {
+			pluginFail(w, r, plugin.Fail(plugin.CodePermissionDenied, "仅管理员账号或其授权的 MCP 可安装插件"))
 			return
 		}
 		candidate, err := s.resolvePackageCandidate(r.Context(), input.Source, true)
@@ -1082,6 +1082,155 @@ func (s *Server) registerPluginAutomationOperations() {
 		}
 		s.publishRealtime("plugins")
 		return map[string]any{"revoked": true}, nil
+	})
+	confirmed := func(confirm bool) error {
+		if !confirm {
+			return plugin.FailField(plugin.CodeInvalidArgument, "confirm", "confirm is required")
+		}
+		return nil
+	}
+	register("plugins.packages.preview", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
+			Source PackageSourceInput `json:"source"`
+		}
+		if err := strictAutomationInput(input, &in); err != nil {
+			return nil, err
+		}
+		if !s.plugins.CanDelegate(principal, plugin.PermInstall) {
+			return nil, plugin.Fail(plugin.CodePermissionDenied, "仅管理员账号或其授权的 MCP 可安装插件")
+		}
+		candidate, err := s.resolvePackageCandidate(ctx, in.Source, false)
+		if err != nil {
+			return nil, err
+		}
+		return s.plugins.PreviewPackage(ctx, principal, candidate)
+	})
+	register("plugins.packages.install", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
+			Source         PackageSourceInput `json:"source"`
+			ExpectedSHA256 string             `json:"expected_sha256"`
+			Confirm        bool               `json:"confirm"`
+		}
+		if err := strictAutomationInput(input, &in); err != nil {
+			return nil, err
+		}
+		if err := confirmed(in.Confirm); err != nil {
+			return nil, err
+		}
+		if !s.plugins.CanDelegate(principal, plugin.PermInstall) {
+			return nil, plugin.Fail(plugin.CodePermissionDenied, "仅管理员账号或其授权的 MCP 可安装插件")
+		}
+		candidate, err := s.resolvePackageCandidate(ctx, in.Source, true)
+		if err != nil {
+			return nil, err
+		}
+		result, err := s.plugins.InstallPackage(ctx, principal, candidate, in.ExpectedSHA256)
+		if err == nil {
+			s.publishRealtime("plugins")
+		}
+		return result, err
+	})
+	register("plugins.source.check", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
+			PluginID string `json:"plugin_id"`
+		}
+		if err := strictAutomationInput(input, &in); err != nil {
+			return nil, err
+		}
+		id, err := idOf(in.PluginID)
+		if err != nil {
+			return nil, err
+		}
+		return s.checkPluginUpdate(ctx, principal, id)
+	})
+	register("plugins.source.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
+			PluginID       string `json:"plugin_id"`
+			Commit         string `json:"commit"`
+			ExpectedSHA256 string `json:"expected_sha256"`
+			Confirm        bool   `json:"confirm"`
+		}
+		if err := strictAutomationInput(input, &in); err != nil {
+			return nil, err
+		}
+		if err := confirmed(in.Confirm); err != nil {
+			return nil, err
+		}
+		id, err := idOf(in.PluginID)
+		if err != nil {
+			return nil, err
+		}
+		result, err := s.updatePluginFromSource(ctx, principal, id, in.Commit, in.ExpectedSHA256)
+		if err == nil {
+			s.publishRealtime("plugins")
+		}
+		return result, err
+	})
+	register("plugins.versions.activate", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
+			PluginID  string `json:"plugin_id"`
+			PackageID string `json:"package_id"`
+			Confirm   bool   `json:"confirm"`
+		}
+		if err := strictAutomationInput(input, &in); err != nil {
+			return nil, err
+		}
+		if err := confirmed(in.Confirm); err != nil {
+			return nil, err
+		}
+		id, err := idOf(in.PluginID)
+		if err != nil {
+			return nil, err
+		}
+		packageID, err := idOf(in.PackageID)
+		if err != nil {
+			return nil, err
+		}
+		result, err := s.plugins.ActivateVersion(ctx, principal, id, packageID)
+		if err == nil {
+			s.publishRealtime("plugins")
+		}
+		return result, err
+	})
+	register("plugins.uninstall", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
+			PluginID string `json:"plugin_id"`
+			Confirm  bool   `json:"confirm"`
+		}
+		if err := strictAutomationInput(input, &in); err != nil {
+			return nil, err
+		}
+		if err := confirmed(in.Confirm); err != nil {
+			return nil, err
+		}
+		id, err := idOf(in.PluginID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.plugins.Uninstall(ctx, principal, id); err != nil {
+			return nil, err
+		}
+		s.publishRealtime("plugins")
+		return map[string]any{"uninstalled": true}, nil
+	})
+	register("plugin_instances.secrets.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
+			InstanceID string `json:"instance_id"`
+			Name       string `json:"name"`
+			Value      string `json:"value"`
+		}
+		if err := strictAutomationInput(input, &in); err != nil {
+			return nil, err
+		}
+		id, err := idOf(in.InstanceID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.plugins.SetSecret(ctx, principal, id, in.Name, in.Value); err != nil {
+			return nil, err
+		}
+		s.publishRealtime("plugins")
+		return map[string]any{"configured": in.Value != ""}, nil
 	})
 	register("plugins.drafts.create", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		var in struct {

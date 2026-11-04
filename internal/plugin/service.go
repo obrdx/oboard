@@ -283,12 +283,14 @@ func (s *Service) require(actor application.Principal, permission string) error 
 }
 
 // requireDelegable authorizes the plugin security operations an administrator
-// account may delegate to its own OAuth MCP grant: publishing a draft,
-// granting or revoking an instance, enabling or disabling an instance and
-// trial-running a draft. The caller must hold the administrator role either
-// interactively or through an OAuth grant that inherits that role; service
-// accounts and other machine principals stay refused. Installing code,
-// uninstalling, secrets and runtime settings keep require().
+// account may delegate to its own OAuth MCP grant: previewing, installing,
+// updating, switching versions and uninstalling packages, publishing a draft,
+// granting or revoking an instance, enabling or disabling an instance, writing
+// instance secrets and trial-running a draft. The caller must hold the
+// administrator role either interactively or through an OAuth grant that
+// inherits that role; service accounts and other machine principals stay
+// refused. Plugin-wide enable, instance deletion and runtime settings keep
+// require().
 func (s *Service) requireDelegable(actor application.Principal, permission string) error {
 	if actor.Role != model.RoleAdmin {
 		return Fail(CodePermissionDenied, "仅管理员账号或其授权的 MCP 可执行该插件安全操作")
@@ -300,6 +302,12 @@ func (s *Service) requireDelegable(actor application.Principal, permission strin
 		return ErrPermissionDenied
 	}
 	return nil
+}
+
+// CanDelegate reports whether requireDelegable admits the actor; callers use
+// it to refuse before doing network work such as reading a GitHub source.
+func (s *Service) CanDelegate(actor application.Principal, permission string) bool {
+	return s.requireDelegable(actor, permission) == nil
 }
 
 // Can reports whether the actor holds a permission; views use it to decide

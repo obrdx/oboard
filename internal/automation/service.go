@@ -42,6 +42,7 @@ type Service struct {
 	applyObserver     ApplyObserver
 	replayAuthorizer  ReplayAuthorizer
 	resultAuthorizer  ReplayAuthorizer
+	sealKey           string
 	now               func() time.Time
 }
 
@@ -165,6 +166,9 @@ func (s *Service) Create(ctx context.Context, principal application.Principal, r
 		}
 		input, err := canonicalObject(requested.Input)
 		if err != nil {
+			return nil, fmt.Errorf("operation %d input: %w", position, err)
+		}
+		if input, err = s.sealInput(input, descriptor.SealedInput); err != nil {
 			return nil, fmt.Errorf("operation %d input: %w", position, err)
 		}
 		refs := requested.ResourceRefs
@@ -370,7 +374,11 @@ func (s *Service) Apply(ctx context.Context, principal application.Principal, id
 		if handler == nil {
 			return s.failOperation(ctx, item, op, "capability_unavailable", "capability is not executable in this Controller build")
 		}
-		result, applyErr := handler(mutationContext, principal, op.Input)
+		opened, openErr := s.openInput(op.Capability, op.Input)
+		if openErr != nil {
+			return s.failOperation(ctx, item, op, "sealed_input_unavailable", openErr.Error())
+		}
+		result, applyErr := handler(mutationContext, principal, opened)
 		completed := s.now().UTC()
 		op.CompletedAt = &completed
 		if applyErr != nil {
@@ -1054,12 +1062,16 @@ func (s *Service) inspectOperations(ctx context.Context, principal application.P
 		if validator == nil || s.handler(operation.Capability) == nil {
 			return nil, nil, fmt.Errorf("operation capability %q is not executable in this Controller build", operation.Capability)
 		}
-		validated, validateErr := validator(ctx, principal, operation.Input)
+		opened, openErr := s.openInput(operation.Capability, operation.Input)
+		if openErr != nil {
+			return nil, nil, fmt.Errorf("validate %s: %w", operation.Capability, openErr)
+		}
+		validated, validateErr := validator(ctx, principal, opened)
 		if validateErr != nil {
 			return nil, nil, fmt.Errorf("validate %s: %w", operation.Capability, validateErr)
 		}
 		if resolver := s.revisionResolver(operation.Capability); resolver != nil {
-			resolved, resolveErr := resolver(ctx, principal, operation.Input)
+			resolved, resolveErr := resolver(ctx, principal, opened)
 			if resolveErr != nil {
 				return nil, nil, fmt.Errorf("resolve %s base revisions: %w", operation.Capability, resolveErr)
 			}

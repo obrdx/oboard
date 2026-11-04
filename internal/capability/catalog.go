@@ -39,13 +39,16 @@ type Descriptor struct {
 	SensitiveFields    []string           `json:"sensitive_fields"`
 	SensitiveInput     []string           `json:"sensitive_input_fields"`
 	SensitiveOutput    []string           `json:"sensitive_output_fields"`
-	Destructive        bool               `json:"destructive"`
-	OpenWorld          bool               `json:"open_world"`
-	Documentation      string             `json:"documentation"`
-	DeprecatedSince    string             `json:"deprecated_since,omitempty"`
-	Replacement        string             `json:"replacement,omitempty"`
-	MCPEnabled         bool               `json:"mcp_enabled"`
-	Executable         bool               `json:"executable"`
+	// SealedInput names top-level string input fields that are encrypted
+	// before a changeset is stored and only decrypted for the handler.
+	SealedInput     []string `json:"sealed_input_fields,omitempty"`
+	Destructive     bool     `json:"destructive"`
+	OpenWorld       bool     `json:"open_world"`
+	Documentation   string   `json:"documentation"`
+	DeprecatedSince string   `json:"deprecated_since,omitempty"`
+	Replacement     string   `json:"replacement,omitempty"`
+	MCPEnabled      bool     `json:"mcp_enabled"`
+	Executable      bool     `json:"executable"`
 	// MinimumAccess is the coarse MCP access level required. It replaces
 	// RequiredScopes for MCP authorization.
 	MinimumAccess mcpauth.AccessLevel `json:"minimum_access"`

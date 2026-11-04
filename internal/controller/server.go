@@ -372,6 +372,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	s.agentUpdates = newAgentUpdateCoordinator(s)
 	s.recoveryDeployments = newRecoveryDeploymentQueue(s)
 	s.plugins = plugin.NewService(store, catalog.RBAC(), &pluginHost{server: s})
+	s.automation.SetInputSealKey(sessionSecret)
 	s.automation.SetApplyObserver(s.configurationChangesetApplied)
 	s.automation.SetReplayAuthorizer(s.authorizeAutomationReplay)
 	s.automation.SetResultAuthorizer(s.authorizeAutomationResult)

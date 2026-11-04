@@ -21,7 +21,8 @@ func TestAgentPolicySetDescriptorsAreDelegatedAdminCapabilities(t *testing.T) {
 	}
 	defer db.Close()
 	srv := newTestServer(db, "test-secret", "")
-	for _, name := range []string{"servers.agent_policy.set", "plugins.publish", "plugins.drafts.test_run", "plugin_instances.enable", "plugin_instances.disable", "plugin_instances.grant", "plugin_instances.grant.revoke"} {
+	for _, name := range []string{"servers.agent_policy.set", "plugins.publish", "plugins.drafts.test_run", "plugin_instances.enable", "plugin_instances.disable", "plugin_instances.grant", "plugin_instances.grant.revoke",
+		"plugins.packages.preview", "plugins.packages.install", "plugins.source.check", "plugins.source.update", "plugins.versions.activate", "plugins.uninstall", "plugin_instances.secrets.update"} {
 		descriptor, ok := srv.capabilities.Get(name)
 		if !ok || !descriptor.MCPEnabled || !descriptor.Executable || !descriptor.AdminOnly || descriptor.ApprovalPolicy != "" || descriptor.Privileged() {
 			t.Fatalf("%s must be an immediately applied, MCP-enabled admin capability: %+v", name, descriptor)
@@ -35,10 +36,13 @@ func TestAgentPolicySetDescriptorsAreDelegatedAdminCapabilities(t *testing.T) {
 			t.Fatalf("an operator must not reach %s", name)
 		}
 	}
-	for _, name := range []string{"plugins.packages.install", "plugins.uninstall", "plugin_instances.secrets.update", "plugins.runtime.settings.update"} {
+	for _, name := range []string{"plugins.set_enabled", "plugin_instances.delete", "plugins.runtime.settings.update"} {
 		if descriptor, ok := srv.capabilities.Get(name); !ok || descriptor.MCPEnabled {
 			t.Fatalf("%s must stay interactive-admin only", name)
 		}
+	}
+	if descriptor, _ := srv.capabilities.Get("plugin_instances.secrets.update"); len(descriptor.SealedInput) != 1 || descriptor.SealedInput[0] != "value" {
+		t.Fatalf("the plugin secret value must be sealed before a changeset is stored: %+v", descriptor.SealedInput)
 	}
 }
 

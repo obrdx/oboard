@@ -16,12 +16,19 @@ import (
 // but carry no run UUID, so the instance audit shows who changed what next
 // to what the plugin did with it.
 const (
-	AuditManagePublish  = "manage.publish"
-	AuditManageGrant    = "manage.grant"
-	AuditManageRevoke   = "manage.grant.revoke"
-	AuditManageEnable   = "manage.instance.enable"
-	AuditManageDisable  = "manage.instance.disable"
-	AuditManageDraftRun = "manage.draft.test_run"
+	AuditManagePublish   = "manage.publish"
+	AuditManageGrant     = "manage.grant"
+	AuditManageRevoke    = "manage.grant.revoke"
+	AuditManageEnable    = "manage.instance.enable"
+	AuditManageDisable   = "manage.instance.disable"
+	AuditManageDraftRun  = "manage.draft.test_run"
+	AuditManageInstall   = "manage.install"
+	AuditManageUpdate    = "manage.update"
+	AuditManageActivate  = "manage.version.activate"
+	AuditManageUninstall = "manage.uninstall"
+	// AuditManageSecret records the secret name and whether it is now
+	// configured; the value never enters the audit.
+	AuditManageSecret = "manage.secret"
 )
 
 // DraftVersion identifies the exact editor draft content. publish binds to
@@ -186,4 +193,30 @@ func (in GrantInput) Grant() (Grant, error) {
 		}
 	}
 	return grant, nil
+}
+
+// auditInstallationChange records an installation-wide change against every
+// instance, or against the installation when it has none.
+func (s *Service) auditInstallationChange(ctx context.Context, actor application.Principal, installationID int64, action string, detail map[string]any) error {
+	loaded, err := s.loadInstallation(ctx, installationID)
+	if err != nil {
+		return err
+	}
+	instances, err := s.store.ListPluginInstances(ctx, installationID)
+	if err != nil {
+		return storeError(err)
+	}
+	return s.auditInstances(ctx, actor, loaded, instances, action, detail)
+}
+
+func (s *Service) auditInstances(ctx context.Context, actor application.Principal, loaded loadedInstallation, instances []model.PluginInstance, action string, detail map[string]any) error {
+	if len(instances) == 0 {
+		return s.auditManagement(ctx, actor, loaded, 0, action, detail)
+	}
+	for _, instance := range instances {
+		if err := s.auditManagement(ctx, actor, loaded, instance.ID, action, detail); err != nil {
+			return err
+		}
+	}
+	return nil
 }
