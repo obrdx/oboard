@@ -63,7 +63,8 @@ function lockBodyScroll() {
   const viewportWidth = typeof window === "undefined" ? 0 : window.innerWidth
   const documentWidth = document.documentElement.clientWidth
   const scrollbarWidth = documentWidth > 0 ? Math.max(0, viewportWidth - documentWidth) : 0
-  if (scrollbarWidth > 0) {
+  const rootGutter = window.getComputedStyle(document.documentElement).getPropertyValue("scrollbar-gutter")
+  if (scrollbarWidth > 0 && !rootGutter.includes("stable")) {
     const currentPadding = Number.parseFloat(window.getComputedStyle(body).paddingRight) || 0
     body.style.paddingRight = `${currentPadding + scrollbarWidth}px`
   }
