@@ -8487,7 +8487,10 @@ function ServerMonitorMetricCard({
     } else if (tone === 'memory') {
       displayMain = `${pVal.toFixed(1)}%`
       const physical = pt.memory_total_bytes ? `${formatBytes(pt.memory_used_bytes)} / ${formatBytes(pt.memory_total_bytes)}` : ''
-      const swap = secondary.length === primary.length && pt.swap_total_bytes ? `Swap ${sVal.toFixed(1)}%` : ''
+      const swapTotalAt = Number(pt.swap_total_bytes || 0)
+      const swap = secondary.length === primary.length && secondary.length > 0
+        ? (swapTotalAt > 0 ? `Swap ${(Number(pt.swap_used_bytes || 0) / swapTotalAt * 100).toFixed(1)}%` : 'Swap —')
+        : ''
       displaySub = [physical, swap, hoverTimeLabel].filter(Boolean).join(' · ')
     } else if (tone === 'disk') {
       displayMain = `${pVal.toFixed(1)}%`
