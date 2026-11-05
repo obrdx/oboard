@@ -103,3 +103,27 @@ func TestManagedDualStackDomainFromIPv4Source(t *testing.T) {
 		t.Fatal("managed DNS or TLS identity changed")
 	}
 }
+
+func TestGeneratedLocalOnlyDNSKeepsDialResolversValid(t *testing.T) {
+	server := model.Server{ID: 1, PublicIPv4: "192.0.2.1", PublicIPv6: "2001:db8::1"}
+	state := testDNSState(1)
+	state.Policy.LastError = model.DNSBenchmarkNoUsableCandidatesError
+	outbounds := []model.Outbound{{ID: 1, ServerID: 1, Protocol: model.ProtocolAnyTLS, TargetAddress: "relay.example.com", TargetPort: 443, ConfigJSON: `{"password":"fixture","tls":{"enabled":true,"server_name":"relay.example.com"}}`, Enabled: true}}
+	raw, err := GenerateServerConfigWithOptions(server, nil, outbounds, state, nil, ConfigOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config SingBoxConfig
+	if err := json.Unmarshal([]byte(raw), &config); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range config.Outbounds {
+		if item["type"] != "anytls" {
+			continue
+		}
+		resolver, _ := item["domain_resolver"].(map[string]any)
+		if resolver["server"] != "local" {
+			t.Fatalf("next-hop resolver = %#v, want local", item["domain_resolver"])
+		}
+	}
+}

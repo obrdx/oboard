@@ -2,19 +2,31 @@ package core
 
 import "github.com/OboardProject/oboard/internal/model"
 
-func bootstrapResolverTag(servers []map[string]any) string {
-	for _, item := range servers {
-		if item["tag"] == bootstrapDNSGroupTag {
+// bootstrapResolverTag is the resolver that dial-side "bootstrap-primary"
+// references are rewritten to: the failover group when present, the primary
+// bootstrap resolver otherwise, and the configuration's own default resolver
+// when the DNS block carries no bootstrap resolver at all (the local-only
+// fallback after a benchmark found no usable candidate).
+func bootstrapResolverTag(dns map[string]any) string {
+	primary := false
+	for _, item := range dnsServerItems(dns["servers"]) {
+		switch item["tag"] {
+		case bootstrapDNSGroupTag:
 			return bootstrapDNSGroupTag
+		case primaryBootstrapDNSTag:
+			primary = true
 		}
 	}
-	return primaryBootstrapDNSTag
+	if primary {
+		return primaryBootstrapDNSTag
+	}
+	return defaultTargetResolverTag(dns)
 }
 
 // Apply after detours and interface bindings are complete: only the physical
 // dial owner is constrained by the host stack, not destinations inside a proxy.
 func applyPhysicalDialResolvers(config *SingBoxConfig, server model.Server) {
-	bootstrap := bootstrapResolverTag(dnsServerItems(config.DNS["servers"]))
+	bootstrap := bootstrapResolverTag(config.DNS)
 	for _, item := range config.Outbounds {
 		defaultResolver := ""
 		if item["type"] == "direct" {

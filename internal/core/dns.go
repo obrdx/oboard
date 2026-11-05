@@ -154,7 +154,7 @@ func BuildDNSConfig(server model.Server, state *DNSConfigState) (map[string]any,
 		servers = append(servers, dnsFailoverGroup(bootstrapDNSGroupTag, bootstrapTags))
 	}
 	for _, item := range servers {
-		applyPhysicalDialResolver(item, server, bootstrapResolverTag(servers), "")
+		applyPhysicalDialResolver(item, server, bootstrapResolverTag(map[string]any{"servers": servers}), "")
 	}
 	return map[string]any{
 		"servers":  servers,
