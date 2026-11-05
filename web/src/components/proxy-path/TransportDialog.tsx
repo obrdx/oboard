@@ -6,6 +6,15 @@ export type TransportMode = 'singbox' | 'port_forward' | 'tunnel'
 export type TunnelKind = 'ssh' | 'wireguard'
 export type GeneratedChainProtocol = 'shadowsocks' | 'vless' | 'mieru' | 'socks'
 export type BranchCopyMode = 'none' | 'all' | 'single'
+export type AddressFamily = 'auto' | 'prefer_ipv4' | 'prefer_ipv6' | 'ipv4_only' | 'ipv6_only'
+
+export const ADDRESS_FAMILY_OPTIONS: Array<{ value: AddressFamily; label: string }> = [
+  { value: 'auto', label: '默认（跟随服务器）' },
+  { value: 'prefer_ipv4', label: '优先 IPv4' },
+  { value: 'prefer_ipv6', label: '优先 IPv6' },
+  { value: 'ipv4_only', label: '仅 IPv4' },
+  { value: 'ipv6_only', label: '仅 IPv6' },
+]
 
 export type ProxyPathReuseSource = { inbound_id?: number; step_id?: number }
 
@@ -22,6 +31,7 @@ export type ProxyPathReuseRequest = {
   tunnel_type?: TunnelKind
   ssh_port?: number
   persistent_keepalive?: number
+  address_family?: AddressFamily
   copy_mode: BranchCopyMode
   branch_path_id?: number
 }
@@ -91,6 +101,7 @@ export function TransportDialog({
   current,
   currentMode,
   allowedModes,
+  allowAddressFamily = true,
   chainMethods,
   onPreview,
   onCancel,
@@ -100,6 +111,7 @@ export function TransportDialog({
   current?: string
   currentMode?: TransportMode
   allowedModes?: TransportMode[]
+  allowAddressFamily?: boolean
   chainMethods: ChainMethodOption[]
   onPreview?: (request: ProxyPathReuseRequest) => Promise<ProxyPathReusePreview>
   onCancel: () => void
@@ -126,6 +138,8 @@ export function TransportDialog({
     return stored > 0 ? String(stored) : ''
   })
   const [keepalive, setKeepalive] = useState<string>(() => String(numberOr(existing.persistent_keepalive, DEFAULT_KEEPALIVE)))
+  const [addressFamilySetting, setAddressFamily] = useState<AddressFamily>(() => addressFamilyOr(existing.address_family))
+  const addressFamily: AddressFamily = allowAddressFamily ? addressFamilySetting : 'auto'
   const [copyMode, setCopyMode] = useState<BranchCopyMode>('none')
   const [branchPathID, setBranchPathID] = useState(0)
   const [preview, setPreview] = useState<ProxyPathReusePreview | null>(null)
@@ -167,10 +181,11 @@ export function TransportDialog({
       tunnelKind,
       sshPort: sshPortValue,
       keepalive: keepaliveValue,
+      addressFamily,
       copyMode: targetKind === 'existing' ? copyMode : 'none',
       branchPathID,
     })
-  }, [reuseEnabled, target.targetServerID, sources, targetKind, targetInboundID, chainProtocol, chainMethod, realityServer, realityPortValue, mode, tunnelKind, sshPortValue, keepaliveValue, copyMode, branchPathID])
+  }, [reuseEnabled, target.targetServerID, sources, targetKind, targetInboundID, chainProtocol, chainMethod, realityServer, realityPortValue, mode, tunnelKind, sshPortValue, keepaliveValue, addressFamily, copyMode, branchPathID])
 
   const requestKey = JSON.stringify(reuseRequest)
   const currentPreview = previewKey === requestKey ? preview : null
@@ -240,7 +255,7 @@ export function TransportDialog({
     setSaving(true)
     setSaveError('')
     try {
-      const configJSON = buildTransportConfig({ targetKind, chainProtocol, chainMethod, realityServer, realityPort: realityPortValue, mode, tunnelKind, sshPort: sshPortValue, keepalive: keepaliveValue })
+      const configJSON = buildTransportConfig({ targetKind, chainProtocol, chainMethod, realityServer, realityPort: realityPortValue, mode, tunnelKind, sshPort: sshPortValue, keepalive: keepaliveValue, addressFamily })
       await onSubmit({
         transport_mode: mode,
         processing_role: false,
@@ -295,6 +310,9 @@ export function TransportDialog({
             <label className="transport-field"><span>握手端口</span><input type="number" min={1} max={65535} value={realityPort} onChange={event => setRealityPort(event.target.value)} aria-invalid={realityInvalid} /></label>
             {realityInvalid && <small className="transport-field-error">请输入有效域名和 1 到 65535 的端口。</small>}
           </div>}
+          {allowAddressFamily && <div className="transport-settings-row">
+            <label className="transport-field"><span>连接地址族</span><select value={addressFamily} onChange={event => setAddressFamily(event.target.value as AddressFamily)}>{ADDRESS_FAMILY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small className="muted">上一跳连接这一跳时使用的 IP 版本，只影响这一段。双栈线路质量不同时再调整。</small></label>
+          </div>}
           {mode === 'tunnel' && <div className="transport-settings-row">
             <label className="transport-field"><span>隧道类型</span><select value={tunnelKind} onChange={event => setTunnelKind(event.target.value as TunnelKind)}><option value="ssh">SSH 隧道</option><option value="wireguard">WireGuard 隧道</option></select></label>
             {needsSSHPort && <label className="transport-field"><span>目标端隧道服务端口</span><input type="number" min={1} max={65535} value={sshPort} placeholder="1-65535" onChange={event => setSSHPort(event.target.value)} aria-invalid={sshPortInvalid} /><small className={sshPortInvalid ? 'transport-field-error' : 'muted'}>{sshPortInvalid ? '端口必须是 1 到 65535 的整数。' : 'OBoard 专用服务端口，不是服务器登录端口。'}</small></label>}
@@ -325,7 +343,7 @@ export function TransportDialog({
 
         <div className="transport-preview">
           <span>本次变更</span>
-          <strong>{describeSelection(target, mode, selectedTarget, tunnelKind, sshPortValue, currentPreview)}</strong>
+          <strong>{describeSelection(target, mode, selectedTarget, tunnelKind, sshPortValue, addressFamily, currentPreview)}</strong>
           {reuseEnabled && <div className="transport-preview-status" aria-live="polite">
             {previewLoading ? <small className="muted">正在检查拓扑...</small> : previewError ? <small className="transport-field-error">{previewError}</small> : currentPreview?.valid ? <small className="muted">拓扑检查通过</small> : null}
             {!previewAvailable && <small role="alert">暂时无法检查拓扑，请关闭后重试。</small>}
@@ -353,7 +371,7 @@ function TargetGroup({ title, options, selected, onChoose }: { title: string; op
 export function buildProxyPathReuseRequest(input: {
   sources: ProxyPathReuseSource[]; targetServerID: number; targetKind: 'generated' | 'existing'; targetInboundID: number
   chainProtocol: GeneratedChainProtocol; chainMethod: string; realityServer: string; realityPort: number
-  mode: TransportMode; tunnelKind: TunnelKind; sshPort: number; keepalive: number; copyMode: BranchCopyMode; branchPathID: number
+  mode: TransportMode; tunnelKind: TunnelKind; sshPort: number; keepalive: number; addressFamily?: AddressFamily; copyMode: BranchCopyMode; branchPathID: number
 }): ProxyPathReuseRequest {
   const request: ProxyPathReuseRequest = {
     sources: input.sources,
@@ -376,13 +394,15 @@ export function buildProxyPathReuseRequest(input: {
     if (input.tunnelKind === 'ssh') request.ssh_port = input.sshPort
     else request.persistent_keepalive = input.keepalive
   }
+  if (input.addressFamily && input.addressFamily !== 'auto') request.address_family = input.addressFamily
   if (request.copy_mode === 'single') request.branch_path_id = input.branchPathID
   return request
 }
 
-function buildTransportConfig(input: { targetKind: 'generated' | 'existing'; chainProtocol: GeneratedChainProtocol; chainMethod: string; realityServer: string; realityPort: number; mode: TransportMode; tunnelKind: TunnelKind; sshPort: number; keepalive: number }) {
-  if (input.mode === 'port_forward') return '{}'
+function buildTransportConfig(input: { targetKind: 'generated' | 'existing'; chainProtocol: GeneratedChainProtocol; chainMethod: string; realityServer: string; realityPort: number; mode: TransportMode; tunnelKind: TunnelKind; sshPort: number; keepalive: number; addressFamily: AddressFamily }) {
   const config: Record<string, string | number> = {}
+  if (input.addressFamily !== 'auto') config.address_family = input.addressFamily
+  if (input.mode === 'port_forward') return JSON.stringify(config)
   if (input.targetKind === 'generated') {
     config.chain_protocol = input.chainProtocol
     if (input.chainProtocol === 'shadowsocks') config.chain_method = input.chainMethod
@@ -399,11 +419,12 @@ function buildTransportConfig(input: { targetKind: 'generated' | 'existing'; cha
   return JSON.stringify(config)
 }
 
-function describeSelection(target: TransportDialogTarget, mode: TransportMode, selected: ProxyPathReuseTargetOption | undefined, tunnelKind: TunnelKind, sshPort: number, preview: ProxyPathReusePreview | null) {
+function describeSelection(target: TransportDialogTarget, mode: TransportMode, selected: ProxyPathReuseTargetOption | undefined, tunnelKind: TunnelKind, sshPort: number, addressFamily: AddressFamily, preview: ProxyPathReusePreview | null) {
   const service = selected?.kind === 'existing' ? `复用 ${selected.label}` : selected?.label || '系统生成入口'
   const transport = mode === 'port_forward' ? '透明端口转发' : mode === 'tunnel' ? `${tunnelKind === 'wireguard' ? 'WireGuard' : `SSH${sshPort > 0 ? ` :${sshPort}` : ''}`} 隧道` : 'sing-box 出站链'
   const count = preview?.result_path_count ? ` · 生成 ${preview.result_path_count} 条路径` : ''
-  return `${target.sourceLabel} → ${target.targetLabel} · ${transport} · ${service}${count}`
+  const family = addressFamily === 'auto' ? '' : ` · ${ADDRESS_FAMILY_OPTIONS.find(option => option.value === addressFamily)?.label}`
+  return `${target.sourceLabel} → ${target.targetLabel} · ${transport}${family} · ${service}${count}`
 }
 
 function targetOptionSelected(option: ProxyPathReuseTargetOption, kind: 'generated' | 'existing', inboundID: number, protocol: GeneratedChainProtocol, method: string) {
@@ -429,6 +450,10 @@ function parseConfig(raw?: string): Record<string, any> {
   } catch {
     return {}
   }
+}
+
+function addressFamilyOr(value: any): AddressFamily {
+  return ADDRESS_FAMILY_OPTIONS.some(option => option.value === value) ? value : 'auto'
 }
 
 function stringOr(value: any, fallback: string) {

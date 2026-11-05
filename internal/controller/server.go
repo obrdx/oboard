@@ -11200,6 +11200,77 @@ func (s *Server) validateProxyPathStep(ctx context.Context, v *model.ProxyPathSt
 }
 
 func (s *Server) normalizeProxyPathStepCandidate(ctx context.Context, path *model.ProxyPath, v *model.ProxyPathStep) error {
+	requested, err := takeProxyPathStepAddressFamily(v)
+	if err != nil {
+		return err
+	}
+	if err := s.normalizeProxyPathStepConfig(ctx, path, v); err != nil {
+		return err
+	}
+	return applyProxyPathStepAddressFamily(path, v, requested)
+}
+
+// takeProxyPathStepAddressFamily removes address_family from the submitted
+// config so the per-transport allowlists below never see it, and returns the
+// validated value.
+func takeProxyPathStepAddressFamily(v *model.ProxyPathStep) (string, error) {
+	raw := strings.TrimSpace(v.ConfigJSON)
+	if raw == "" {
+		return core.ProxyPathAddressFamilyAuto, nil
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		return "", fmt.Errorf("config_json: %w", err)
+	}
+	value, ok := cfg[core.ProxyPathAddressFamilyConfigKey]
+	if !ok {
+		return core.ProxyPathAddressFamilyAuto, nil
+	}
+	text, isString := value.(string)
+	if value != nil && !isString {
+		return "", errors.New("address_family 必须是字符串")
+	}
+	family, err := core.NormalizeProxyPathAddressFamily(text)
+	if err != nil {
+		return "", err
+	}
+	delete(cfg, core.ProxyPathAddressFamilyConfigKey)
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		return "", err
+	}
+	v.ConfigJSON = string(encoded)
+	return family, nil
+}
+
+// applyProxyPathStepAddressFamily writes the per-segment address family back
+// into the normalized step config. auto is stored by omission.
+func applyProxyPathStepAddressFamily(path *model.ProxyPath, v *model.ProxyPathStep, family string) error {
+	if family == "" || family == core.ProxyPathAddressFamilyAuto {
+		return nil
+	}
+	switch v.NodeType {
+	case model.ProxyPathStepServerInbound, model.ProxyPathStepImported:
+	default:
+		return errors.New("WARP 和 VPNGate 出口不支持设置这一段的地址族")
+	}
+	if path != nil && path.Kind == model.ProxyPathKindFamilyBranch {
+		return errors.New("IPv4/IPv6 分流模板的分支已经固定地址族，不能再为单段设置")
+	}
+	cfg := map[string]any{}
+	if err := json.Unmarshal([]byte(v.ConfigJSON), &cfg); err != nil || cfg == nil {
+		cfg = map[string]any{}
+	}
+	cfg[core.ProxyPathAddressFamilyConfigKey] = family
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	v.ConfigJSON = string(encoded)
+	return nil
+}
+
+func (s *Server) normalizeProxyPathStepConfig(ctx context.Context, path *model.ProxyPath, v *model.ProxyPathStep) error {
 	if v.TransportMode == "" {
 		v.TransportMode = model.ProxyPathTransportSingBox
 	}

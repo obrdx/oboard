@@ -371,6 +371,7 @@ export function FamilySplitTemplateEditor({ data, client, load, chainMethods, in
         <TransportDialog
           target={transport.target}
           allowedModes={allowedModes}
+          allowAddressFamily={false}
           chainMethods={chainMethods}
           onCancel={() => setTransport(null)}
           onSubmit={selection => void submitHop(transport.family, { node_type: 'server_inbound' }, selection)}

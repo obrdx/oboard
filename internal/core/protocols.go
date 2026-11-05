@@ -1630,7 +1630,14 @@ func proxyPathStepOutbound(path model.ProxyPath, step model.ProxyPathStep, sourc
 		if err := ValidateAddressForIPStack(EffectiveIPStack(sourceServer), external.TargetAddress); err != nil {
 			return nil, markInvalidDesiredState(err)
 		}
-		return externalOutboundToSingBoxWithTag(external, sourceServer, firstActiveUser(users), outboundTag)
+		item, err := externalOutboundToSingBoxWithTag(external, sourceServer, firstActiveUser(users), outboundTag)
+		if err != nil {
+			return nil, err
+		}
+		if err := applyProxyPathImportedAddressFamily(item, external, ProxyPathStepAddressFamily(step)); err != nil {
+			return nil, err
+		}
+		return item, nil
 	case model.ProxyPathStepServerInbound:
 		var inbound model.Inbound
 		var targetServer model.Server
@@ -1661,7 +1668,7 @@ func proxyPathStepOutbound(path model.ProxyPath, step model.ProxyPathStep, sourc
 		if !ok {
 			return nil, fmt.Errorf("target server not found")
 		}
-		address, err := ResolveReachableEntryAddress(sourceServer, inbound, targetServer)
+		address, err := resolveProxyPathStepAddress(sourceServer, targetServer, &inbound, ProxyPathStepAddressFamily(step))
 		if err != nil {
 			return nil, err
 		}

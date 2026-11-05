@@ -34,6 +34,7 @@ type proxyPathReuseRequest struct {
 	TunnelType             model.TunnelType                 `json:"tunnel_type,omitempty"`
 	SSHPort                int                              `json:"ssh_port,omitempty"`
 	PersistentKeepalive    int                              `json:"persistent_keepalive,omitempty"`
+	AddressFamily          string                           `json:"address_family,omitempty"`
 	CopyMode               string                           `json:"copy_mode,omitempty"`
 	BranchPathID           int64                            `json:"branch_path_id,omitempty"`
 }
@@ -671,6 +672,9 @@ func proxyPathReuseTargetStep(request proxyPathReuseRequest, targetInbound *mode
 		} else {
 			cfg["persistent_keepalive"] = request.PersistentKeepalive
 		}
+	}
+	if request.AddressFamily != "" {
+		cfg[core.ProxyPathAddressFamilyConfigKey] = request.AddressFamily
 	}
 	b, _ := json.Marshal(cfg)
 	step.ConfigJSON = string(b)

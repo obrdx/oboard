@@ -1213,7 +1213,7 @@ func buildProxyPathTopology(paths []model.ProxyPath, steps []model.ProxyPathStep
 					if !sourceOK || !targetServerOK {
 						return nil, fmt.Errorf("代理路径 %s 第 %d 跳无法确定源/目标服务器", path.Name, step.Position)
 					}
-					if _, err := ResolveReachableEntryAddress(sourceServer, plannedInbound, targetServer); err != nil {
+					if _, err := resolveProxyPathStepAddress(sourceServer, targetServer, &plannedInbound, ProxyPathStepAddressFamily(step)); err != nil {
 						return nil, fmt.Errorf("代理路径 %s 第 %d 跳: %w", path.Name, step.Position, err)
 					}
 				}
@@ -2255,7 +2255,7 @@ func proxyPathManagedPortForward(path model.ProxyPath, step model.ProxyPathStep,
 	}
 	backend := model.ForwardBackendRealm
 	protocol := transparentForwardProtocol(root)
-	targetAddress, err := proxyPathReachableServerAddress(source, target)
+	targetAddress, err := resolveProxyPathStepAddress(source, target, nil, ProxyPathStepAddressFamily(step))
 	if err != nil {
 		return model.PortForward{}, fmt.Errorf("路径 %s 第 %d 跳: %w", path.Name, step.Position, err)
 	}
@@ -2286,7 +2286,7 @@ func proxyPathManagedTunnel(path model.ProxyPath, step model.ProxyPathStep, sour
 	if !ok {
 		return model.Tunnel{}, fmt.Errorf("路径 %s 第 %d 跳目标服务器不存在", path.Name, step.Position)
 	}
-	targetEndpoint, err := ResolveReachableServerEntryAddress(source, target)
+	targetEndpoint, err := resolveProxyPathStepAddress(source, target, nil, ProxyPathStepAddressFamily(step))
 	if err != nil {
 		return model.Tunnel{}, fmt.Errorf("路径 %s 第 %d 跳: %w", path.Name, step.Position, err)
 	}
@@ -2390,15 +2390,25 @@ func proxyPathTunnelReuseKey(step model.ProxyPathStep, sourceServerID, targetSer
 	switch model.TunnelType(typeName) {
 	case model.TunnelTypeSSH:
 		sshPort := intValueFromMap(cfg, "ssh_port", 0)
-		return fmt.Sprintf("ssh:%d:%d:%d:%d", sourceServerID, targetServerID, sshPort, targetInbound.Port)
+		return fmt.Sprintf("ssh:%d:%d:%d:%d", sourceServerID, targetServerID, sshPort, targetInbound.Port) + proxyPathTunnelFamilySuffix(step)
 	case model.TunnelTypeWireGuard:
 		// persistent_keepalive is a tuning value, not part of the peer identity.
 		// Including it would rotate the whole key pair and the interface addresses
 		// when an operator only adjusts the keepalive interval.
-		return fmt.Sprintf("wireguard:%d:%d", sourceServerID, targetServerID)
+		return fmt.Sprintf("wireguard:%d:%d", sourceServerID, targetServerID) + proxyPathTunnelFamilySuffix(step)
 	default:
 		return fmt.Sprintf("%s:%d:%d", typeName, sourceServerID, targetServerID)
 	}
+}
+
+// proxyPathTunnelFamilySuffix separates tunnels that dial the same pair over
+// different address families. auto adds nothing so existing tunnel identities
+// and credentials stay stable.
+func proxyPathTunnelFamilySuffix(step model.ProxyPathStep) string {
+	if family := ProxyPathStepAddressFamily(step); family != ProxyPathAddressFamilyAuto {
+		return ":family=" + family
+	}
+	return ""
 }
 
 func proxyPathTunnelDialTarget(tunnel model.Tunnel) (string, int, error) {

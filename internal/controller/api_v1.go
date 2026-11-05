@@ -1407,6 +1407,7 @@ func decodeTopologyWriteOperation(input json.RawMessage) (topologyWriteOperation
 		SSHPort             int                              `json:"ssh_port,omitempty"`
 		PersistentKeepalive *int                             `json:"persistent_keepalive,omitempty"`
 		VPNGatePoolID       int64                            `json:"vpngate_pool_id,omitempty"`
+		AddressFamily       string                           `json:"address_family,omitempty"`
 	}
 	var wire struct {
 		Path        model.ProxyPath    `json:"path"`
@@ -1435,6 +1436,15 @@ func decodeTopologyWriteOperation(input json.RawMessage) (topologyWriteOperation
 		}
 		if step.NodeType == model.ProxyPathStepVPNGate {
 			step.ConfigJSON = fmt.Sprintf(`{"vpngate_pool_id":%d}`, value.VPNGatePoolID)
+		}
+		if value.AddressFamily != "" {
+			config := map[string]any{}
+			if strings.TrimSpace(step.ConfigJSON) != "" {
+				_ = json.Unmarshal([]byte(step.ConfigJSON), &config)
+			}
+			config[core.ProxyPathAddressFamilyConfigKey] = value.AddressFamily
+			encoded, _ := json.Marshal(config)
+			step.ConfigJSON = string(encoded)
 		}
 		request.Steps = append(request.Steps, step)
 	}
