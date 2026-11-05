@@ -65,12 +65,21 @@ func proxyPathAddressFamilyOrder(family string) (order []string, strict bool) {
 // dials a protocol inbound directly (sing-box chain); forwards and tunnels pass
 // nil because their target-side listener is managed separately.
 func resolveProxyPathStepAddress(source, target model.Server, inbound *model.Inbound, family string) (string, error) {
+	address, _, err := resolveProxyPathStepDial(source, target, inbound, family)
+	return address, err
+}
+
+// resolveProxyPathStepDial also returns the resolver strategy a sing-box
+// outbound must use when the chosen address is a domain (custom entry domain).
+func resolveProxyPathStepDial(source, target model.Server, inbound *model.Inbound, family string) (string, string, error) {
 	order, strict := proxyPathAddressFamilyOrder(family)
 	if len(order) == 0 {
 		if inbound != nil {
-			return ResolveReachableEntryAddress(source, *inbound, target)
+			address, err := ResolveReachableEntryAddress(source, *inbound, target)
+			return address, "", err
 		}
-		return ResolveReachableServerEntryAddress(source, target)
+		address, err := ResolveReachableServerEntryAddress(source, target)
+		return address, "", err
 	}
 	mode := target.EntryIPMode
 	externalIP := ""
@@ -84,12 +93,26 @@ func resolveProxyPathStepAddress(source, target model.Server, inbound *model.Inb
 		address := entryAddressForMode(mode, externalIP, target)
 		addressFamily := AddressFamily(address)
 		if addressFamily == "domain" {
-			return "", markInvalidDesiredState(fmt.Errorf("目标服务器 %s 使用自定义域名入口，不能为这一段指定地址族；请改回默认", target.Name))
+			// The domain is kept; the family becomes the outbound's resolver
+			// strategy. Forwards and tunnels resolve on the Agent and cannot.
+			if inbound == nil {
+				return "", "", markInvalidDesiredState(fmt.Errorf("目标服务器 %s 的入口是自定义域名 %s，端口转发和隧道无法为它指定地址族；请改用 sing-box 出站链，或把入口地址改为 IP", target.Name, address))
+			}
+			if strict {
+				if listenIP := EffectiveListenIP(target, inbound.ListenIP); !ListenIPSupportsFamily(listenIP, order[0]) {
+					return "", "", markInvalidDesiredState(fmt.Errorf("目标入口监听地址 %q 不接受 %s 连接", listenIP, strings.ToUpper(order[0])))
+				}
+				if (order[0] == "ipv6" && EffectiveIPStack(source) == model.IPStackIPv4Only) || (order[0] == "ipv4" && EffectiveIPStack(source) == model.IPStackIPv6Only) {
+					return "", "", markInvalidDesiredState(fmt.Errorf("源服务器 %s（%s）无法连接 %s", source.Name, EffectiveIPStack(source), strings.ToUpper(order[0])))
+				}
+			}
+			return address, family, nil
 		}
 		if strict && addressFamily != order[0] {
-			return "", markInvalidDesiredState(fmt.Errorf("目标服务器 %s 的自定义入口地址 %q 不是 %s，不能使用“仅 %s”", target.Name, address, strings.ToUpper(order[0]), strings.ToUpper(order[0])))
+			return "", "", markInvalidDesiredState(fmt.Errorf("目标服务器 %s 的自定义入口地址 %q 不是 %s，不能使用“仅 %s”", target.Name, address, strings.ToUpper(order[0]), strings.ToUpper(order[0])))
 		}
-		return validateReachableServerAddress(source, target, address)
+		resolved, err := validateReachableServerAddress(source, target, address)
+		return resolved, "", err
 	}
 	reasons := make([]string, 0, len(order))
 	for _, candidate := range order {
@@ -112,9 +135,9 @@ func resolveProxyPathStepAddress(source, target model.Server, inbound *model.Inb
 			reasons = append(reasons, fmt.Sprintf("源服务器 %s（%s）无法连接 %s", source.Name, EffectiveIPStack(source), label))
 			continue
 		}
-		return address, nil
+		return address, "", nil
 	}
-	return "", markInvalidDesiredState(fmt.Errorf("这一段的地址族设置（%s）无法满足：%s", family, strings.Join(reasons, "；")))
+	return "", "", markInvalidDesiredState(fmt.Errorf("这一段的地址族设置（%s）无法满足：%s", family, strings.Join(reasons, "；")))
 }
 
 // applyProxyPathImportedAddressFamily applies the segment family to a

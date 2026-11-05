@@ -73,8 +73,15 @@ func TestResolveProxyPathStepAddressFamilies(t *testing.T) {
 	custom := target
 	custom.EntryIPMode = model.EntryIPModeCustom
 	custom.EntryAddress = "entry.example.com"
-	if _, err := resolveProxyPathStepAddress(source, custom, nil, ProxyPathAddressFamilyPreferIPv6); err == nil {
-		t.Fatal("custom domain entry with a family must fail")
+	if _, err := resolveProxyPathStepAddress(source, custom, nil, ProxyPathAddressFamilyPreferIPv6); err == nil || !strings.Contains(err.Error(), "sing-box") {
+		t.Fatalf("forward/tunnel to a custom domain entry with a family must fail: %v", err)
+	}
+	address, strategy, err := resolveProxyPathStepDial(source, custom, &dual, ProxyPathAddressFamilyPreferIPv6)
+	if err != nil || address != "entry.example.com" || strategy != "prefer_ipv6" {
+		t.Fatalf("chain to custom domain = %q %q err=%v", address, strategy, err)
+	}
+	if _, _, err := resolveProxyPathStepDial(source, custom, &v4Listener, ProxyPathAddressFamilyIPv6Only); err == nil {
+		t.Fatal("ipv6_only custom domain to an IPv4 listener must fail")
 	}
 }
 
@@ -115,6 +122,18 @@ func TestProxyPathAddressFamilyAppliesToTunnelAndChain(t *testing.T) {
 	}
 	if item["server"] != "2001:db8::2" {
 		t.Fatalf("chain outbound server = %v", item["server"])
+	}
+
+	custom := target
+	custom.EntryIPMode = model.EntryIPModeCustom
+	custom.EntryAddress = "cogent.example.com"
+	item, err = proxyPathStepOutbound(paths[0], chain, source, map[int64]model.Server{source.ID: source, custom.ID: custom}, map[int64]model.Inbound{inbound.ID: inbound}, nil, nil, "path-10-step-1", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver, _ := item["domain_resolver"].(map[string]any)
+	if item["server"] != "cogent.example.com" || resolver["strategy"] != "prefer_ipv6" {
+		t.Fatalf("custom domain chain outbound = %v resolver=%v", item["server"], resolver)
 	}
 }
 

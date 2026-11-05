@@ -1668,7 +1668,7 @@ func proxyPathStepOutbound(path model.ProxyPath, step model.ProxyPathStep, sourc
 		if !ok {
 			return nil, fmt.Errorf("target server not found")
 		}
-		address, err := resolveProxyPathStepAddress(sourceServer, targetServer, &inbound, ProxyPathStepAddressFamily(step))
+		address, resolverStrategy, err := resolveProxyPathStepDial(sourceServer, targetServer, &inbound, ProxyPathStepAddressFamily(step))
 		if err != nil {
 			return nil, err
 		}
@@ -1691,6 +1691,11 @@ func proxyPathStepOutbound(path model.ProxyPath, step model.ProxyPathStep, sourc
 			}
 		}
 		item["tag"] = outboundTag
+		if resolverStrategy != "" {
+			resolver := domainResolverMap(item["domain_resolver"])
+			resolver["strategy"] = resolverStrategy
+			item["domain_resolver"] = resolver
+		}
 		applyServerNetworkPolicy(item, sourceServer, inbound.Protocol, false)
 		omitUnsupportedDialTCPFastOpen(item)
 		return item, nil
