@@ -61,6 +61,8 @@ import type {
   TimeCorrectionMode,
 } from './components/proxy-path/types'
 import { TransportDialog } from './components/proxy-path/TransportDialog'
+import { NextHopFamilyDialog } from './components/proxy-path/NextHopFamilyDialog'
+import { nextHopSteps, sharedStepGroup, stepAddressFamily, summarizeAddressFamily, withAddressFamily, type NextHopNode } from './components/proxy-path/next-hop-family'
 import { AddThirdPartyNodeDialog, ThirdPartyNodesDialog, checkThirdPartyNode, externalProtocolLabel, newThirdPartyNodeDraft, submitThirdPartyNode, type ExternalOutboundCheck, type ThirdPartyNodeDraft } from './components/proxy-path/ThirdPartyNodes'
 import { FamilySplitTemplateEditor } from './components/proxy-path/FamilySplitTemplateEditor'
 import { TrafficForwardingPage } from './components/traffic-forwarding/TrafficForwardingPage'
@@ -93,7 +95,7 @@ import {
   sortServerEntriesForGraph,
 } from './components/proxy-path/layout'
 import type { GraphDirectExitInstance, GraphPosition } from './components/proxy-path/layout'
-import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetOption, TransportDialogTarget, TransportMode as PathTransportMode, TransportSelection } from './components/proxy-path/TransportDialog'
+import type { AddressFamily, ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetOption, TransportDialogTarget, TransportMode as PathTransportMode, TransportSelection } from './components/proxy-path/TransportDialog'
 import { SERVER_GRAPH_SOURCE_HANDLE, graphConnectionSourceIntent, graphServerEntrySourceOptions, inboundIDFromServerHandle, isGenericServerSourceHandle, serverEntryHandleID, serverEntryTargetHandleID, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
 import { GraphSourceSelectionDialog, type GraphSourceSelectionRequest } from './components/proxy-path/GraphSourceSelectionDialog'
 import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphExpandedPathIDsByStep, graphFocusState, mergeGraphPathIDs } from './components/proxy-path/graph-topology'
@@ -9299,8 +9301,10 @@ type TransportDialogRequest = {
   target: TransportDialogTarget
   current?: string
 	currentMode?: PathTransportMode
+  inheritedAddressFamily?: AddressFamily
   resolve: (value: TransportSelection | null) => void
 }
+type NextHopFamilyRequest = { node: NextHopNode; label: string; steps: ProxyPathStep[] }
 export function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, topbarTarget, onServerSnapshot, patchPageData, focusRequest, notify }: any) {
   const dialogs = useDialogs()
   const servers: Server[] = data.servers || []
@@ -9435,6 +9439,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	const [configNode, setConfigNode] = useState<ExternalOutbound | null>(null)
 	const [namingPath, setNamingPath] = useState<ProxyPath | null>(null)
 	const [transportRequest, setTransportRequest] = useState<TransportDialogRequest | null>(null)
+	const [nextHopFamilyRequest, setNextHopFamilyRequest] = useState<NextHopFamilyRequest | null>(null)
 	const [familySplitEditor, setFamilySplitEditor] = useState<{ templateID?: number; select?: boolean } | null>(null)
 	const [sourceSelectionRequest, setSourceSelectionRequest] = useState<GraphSourceSelectionRequest | null>(null)
   const [graphMenu, setGraphMenu] = useState<GraphContextMenu | null>(null)
@@ -10177,7 +10182,62 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	    },
 	    current: current?.config_json,
 	    currentMode: current?.transport_mode as PathTransportMode | undefined,
+	    inheritedAddressFamily: current ? undefined : inheritedNextHopFamily(sources),
 	  })
+	}
+	// A new segment follows its source node's outgoing family when every
+	// existing segment leaving that node already agrees on it.
+	const inheritedNextHopFamily = (sources?: ProxyPathReuseSource[]): AddressFamily | undefined => {
+	  if (!sources?.length) return undefined
+	  const families = new Set(sources.map(source => {
+	    const node: NextHopNode | null = source.step_id ? { type: 'proxy-path-step', id: source.step_id } : source.inbound_id ? { type: 'entry', id: source.inbound_id } : null
+	    return node ? summarizeAddressFamily(nextHopSteps(node, data.proxy_paths || [], data.proxy_path_steps || [], entries)) : 'auto'
+	  }))
+	  const [family] = [...families]
+	  return families.size === 1 && family !== 'mixed' && family !== 'auto' ? family : undefined
+	}
+	const nextHopNodeForEntity = (entity: GraphEntity): NextHopNode | null => {
+	  if (entity.type === 'entry' || entity.type === 'server') return { type: entity.type, id: entity.id }
+	  if (entity.type === 'proxy-path-step') {
+	    const step = ((data.proxy_path_steps || []) as ProxyPathStep[]).find(item => item.id === entity.id)
+	    return step?.node_type === 'server_inbound' ? { type: 'proxy-path-step', id: step.id } : null
+	  }
+	  return null
+	}
+	const nextHopStepsForEntity = (entity: GraphEntity) => {
+	  const node = nextHopNodeForEntity(entity)
+	  return node ? nextHopSteps(node, data.proxy_paths || [], data.proxy_path_steps || [], entries) : []
+	}
+	const openNextHopFamily = () => {
+	  const menu = graphMenu
+	  setGraphMenu(null)
+	  if (!menu) return
+	  const node = nextHopNodeForEntity(menu.entity)
+	  const steps = nextHopStepsForEntity(menu.entity)
+	  if (node && steps.length) setNextHopFamilyRequest({ node, label: graphConnectionSourceTitle(menu.entity), steps })
+	}
+	const nextHopTargetLabel = (step: ProxyPathStep) => {
+	  if (step.node_type === 'imported') return ((data.external_outbounds || []) as ExternalOutbound[]).find(item => item.id === step.external_outbound_id)?.name || '导入节点'
+	  const serverID = step.server_id || entries.find(entry => entry.id === step.inbound_id)?.server_id
+	  return servers.find(server => server.id === serverID)?.name || `服务器 ${serverID || ''}`.trim()
+	}
+	// Each outgoing segment is its own step row; patch them all so paths that
+	// share the node keep sharing it on the canvas.
+	const applyNextHopFamily = async (request: NextHopFamilyRequest, family: AddressFamily) => {
+	  const failures: string[] = []
+	  for (const step of request.steps) {
+	    const config_json = withAddressFamily(step.config_json, family)
+	    if (stepAddressFamily(step) === family) continue
+	    try {
+	      const result = await client.request(`/proxy-path-steps/${step.id}`, { method: 'PATCH', body: JSON.stringify({ ...step, config_json }) }) as Record<string, any>
+	      applyMutationResult(result)
+	    } catch (e: any) {
+	      failures.push(`${nextHopTargetLabel(step)}：${localizeErrorMessage(e.message || e)}`)
+	    }
+	  }
+	  reconcileTopology()
+	  if (failures.length) throw new Error(failures.join('；'))
+	  setNextHopFamilyRequest(null)
 	}
 	const reuseControlledTarget = async (sources: ProxyPathReuseSource[], target: { node_type: 'server_inbound'; server_id?: number; inbound_id?: number }, sourceLabel?: string) => {
 	  const selection = await chooseTransportForTarget(target, undefined, sourceLabel, sources)
@@ -11357,8 +11417,15 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	    const pathSteps: ProxyPathStep[] = (data.proxy_path_steps || []).filter((item: ProxyPathStep) => item.path_id === step.path_id)
 	    const candidateSteps = pathSteps.map(item => item.id === step.id ? { ...item, ...stepPatch } : item)
 	    if (transport.transport_mode === 'port_forward' && path && !await ensureTransparentPrefixCompatible(path.id, path.inbound_id, candidateSteps)) return
-	    const result = await client.request(`/proxy-path-steps/${step.id}`, { method: 'PATCH', body: JSON.stringify({ ...step, ...stepPatch }) }) as Record<string, any>
-	    applyMutationResult(result)
+	    // The canvas shows one node for every path sharing this prefix; change all
+	    // of them, otherwise the edited path splits off the shared trunk.
+	    const visiblePaths = ((data.proxy_paths || []) as ProxyPath[]).filter(item => item.enabled !== false)
+	    const group = sharedStepGroup(visiblePaths, data.proxy_path_steps || [], step.id)
+	    const targets = group.some(item => item.id === step.id) ? group : [step]
+	    for (const item of targets) {
+	      const result = await client.request(`/proxy-path-steps/${item.id}`, { method: 'PATCH', body: JSON.stringify({ ...item, ...stepPatch }) }) as Record<string, any>
+	      applyMutationResult(result)
+	    }
 	    reconcileTopology()
 	  } catch (e: any) {
 	    await dialogs.alert({ title: '更新失败', message: localizeErrorMessage(e.message || e) })
@@ -11915,6 +11982,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
               {(graphMenu.entity.type === 'proxy-path-step' || (graphMenu.entity.type === 'direct' && graphMenu.entity.path_id)) && <button type="button" role="menuitem" onClick={editProxyPathName}><Edit3 size={14} />链路设置</button>}
               {graphMenu.source === 'edge' && graphMenu.entity.type === 'proxy-path-step' && <button type="button" role="menuitem" onClick={() => void disconnectGraphMenuEdge()}><Unlink size={14} />断开</button>}
               {graphMenu.source === 'node' && relationTargetForEntity(graphMenu.entity, graphMenu.pathIDs) && <button type="button" role="menuitem" onClick={() => openRelatedPaths(graphMenu.entity, graphMenu.pathIDs)}><Workflow size={14} aria-hidden="true" />相关链路</button>}
+              {graphMenu.source === 'node' && nextHopStepsForEntity(graphMenu.entity).length > 0 && <button type="button" role="menuitem" onClick={openNextHopFamily}><Network size={14} aria-hidden="true" />后续连接地址族</button>}
               {graphMenuPrimaryLabel && <button type="button" role="menuitem" onClick={() => void openGraphMenuEntity()}>{graphMenu.entity.type === 'proxy-path-step' ? <ArrowLeftRight size={14} /> : <Edit3 size={14} />}{graphMenuPrimaryLabel}</button>}
               {graphMenu.entity.type === 'direct' && <button type="button" role="menuitem" onClick={copyGraphMenuDirectExit}><Copy size={14} />复制</button>}
               {graphMenu.source === 'node' && graphMenuServerID(graphMenu.entity) > 0 && <button type="button" role="menuitem" onClick={createEntryFromGraphMenu}><ProxyToolIcon kind="entry" />创建入口</button>}
@@ -11971,10 +12039,18 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	  target={transportRequest.target}
 	  current={transportRequest.current}
 	  currentMode={transportRequest.currentMode}
+	  inheritedAddressFamily={transportRequest.inheritedAddressFamily}
 	  chainMethods={proxyPathChainMethods}
 	  onPreview={request => client.request('/proxy-paths/reuse-preview', { method: 'POST', body: JSON.stringify(request) }) as Promise<ProxyPathReusePreview>}
 	  onCancel={() => { transportRequest.resolve(null); setTransportRequest(null) }}
 		  onSubmit={selection => { transportRequest.resolve(selection); setTransportRequest(null) }}
+		/>}</AnimatePresence>
+		<AnimatePresence>{nextHopFamilyRequest && <NextHopFamilyDialog
+		  nodeLabel={nextHopFamilyRequest.label}
+		  targetLabels={nextHopFamilyRequest.steps.map(nextHopTargetLabel)}
+		  current={summarizeAddressFamily(nextHopFamilyRequest.steps)}
+		  onCancel={() => setNextHopFamilyRequest(null)}
+		  onSubmit={family => applyNextHopFamily(nextHopFamilyRequest, family)}
 		/>}</AnimatePresence>
 		<AnimatePresence>{sourceSelectionRequest && <GraphSourceSelectionDialog
 		  request={sourceSelectionRequest}

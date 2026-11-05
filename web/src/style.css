@@ -4384,6 +4384,8 @@ button.routing-ruleset-card .routing-ruleset-info,
   }
 }
 .transport-dialog { width: min(820px, calc(100vw - 28px)); max-height: min(820px, calc(100dvh - 28px)); }
+.next-hop-family-dialog { width: min(640px, calc(100vw - 28px)); }
+.next-hop-family-options .transport-mode-option { min-height: 72px; }
 .transport-dialog-body { display: grid; align-content: start; gap: 12px; scrollbar-gutter: stable; overscroll-behavior: contain; }
 .transport-mode-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .transport-mode-option {

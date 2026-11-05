@@ -142,18 +142,25 @@ describe('TransportDialog preview', () => {
     expect(onSubmit).toHaveBeenCalledTimes(2)
   })
 
-  it('stores a per-segment address family and keeps it from existing config', async () => {
+  it('keeps a stored address family when editing and inherits it for new segments', async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined)
-    act(() => root.render(<TransportDialog target={{ sourceLabel: 'A', targetLabel: 'B', editing: true }} current={JSON.stringify({ chain_protocol: 'mieru', address_family: 'prefer_ipv6' })} chainMethods={[]} onCancel={() => {}} onSubmit={onSubmit} />))
-    const select = Array.from(container.querySelectorAll<HTMLSelectElement>('select')).find(item => item.closest('label')?.textContent?.includes('连接地址族'))!
-    expect(select.value).toBe('prefer_ipv6')
+    act(() => root.render(<TransportDialog target={{ sourceLabel: 'A', targetLabel: 'B', editing: true }} current={JSON.stringify({ chain_protocol: 'mieru', address_family: 'prefer_ipv6' })} inheritedAddressFamily="ipv4_only" chainMethods={[]} onCancel={() => {}} onSubmit={onSubmit} />))
+    expect(container.querySelector('select')).toBeNull()
+    expect(container.textContent).toContain('优先 IPv6')
     await act(async () => button('确定').click())
     expect(JSON.parse(onSubmit.mock.calls[0][0].config_json)).toMatchObject({ chain_protocol: 'mieru', address_family: 'prefer_ipv6' })
+
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    act(() => root.render(<TransportDialog key="new" target={{ sourceLabel: 'A', targetLabel: 'C' }} inheritedAddressFamily="prefer_ipv6" chainMethods={[]} onCancel={() => {}} onSubmit={onCreate} />))
+    await act(async () => button('确定').click())
+    expect(JSON.parse(onCreate.mock.calls[0][0].config_json).address_family).toBe('prefer_ipv6')
   })
 
-  it('hides the address family when the caller fixes the family', () => {
-    act(() => root.render(<TransportDialog target={{ sourceLabel: 'A', targetLabel: 'B', editing: true }} allowAddressFamily={false} chainMethods={[]} onCancel={() => {}} onSubmit={() => {}} />))
-    expect(container.textContent).not.toContain('连接地址族')
+  it('never stores a family when the caller fixes the family', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    act(() => root.render(<TransportDialog target={{ sourceLabel: 'A', targetLabel: 'B' }} allowAddressFamily={false} inheritedAddressFamily="ipv6_only" chainMethods={[]} onCancel={() => {}} onSubmit={onSubmit} />))
+    await act(async () => button('确定').click())
+    expect(JSON.parse(onSubmit.mock.calls[0][0].config_json).address_family).toBeUndefined()
   })
 
   it('keeps the mode settings region stable while switching transport modes', () => {
@@ -181,8 +188,7 @@ describe('TransportDialog preview', () => {
     act(() => modeButtons[1].click())
     expect(modeButtons[1].getAttribute('aria-checked')).toBe('true')
     expect(container.querySelector('.transport-mode-settings')).toBe(settings)
-    expect(settings?.textContent).toContain('连接地址族')
-    expect(settings?.textContent).not.toContain('隧道类型')
+    expect(settings?.textContent).toBe('')
   })
 })
 

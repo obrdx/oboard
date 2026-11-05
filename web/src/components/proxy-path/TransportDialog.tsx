@@ -102,6 +102,7 @@ export function TransportDialog({
   currentMode,
   allowedModes,
   allowAddressFamily = true,
+  inheritedAddressFamily,
   chainMethods,
   onPreview,
   onCancel,
@@ -112,6 +113,7 @@ export function TransportDialog({
   currentMode?: TransportMode
   allowedModes?: TransportMode[]
   allowAddressFamily?: boolean
+  inheritedAddressFamily?: AddressFamily
   chainMethods: ChainMethodOption[]
   onPreview?: (request: ProxyPathReuseRequest) => Promise<ProxyPathReusePreview>
   onCancel: () => void
@@ -138,8 +140,9 @@ export function TransportDialog({
     return stored > 0 ? String(stored) : ''
   })
   const [keepalive, setKeepalive] = useState<string>(() => String(numberOr(existing.persistent_keepalive, DEFAULT_KEEPALIVE)))
-  const [addressFamilySetting, setAddressFamily] = useState<AddressFamily>(() => addressFamilyOr(existing.address_family))
-  const addressFamily: AddressFamily = allowAddressFamily ? addressFamilySetting : 'auto'
+  // The family is edited from the source node (后续连接地址族). Editing a
+  // segment keeps its stored value; a new segment follows its source node.
+  const addressFamily: AddressFamily = allowAddressFamily ? addressFamilyOr(current ? existing.address_family : inheritedAddressFamily) : 'auto'
   const [copyMode, setCopyMode] = useState<BranchCopyMode>('none')
   const [branchPathID, setBranchPathID] = useState(0)
   const [preview, setPreview] = useState<ProxyPathReusePreview | null>(null)
@@ -310,9 +313,6 @@ export function TransportDialog({
             <label className="transport-field"><span>握手端口</span><input type="number" min={1} max={65535} value={realityPort} onChange={event => setRealityPort(event.target.value)} aria-invalid={realityInvalid} /></label>
             {realityInvalid && <small className="transport-field-error">请输入有效域名和 1 到 65535 的端口。</small>}
           </div>}
-          {allowAddressFamily && <div className="transport-settings-row">
-            <label className="transport-field"><span>连接地址族</span><select value={addressFamily} onChange={event => setAddressFamily(event.target.value as AddressFamily)}>{ADDRESS_FAMILY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small className="muted">上一跳连接这一跳时使用的 IP 版本，只影响这一段。双栈线路质量不同时再调整。</small></label>
-          </div>}
           {mode === 'tunnel' && <div className="transport-settings-row">
             <label className="transport-field"><span>隧道类型</span><select value={tunnelKind} onChange={event => setTunnelKind(event.target.value as TunnelKind)}><option value="ssh">SSH 隧道</option><option value="wireguard">WireGuard 隧道</option></select></label>
             {needsSSHPort && <label className="transport-field"><span>目标端隧道服务端口</span><input type="number" min={1} max={65535} value={sshPort} placeholder="1-65535" onChange={event => setSSHPort(event.target.value)} aria-invalid={sshPortInvalid} /><small className={sshPortInvalid ? 'transport-field-error' : 'muted'}>{sshPortInvalid ? '端口必须是 1 到 65535 的整数。' : 'OBoard 专用服务端口，不是服务器登录端口。'}</small></label>}
@@ -341,6 +341,7 @@ export function TransportDialog({
           {copyMode === 'all' && branchOptions.some(branch => !branch.eligible) && <div className="transport-invalid-branches">{branchOptions.filter(branch => !branch.eligible).map(branch => <span key={branch.path_id}><strong>{branch.name}</strong>{branch.reason || '无法复制'}</span>)}</div>}
         </section>}
 
+        {addressFamily !== 'auto' && <small className="muted">连接地址族：{ADDRESS_FAMILY_OPTIONS.find(option => option.value === addressFamily)?.label}（在上一节点右键“后续连接地址族”中修改）</small>}
         <div className="transport-preview">
           <span>本次变更</span>
           <strong>{describeSelection(target, mode, selectedTarget, tunnelKind, sshPortValue, addressFamily, currentPreview)}</strong>
