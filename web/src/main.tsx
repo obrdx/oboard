@@ -10547,32 +10547,44 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	    return true
 	  }
 
-    if (sourceStep && allSteps.some(step => step.path_id === sourceStep.path_id && step.position > sourceStep.position)) {
-      await dialogs.alert({ title: '这个起点已有后续节点', message: '请选择链路末端继续连接，或先断开这个起点的后续链段。不会把所选链段静默追加到另一处。' })
-      return true
-    }
-	  let pathID = sourcePath?.id || 0
-	  let inboundID = sourcePath?.inbound_id || sourceEntry?.id || 0
-	  let nextPosition = sourcePath
-	    ? Math.max(0, ...allSteps.filter(step => step.path_id === sourcePath.id).map(step => step.position || 0)) + 1
-	    : 1
+	  const sourcePathSteps = sourceStep ? allSteps.filter(step => step.path_id === sourceStep.path_id) : []
+	  // Continuing from a hop that already has a successor opens a new branch that
+	  // shares the prefix up to that hop, the same as appendPathAfterStep.
+	  const branchPrefix = sourceStep && sourcePathSteps.some(step => step.position > sourceStep.position)
+	    ? sourcePathSteps
+	      .filter(step => step.position <= sourceStep.position)
+	      .sort((left, right) => (left.position - right.position) || (left.id - right.id))
+	    : []
+	  if (branchPrefix.length && !sourcePath?.inbound_id) {
+	    await dialogs.alert({ title: '无法从这里分支', message: '这条路径没有入口，请从链路末端继续连接。' })
+	    return true
+	  }
+	  let pathID = branchPrefix.length ? 0 : sourcePath?.id || 0
+	  const inboundID = sourcePath?.inbound_id || sourceEntry?.id || 0
+	  const nextPosition = branchPrefix.length
+	    ? sourceStep!.position + 1
+	    : sourcePath
+	      ? Math.max(0, ...sourcePathSteps.map(step => step.position || 0)) + 1
+	      : 1
 	  const createdSteps: ProxyPathStep[] = []
 	  const candidateSteps = chain.steps.map((item, index) => ({ ...item.step, position: nextPosition + index }))
 
 	  if (candidateSteps.some(step => step.transport_mode === 'port_forward') && !await ensureTransparentPrefixCompatible(pathID, inboundID, [
-	    ...allSteps.filter(step => step.path_id === pathID),
+	    ...(branchPrefix.length ? branchPrefix : allSteps.filter(step => step.path_id === pathID)),
 	    ...candidateSteps,
 	  ])) return true
 
 	  const stepRequests = chain.steps.map((item, index) => detachedStepCreateRequest(item.step, pathID, nextPosition + index))
 	  if (!pathID) {
+	    const prefixRequests = branchPrefix.map(step => detachedStepCreateRequest(step, 0, step.position))
 	    const result = await client.request('/proxy-paths', {
 	      method: 'POST',
-	      body: JSON.stringify({ name_mode: 'auto', name_template: [], inbound_id: inboundID, enabled: true, initial_steps: stepRequests }),
+	      body: JSON.stringify({ kind: 'chain', name_mode: 'auto', name_template: [], inbound_id: inboundID, enabled: true, initial_steps: [...prefixRequests, ...stepRequests] }),
 	    }) as { proxy_path?: ProxyPath; proxy_path_steps?: ProxyPathStep[] }
 	    applyMutationResult(result)
 	    pathID = result.proxy_path?.id || 0
-	    createdSteps.push(...(result.proxy_path_steps || []))
+	    const resultSteps = [...(result.proxy_path_steps || [])].sort((left, right) => (left.position - right.position) || (left.id - right.id))
+	    createdSteps.push(...resultSteps.filter(step => step.position >= nextPosition))
 	  } else {
 	    const result = await client.request('/proxy-path-steps/batch', {
 	      method: 'POST',
