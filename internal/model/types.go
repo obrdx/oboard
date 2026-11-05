@@ -1025,6 +1025,7 @@ type Server struct {
 	StealthEnabled              bool               `json:"stealth_enabled"`
 	BBRQdisc                    string             `json:"bbr_qdisc"`
 	BBRCakeBandwidthMbit        int                `json:"bbr_cake_bandwidth_mbit"`
+	TCPTuning                   string             `json:"tcp_tuning"`
 	PortRangeStart              int                `json:"port_range_start"`
 	PortRangeEnd                int                `json:"port_range_end"`
 	InternalPortRangeStart      int                `json:"internal_port_range_start"`

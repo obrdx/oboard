@@ -1120,7 +1120,7 @@ const fieldLabels: Record<string, string> = {
   dns_sync_enabled: '域名解析', dns_credential_id: '域名服务账号', dns_domain: '解析域名', dns_proxy_enabled: '代理访问', dns_record_types: '解析记录', ddns_record_id: 'DDNS 记录', dns_sync_status: '同步状态', dns_sync_error: '同步错误', dns_last_synced_at: '同步时间',
   subject_type: '授权类型', scope_type: '授权范围',
   ip_stack: 'IP 栈', udp_inbound_mode: 'UDP 入站', mtu_mode: 'MTU 模式', mtu_value: 'MTU 值', mtu_probe_host: 'MTU 探测主机', mtu_probe_port: 'MTU 探测端口', mtu_overhead_bytes: 'MTU 额外开销', stealth_enabled: '安全进程',
-  bbr_qdisc: '拥塞控制', bbr_cake_bandwidth_mbit: 'CAKE 带宽',
+  bbr_qdisc: '拥塞控制', bbr_cake_bandwidth_mbit: 'CAKE 带宽', tcp_tuning: 'TCP 调优',
   os: '系统', system: '系统', distro_id: '发行版 ID', distro_version: '发行版版本', distro_name: '发行版', libc: 'libc', service_manager: '服务管理器', package_manager: '包管理器', arch: '架构', cpu: 'CPU', cpu_cores: 'CPU 核心', cpu_usage: 'CPU', cpu_usage_percent: 'CPU 使用率', memory: '内存', memory_used_bytes: '已用内存', memory_total_bytes: '总内存', swap_used_bytes: '已用 Swap', swap_total_bytes: 'Swap 总量', agent_memory: 'Agent 内存', agent_memory_bytes: 'Agent 内存', agent_version: 'Agent 版本', agent_build: 'Agent 构建', sing_box_version: 'sing-box 版本', download_rate: '下载速率', upload_rate: '上传速率', period_traffic: '周期流量', monitoring_mode: '回报模式',
   tls: 'TLS', certificate_mode: '证书模式', certificate_id: '证书', certificate_domain: '证书域名', config_json: 'JSON 配置', match_json: '匹配规则 JSON', result_json: '结果 JSON', events: '事件',
   proxy_uuid: '代理 UUID', proxy_password: '代理密码', speed_limit_mbps: '限速 Mbps', traffic_limit_bytes: '流量额度', traffic_used_bytes: '已用流量', subscription_token: '订阅令牌',
@@ -6271,7 +6271,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
 }
 
 function defaultServerDraft(defaults?: { mtu_mode?: string; time_correction_mode?: TimeCorrectionMode; public_port_range_start?: number; public_port_range_end?: number; internal_port_range_start?: number; internal_port_range_end?: number; latency_probe_interval_seconds?: number }): any {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, stealth_enabled: false, bbr_qdisc: '', bbr_cake_bandwidth_mbit: 0, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, traffic_used_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: defaults?.latency_probe_interval_seconds || 120, latency_probe_sample_count: 3, latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, service_start_at: '', expires_at: '', auto_renew_enabled: true, renewal_cycle: '' as '' | 'monthly' | 'quarterly' | 'semiannual' | 'annual', expiry_notify_enabled: true, display_tags: [] }
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, stealth_enabled: false, bbr_qdisc: '', bbr_cake_bandwidth_mbit: 0, tcp_tuning: '', time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, traffic_used_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: defaults?.latency_probe_interval_seconds || 120, latency_probe_sample_count: 3, latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, service_start_at: '', expires_at: '', auto_renew_enabled: true, renewal_cycle: '' as '' | 'monthly' | 'quarterly' | 'semiannual' | 'annual', expiry_notify_enabled: true, display_tags: [] }
 }
 
 const serverSettingTabs = [
@@ -7601,11 +7601,11 @@ type ServerSettingsDialogProps = {
   panelBBR?: PanelBBRDefaults
 }
 
-type PanelBBRDefaults = { qdisc?: string; cakeMbit?: number }
+type PanelBBRDefaults = { qdisc?: string; cakeMbit?: number; tcpTuning?: boolean }
 
 function panelBBRFromDefaults(defaults: any): PanelBBRDefaults | undefined {
   if (!defaults || defaults.panel_bbr_qdisc === undefined) return undefined
-  return { qdisc: defaults.panel_bbr_qdisc, cakeMbit: Number(defaults.panel_bbr_cake_bandwidth_mbit) || 0 }
+  return { qdisc: defaults.panel_bbr_qdisc, cakeMbit: Number(defaults.panel_bbr_cake_bandwidth_mbit) || 0, tcpTuning: defaults.panel_tcp_tuning_enabled === undefined ? undefined : Boolean(defaults.panel_tcp_tuning_enabled) }
 }
 
 function ServerBBRSettings({ draft, update, creating, enrolled, panelBBR }: { draft: any; update: (patch: Record<string, any>) => void; creating: boolean; enrolled: boolean; panelBBR?: PanelBBRDefaults }) {
@@ -7615,6 +7615,9 @@ function ServerBBRSettings({ draft, update, creating, enrolled, panelBBR }: { dr
   const pinNote = override ? '' : '生成接入命令时会固定为当时的系统设置，之后修改系统设置不影响此服务器。'
   const scope = (creating ? '安装 Agent 时生效。' : enrolled ? '只在安装时生效：保存后需重新生成接入命令并在服务器上执行。' : '保存后生成的接入命令会使用此设置。') + pinNote
   const mbit = Number(draft.bbr_cake_bandwidth_mbit) || 0
+  const tcpTuning = String(draft.tcp_tuning || '')
+  const tcpTuningFollow = panelBBR?.tcpTuning === undefined ? '跟随系统设置' : `跟随系统设置（${panelBBR.tcpTuning ? '开启' : '关闭'}）`
+  const tcpTuningScope = creating ? '安装 Agent 时生效。' : enrolled ? '只在安装时生效：保存后需重新生成接入命令并在服务器上执行；关闭不会撤销已写入的参数。' : '保存后生成的接入命令会使用此设置。'
   return <SettingGroup title="网络优化">
     <SettingRow label="拥塞控制" description={`${effective ? bbrQdiscHints[effective] : ''}${scope}`}>
       <Select value={override} onChange={e => update({ bbr_qdisc: e.target.value, ...(e.target.value === 'cake' ? {} : { bbr_cake_bandwidth_mbit: 0 }) })} aria-label="拥塞控制">
@@ -7638,6 +7641,13 @@ function ServerBBRSettings({ draft, update, creating, enrolled, panelBBR }: { dr
         <span className="ss-unit">Mbit/s</span>
       </div>
     </SettingRow>}
+    <SettingRow label="TCP 调优" description={`写入固定的 TCP/UDP 缓冲区与转发参数，不需要调优的服务器可单独关闭。${tcpTuningScope}`}>
+      <Select value={tcpTuning} onChange={e => update({ tcp_tuning: e.target.value })} aria-label="TCP 调优">
+        <option value="">{tcpTuningFollow}</option>
+        <option value="on">开启</option>
+        <option value="off">关闭</option>
+      </Select>
+    </SettingRow>
   </SettingGroup>
 }
 

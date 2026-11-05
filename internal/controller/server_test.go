@@ -1449,6 +1449,31 @@ func TestAgentInstallCommandUsesPanelWideTuningSettings(t *testing.T) {
 	}
 	request(t, h, http.MethodPatch, serverPath, token, map[string]any{"bbr_qdisc": "bbr2"}, http.StatusBadRequest)
 
+	// A per-server TCP tuning override replaces the panel switch both ways;
+	// an empty value follows the panel again.
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"server_default_tcp_tuning_enabled": true}, http.StatusOK)
+	patched = request(t, h, http.MethodPatch, serverPath, token, map[string]any{"tcp_tuning": "off"}, http.StatusOK)["server"].(map[string]any)
+	if patched["tcp_tuning"] != "off" {
+		t.Fatalf("tcp tuning override not saved: %v", patched["tcp_tuning"])
+	}
+	command = request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)["install_command"].(string)
+	if !strings.Contains(command, "OBOARD_INSTALL_TCP_TUNING='0'") {
+		t.Fatalf("server tcp tuning off override not applied: %s", command)
+	}
+	if command = request(t, h, http.MethodPost, otherServerPath+"/enroll-token", token, map[string]any{}, http.StatusOK)["install_command"].(string); !strings.Contains(command, "OBOARD_INSTALL_TCP_TUNING='1'") {
+		t.Fatalf("following server lost the panel tcp tuning switch: %s", command)
+	}
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"server_default_tcp_tuning_enabled": false}, http.StatusOK)
+	request(t, h, http.MethodPatch, serverPath, token, map[string]any{"tcp_tuning": "on"}, http.StatusOK)
+	if command = request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)["install_command"].(string); !strings.Contains(command, "OBOARD_INSTALL_TCP_TUNING='1'") {
+		t.Fatalf("server tcp tuning on override not applied: %s", command)
+	}
+	request(t, h, http.MethodPatch, serverPath, token, map[string]any{"tcp_tuning": ""}, http.StatusOK)
+	if command = request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)["install_command"].(string); !strings.Contains(command, "OBOARD_INSTALL_TCP_TUNING='0'") {
+		t.Fatalf("following tcp tuning did not return to the panel switch: %s", command)
+	}
+	request(t, h, http.MethodPatch, serverPath, token, map[string]any{"tcp_tuning": "maybe"}, http.StatusBadRequest)
+
 	// Choosing "follow" again takes the current panel choice at the next issue.
 	request(t, h, http.MethodPatch, serverPath, token, map[string]any{"bbr_qdisc": ""}, http.StatusOK)
 	command = request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)["install_command"].(string)

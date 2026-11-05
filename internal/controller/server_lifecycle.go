@@ -157,6 +157,37 @@ func normalizeServerBBROverride(v *model.Server) error {
 	return nil
 }
 
+// Per-server TCP tuning install overrides. An empty value follows the
+// panel-wide server_default_tcp_tuning_enabled switch.
+const (
+	serverTCPTuningFollow = ""
+	serverTCPTuningOn     = "on"
+	serverTCPTuningOff    = "off"
+)
+
+// normalizeServerTCPTuningOverride validates a server's TCP tuning install
+// override: empty follows the panel, "on" and "off" force the choice.
+func normalizeServerTCPTuningOverride(v *model.Server) error {
+	switch value := strings.ToLower(strings.TrimSpace(v.TCPTuning)); value {
+	case serverTCPTuningFollow, serverTCPTuningOn, serverTCPTuningOff:
+		v.TCPTuning = value
+		return nil
+	}
+	return errors.New("tcp_tuning must be empty, on, or off")
+}
+
+// serverAgentInstallTCPTuning applies a server's own TCP tuning override on
+// top of the panel-wide switch.
+func serverAgentInstallTCPTuning(srv model.Server, panel bool) bool {
+	switch strings.ToLower(strings.TrimSpace(srv.TCPTuning)) {
+	case serverTCPTuningOn:
+		return true
+	case serverTCPTuningOff:
+		return false
+	}
+	return panel
+}
+
 // serverAgentInstallBBR applies a server's own BBR override on top of the
 // panel-wide qdisc and cake bandwidth.
 func serverAgentInstallBBR(srv model.Server, qdisc string, cakeMbit int) (string, int) {
@@ -230,7 +261,8 @@ func agentInstallCommand(baseURL, bbrValue, cakeBandwidthValue, tcpTuningValue, 
 // agentEnrollmentCommand renders the Linux install command. Every issued
 // command reads the current panel-wide BBR qdisc and TCP tuning settings; a
 // server's own BBR override, pinned when its enrollment token is issued,
-// replaces the panel qdisc.
+// replaces the panel qdisc, and its TCP tuning override replaces the panel
+// switch.
 func (s *Server) agentEnrollmentCommand(ctx context.Context, stealth bool, serverID ...int64) (string, map[string]any, error) {
 	base, err := s.publicBaseURL(ctx)
 	if err != nil {
@@ -247,6 +279,7 @@ func (s *Server) agentEnrollmentCommand(ctx context.Context, stealth bool, serve
 			return "", nil, err
 		}
 		qdisc, cakeMbit = serverAgentInstallBBR(*srv, qdisc, cakeMbit)
+		tcpTuning = serverAgentInstallTCPTuning(*srv, tcpTuning)
 	}
 	bbrValue, cakeBandwidthValue := agentInstallBBRValues(qdisc, cakeMbit)
 	tcpTuningValue, stealthValue := agentInstallTCPTuningValue(tcpTuning), agentInstallStealthValue(stealth)

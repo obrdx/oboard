@@ -63,6 +63,7 @@ type serverUpdateChanges struct {
 	StealthEnabled           *bool                     `json:"stealth_enabled,omitempty"`
 	BBRQdisc                 *string                   `json:"bbr_qdisc,omitempty"`
 	BBRCakeBandwidthMbit     *int                      `json:"bbr_cake_bandwidth_mbit,omitempty"`
+	TCPTuning                *string                   `json:"tcp_tuning,omitempty"`
 }
 
 type serverUpdateOperation struct {
@@ -285,6 +286,7 @@ func applyServerUpdateChanges(next *model.Server, changes serverUpdateChanges) [
 	set("stealth_enabled", changes.StealthEnabled != nil, func() { next.StealthEnabled = *changes.StealthEnabled })
 	set("bbr_qdisc", changes.BBRQdisc != nil, func() { next.BBRQdisc = *changes.BBRQdisc })
 	set("bbr_cake_bandwidth_mbit", changes.BBRCakeBandwidthMbit != nil, func() { next.BBRCakeBandwidthMbit = *changes.BBRCakeBandwidthMbit })
+	set("tcp_tuning", changes.TCPTuning != nil, func() { next.TCPTuning = *changes.TCPTuning })
 	return changed
 }
 

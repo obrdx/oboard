@@ -2011,6 +2011,7 @@ table servers
     stealth_enabled INTEGER notnull=1 default=0 pk=0
     bbr_qdisc TEXT notnull=1 default='' pk=0
     bbr_cake_bandwidth_mbit INTEGER notnull=1 default=0 pk=0
+    tcp_tuning TEXT notnull=1 default='' pk=0
     port_range_start INTEGER notnull=1 default=10000 pk=0
     port_range_end INTEGER notnull=1 default=20000 pk=0
     internal_port_range_start INTEGER notnull=1 default=30000 pk=0

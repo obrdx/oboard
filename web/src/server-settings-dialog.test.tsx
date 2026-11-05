@@ -86,3 +86,19 @@ it('lets one server override the panel BBR qdisc and cake bandwidth', async () =
   expect(onSubmit).toHaveBeenCalledTimes(1)
   expect(onSubmit.mock.calls[0][0]).toMatchObject({ bbr_qdisc: 'cake', bbr_cake_bandwidth_mbit: 950 })
 })
+
+it('lets one server turn off the panel TCP tuning switch', async () => {
+  const onSubmit = vi.fn().mockResolvedValue(undefined)
+  await act(async () => root.render(<Harness onSubmit={onSubmit} panelBBR={{ qdisc: 'fq', cakeMbit: 0, tcpTuning: true }} initial={{ ...baseDraft, renewal_cycle: 'monthly', bbr_qdisc: '', tcp_tuning: '' }} />))
+  await act(async () => tab('主机与安全').click())
+  const trigger = document.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="TCP 调优"]')!
+  expect(trigger.textContent).toContain('跟随系统设置（开启）')
+
+  await act(async () => trigger.click())
+  const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+  expect(options.map(option => option.textContent)).toEqual(['跟随系统设置（开启）', '开启', '关闭'])
+  await act(async () => options.find(option => option.textContent === '关闭')!.click())
+  await act(async () => button('创建').click())
+  expect(onSubmit).toHaveBeenCalledTimes(1)
+  expect(onSubmit.mock.calls[0][0]).toMatchObject({ tcp_tuning: 'off' })
+})

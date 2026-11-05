@@ -288,6 +288,7 @@ func defaultDescriptors() []Descriptor {
 		"authorization_fast_lane": boolValue, "runtime_users_enabled": boolValue,
 		"stealth_enabled": boolValue,
 		"bbr_qdisc":       stringValue, "bbr_cake_bandwidth_mbit": map[string]any{"type": "integer"},
+		"tcp_tuning": stringValue,
 	})
 	user := closedObject(map[string]any{
 		"id": positiveID, "revision": stringValue, "username": stringValue, "nickname": stringValue,
@@ -747,6 +748,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}, "description": "为空时自动按 service_start_at(优先)或 expires_at 的日推导(仅日精度),例如 2025-07-05 起租即每月5日重置"}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31, "description": "为空时同上自动推导"}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0}, "traffic_used_bytes": map[string]any{"type": "integer", "minimum": 0},
 			"display_tags": serverDisplayTagsSchema(),
 			"bbr_qdisc":    map[string]any{"type": "string", "enum": []string{"", "off", "fq", "cake", "fq_pie"}, "description": "单台服务器的 BBR 安装覆盖：空字符串跟随系统设置 server_default_bbr_qdisc，签发接入令牌时把当时的系统设置固定到此服务器，之后修改系统设置不再影响它；只影响此服务器之后签发的安装命令，已安装服务器需重新运行安装命令"}, "bbr_cake_bandwidth_mbit": map[string]any{"type": "integer", "minimum": 0, "maximum": 100000, "description": "仅 bbr_qdisc=cake 时使用的出站整形带宽 Mbit/s，0 为不限速"},
+			"tcp_tuning": map[string]any{"type": "string", "enum": []string{"", "on", "off"}, "description": "单台服务器的 TCP 调优安装覆盖：空字符串跟随系统设置 server_default_tcp_tuning_enabled，on 强制开启，off 关闭（不需要调优的服务器）；只影响此服务器之后签发的安装命令，已安装服务器需重新运行安装命令"},
 		}, "name", "auto_renew_enabled")
 		serverInput["if"] = map[string]any{"properties": map[string]any{"auto_renew_enabled": map[string]any{"const": true}}}
 		serverInput["then"] = map[string]any{"required": []string{"renewal_cycle"}}
@@ -780,6 +782,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"display_tags":            serverDisplayTagsSchema(),
 			"authorization_fast_lane": boolValue, "runtime_users_enabled": boolValue,
 			"bbr_qdisc": map[string]any{"type": "string", "enum": []string{"", "off", "fq", "cake", "fq_pie"}, "description": "单台服务器的 BBR 安装覆盖：空字符串跟随系统设置 server_default_bbr_qdisc，签发接入令牌时把当时的系统设置固定到此服务器，之后修改系统设置不再影响它；只影响此服务器之后签发的安装命令，已安装服务器需重新运行安装命令"}, "bbr_cake_bandwidth_mbit": map[string]any{"type": "integer", "minimum": 0, "maximum": 100000, "description": "仅 bbr_qdisc=cake 时使用的出站整形带宽 Mbit/s，0 为不限速"},
+			"tcp_tuning":      map[string]any{"type": "string", "enum": []string{"", "on", "off"}, "description": "单台服务器的 TCP 调优安装覆盖：空字符串跟随系统设置 server_default_tcp_tuning_enabled，on 强制开启，off 关闭（不需要调优的服务器）；只影响此服务器之后签发的安装命令，已安装服务器需重新运行安装命令"},
 			"stealth_enabled": map[string]any{"type": "boolean", "description": "安全进程开关：开启后必须通过 servers.enrollment.issue 获取安装命令并在服务器重新安装 Agent；安装命令自动启动随机目录、进程名和服务名的新 Agent，成功后清理旧安装。关闭时已注册且在线的服务器会收到 apply_stealth 任务"},
 		})
 		portItem := closedObject(map[string]any{"kind": stringValue, "scope_key": stringValue, "server_id": positiveID, "pool": stringValue, "listen_ip": stringValue, "network": stringValue, "port": map[string]any{"type": "integer"}})

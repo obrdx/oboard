@@ -2183,8 +2183,8 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		mtuMode, timeMode := serverCreationDefaults(settings)
-		bbrQdisc, cakeMbit, _ := agentInstallTuningSettings(settings)
-		out["server_creation_defaults"] = map[string]any{"mtu_mode": mtuMode, "time_correction_mode": timeMode, "panel_bbr_qdisc": bbrQdisc, "panel_bbr_cake_bandwidth_mbit": cakeMbit, "public_port_range_start": core.DefaultPublicPortRangeStart, "public_port_range_end": core.DefaultPublicPortRangeEnd, "internal_port_range_start": core.DefaultInternalPortRangeStart, "internal_port_range_end": core.DefaultInternalPortRangeEnd}
+		bbrQdisc, cakeMbit, tcpTuning := agentInstallTuningSettings(settings)
+		out["server_creation_defaults"] = map[string]any{"mtu_mode": mtuMode, "time_correction_mode": timeMode, "panel_bbr_qdisc": bbrQdisc, "panel_bbr_cake_bandwidth_mbit": cakeMbit, "panel_tcp_tuning_enabled": tcpTuning, "public_port_range_start": core.DefaultPublicPortRangeStart, "public_port_range_end": core.DefaultPublicPortRangeEnd, "internal_port_range_start": core.DefaultInternalPortRangeStart, "internal_port_range_end": core.DefaultInternalPortRangeEnd}
 		return nil
 	}
 	addUsers := func() error {
@@ -5889,6 +5889,9 @@ func validateServer(v *model.Server) error {
 		return errors.New("name required")
 	}
 	if err := normalizeServerBBROverride(v); err != nil {
+		return err
+	}
+	if err := normalizeServerTCPTuningOverride(v); err != nil {
 		return err
 	}
 	v.RenewalCycle = normalizeServerRenewalCycle(v.RenewalCycle)
