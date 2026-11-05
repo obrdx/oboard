@@ -9240,6 +9240,10 @@ function graphMenuShouldUseSheet() {
   return window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 720
 }
 
+function graphCardInputHandle(nodeID: string) {
+  return Array.from(document.querySelectorAll('.react-flow__handle.connectable.target[data-handleid="target-top"]')).find(item => item.getAttribute('data-nodeid') === nodeID)
+}
+
 function isGraphHandleTarget(target: EventTarget | null) {
   return target instanceof Element && Boolean(target.closest('.react-flow__handle'))
 }
@@ -9346,6 +9350,10 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
   const [connectingFrom, setConnectingFrom] = useState('')
   const connectionStart = useRef<{ nodeID: string; handleID: string | null; type: string } | null>(null)
   const connectionCompleted = useRef(false)
+  const connectionStartPoint = useRef<{ x: number; y: number } | null>(null)
+  // Click-to-connect: a click (no drag) on an output handle picks the start, the
+  // next click on another card connects to that card's input.
+  const clickConnectStart = useRef<{ nodeID: string; handleID: string | null } | null>(null)
   const pendingNodeReveal = useRef<{ nodeID: string; rootID: number } | null>(null)
   const [selectedGraphItem, setSelectedGraphItem] = useState<{ entity: GraphEntity; pathIDs: number[]; source: 'node' | 'edge' } | null>(null)
   // Coordinates the operator set by hand. Auto layout owns everything else, so
@@ -11579,6 +11587,14 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	  }
 	  const onNodeClick = (event: React.MouseEvent, node: Node) => {
 	    if (suppressGraphClickRef.current || event.detail > 1 || isGraphHandleTarget(event.target)) return
+	    const pendingStart = clickConnectStart.current
+	    if (pendingStart) {
+	      clickConnectStart.current = null
+	      if (node.id === pendingStart.nodeID) { setConnectionHint(''); return }
+	      if (!graphCardInputHandle(node.id)) { setConnectionHint('这个节点不能作为连接目标。'); return }
+	      onConnect({ source: pendingStart.nodeID, sourceHandle: pendingStart.handleID, target: node.id, targetHandle: 'target-top' })
+	      return
+	    }
 	    const { entity, pathIDs } = selectGraphItem(node)
       if (entity) setSelectedGraphItem({ entity, pathIDs, source: 'node' })
 	    if (entity && graphPointerIsCoarse(event)) openGraphContextMenu(event.clientX, event.clientY, entity, pathIDs, 'node')
@@ -11672,6 +11688,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	  }
 	  const clearGraphSelection = () => {
 	    dismissGraphMenu()
+      clickConnectStart.current = null
       setSelectedGraphItem(null)
       setConnectionHint('')
 	    setFocusedPathID(0)
@@ -11881,25 +11898,38 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 		  onMoveStart={dismissGraphMenu}
           onConnect={onConnect}
           isValidConnection={connection => !graphConnectionIssue(connection, edgesRef.current, connectionBusy.current)}
-          onConnectStart={(_, params) => {
+          connectOnClick={false}
+          onConnectStart={(event, params) => {
             connectionCompleted.current = false
             connectionStart.current = params.nodeId && params.handleType ? { nodeID: params.nodeId, handleID: params.handleId, type: params.handleType } : null
+            const startPoint = 'touches' in event ? event.touches[0] : event
+            connectionStartPoint.current = startPoint ? { x: startPoint.clientX, y: startPoint.clientY } : null
             setConnectionHint(connectionBusy.current ? '上一条连接仍在处理中，请完成或取消后再连接。' : '')
             setConnectingFrom(params.nodeId || '')
           }}
           onConnectEnd={event => {
             const start = connectionStart.current
-            if (start && !connectionCompleted.current) {
-              const point = 'changedTouches' in event ? event.changedTouches[0] : event
+            const point = 'changedTouches' in event ? event.changedTouches[0] : event
+            const startPoint = connectionStartPoint.current
+            const clicked = Boolean(point && startPoint && Math.hypot(point.clientX - startPoint.x, point.clientY - startPoint.y) < 6)
+            if (start && !connectionCompleted.current && clicked) {
+              const pendingStart = clickConnectStart.current
+              if (start.type === 'source') {
+                clickConnectStart.current = { nodeID: start.nodeID, handleID: start.handleID }
+                setConnectionHint('已选择起点，点击目标节点即可连接；点击空白处取消。')
+              } else if (pendingStart && pendingStart.nodeID !== start.nodeID) {
+                clickConnectStart.current = null
+                onConnect({ source: pendingStart.nodeID, sourceHandle: pendingStart.handleID, target: start.nodeID, targetHandle: start.handleID })
+              }
+            } else if (start && !connectionCompleted.current) {
+              clickConnectStart.current = null
               const below = point ? document.elementFromPoint(point.clientX, point.clientY) : null
               const handle = below?.closest('.react-flow__handle')
               const targetID = handle?.getAttribute('data-nodeid')
               // React Flow only accepts a drop on the input strip at a card's top
               // edge; a drop anywhere else on the card means the same input.
               const cardID = !handle && start.type === 'source' ? below?.closest('.react-flow__node')?.getAttribute('data-id') : null
-              const cardInput = cardID
-                ? Array.from(document.querySelectorAll('.react-flow__handle.connectable.target[data-handleid="target-top"]')).find(item => item.getAttribute('data-nodeid') === cardID)
-                : undefined
+              const cardInput = cardID ? graphCardInputHandle(cardID) : undefined
               if (cardID && cardInput) {
                 onConnect({ source: start.nodeID, sourceHandle: start.handleID ?? null, target: cardID, targetHandle: 'target-top' })
               } else if (targetID) {
@@ -11910,6 +11940,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
               }
             }
             connectionStart.current = null
+            connectionStartPoint.current = null
             setConnectingFrom('')
           }}
           onMoveEnd={(_, viewport) => { if (!pendingServerSafeFit.current) canvasViewports.current.set(activeCanvasID.current, viewport) }}
