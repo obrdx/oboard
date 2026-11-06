@@ -17083,6 +17083,11 @@ button[aria-busy="true"] {
   align-items: start;
   margin-top: 24px;
 }
+.dash-lower-stack {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
 .dash-section-head {
   display: flex;
   align-items: flex-end;

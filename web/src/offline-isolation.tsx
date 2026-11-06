@@ -39,7 +39,7 @@ function serverName(item: { server_name?: string; server_id: number }) {
   return item.server_name || `服务器 #${item.server_id}`
 }
 
-export function OfflineIsolationPrompt({ isolation, client, onManage, onChanged }: { isolation?: IsolationData; client: Client; onManage: () => void; onChanged: () => void }) {
+export function OfflineIsolationPrompt({ isolation, client, onChanged }: { isolation?: IsolationData; client: Client; onChanged: () => void }) {
   const incidents = isolation?.incidents || []
   const [open, setOpen] = useState(false)
   if (!incidents.length) return null
@@ -53,7 +53,6 @@ export function OfflineIsolationPrompt({ isolation, client, onManage, onChanged 
         <p>{incidents.length > 1 && <span className="offline-isolation-names">{names.join('、')}。</span>}{inboundCount > 0 ? `${inboundCount} 个入口仍在订阅里，可暂时剔除。` : '可暂时把它的入口从订阅里剔除。'}</p>
       </div>
       <div className="offline-isolation-actions">
-        <button type="button" className="ghost" onClick={onManage}>查看记录</button>
         <button type="button" onClick={() => setOpen(true)}>临时剔除</button>
       </div>
       {open && <OfflineIsolationDialog incidents={incidents} client={client} onClose={() => setOpen(false)} onChanged={onChanged} />}
@@ -61,13 +60,37 @@ export function OfflineIsolationPrompt({ isolation, client, onManage, onChanged 
   )
 }
 
-export function OfflineIsolationList({ isolation, client, onChanged }: { isolation?: IsolationData; client: Client; onChanged: () => void }) {
-  const incidents = isolation?.incidents || []
+export function OfflineIsolationCard({ isolation, client, onChanged }: { isolation?: IsolationData; client: Client; onChanged: () => void }) {
   const active = isolation?.active || []
   const [open, setOpen] = useState(false)
+  if (!active.length) return null
+  const servers = new Set(active.map(item => item.server_id)).size
+  const now = Date.now()
+  const nextTimed = active
+    .map(item => item.recovery_policy !== 'auto' && item.restore_at ? new Date(item.restore_at) : null)
+    .filter((at): at is Date => Boolean(at) && !Number.isNaN((at as Date).getTime()))
+    .sort((a, b) => a.getTime() - b.getTime())[0]
+  return (
+    <section className="dash-panel offline-isolation-card">
+      <div className="dash-section-head">
+        <div>
+          <h2>临时剔除</h2>
+          <p>{servers} 台服务器的 {active.length} 个入口暂不出现在新拉取的订阅里</p>
+        </div>
+        <span className="dash-count">{active.length}</span>
+      </div>
+      <button type="button" className="ghost offline-isolation-open" onClick={() => setOpen(true)}>
+        <span>{nextTimed ? `最近一项 ${shortTime(nextTimed)} 恢复 · ${remainingText(nextTimed, now)}` : '查看剔除的入口与恢复方式'}</span>
+        <span aria-hidden="true">查看 →</span>
+      </button>
+      {open && <OfflineIsolationRecordsDialog active={active} client={client} onClose={() => setOpen(false)} onChanged={onChanged} />}
+    </section>
+  )
+}
+
+function OfflineIsolationRecordsDialog({ active, client, onClose, onChanged }: { active: ActiveIsolation[]; client: Client; onClose: () => void; onChanged: () => void }) {
   const [busyID, setBusyID] = useState(0)
   const [error, setError] = useState('')
-  if (!incidents.length && !active.length) return null
   const restore = async (item: ActiveIsolation) => {
     setBusyID(item.id)
     setError('')
@@ -82,53 +105,40 @@ export function OfflineIsolationList({ isolation, client, onChanged }: { isolati
   }
   const now = Date.now()
   const sorted = [...active].sort((a, b) => serverName(a).localeCompare(serverName(b)) || a.inbound_name.localeCompare(b.inbound_name))
-  if (!active.length) {
-    const inboundCount = incidents.reduce((total, item) => total + item.inbounds.length, 0)
-    return (
-      <section className="offline-isolation-list is-compact" role="status">
-        <span className="offline-isolation-icon" aria-hidden="true"><ServerOff size={16} /></span>
-        <div className="offline-isolation-copy">
-          <strong>{incidents.length === 1 ? `${serverName(incidents[0])} 已离线` : `${incidents.length} 台服务器已离线`}</strong>
-          <p>{inboundCount > 0 ? `${inboundCount} 个入口仍在订阅里，可暂时剔除，已连接的会话不受影响。` : '可暂时把它的入口从订阅里剔除，已连接的会话不受影响。'}</p>
-        </div>
-        <button type="button" onClick={() => setOpen(true)}>剔除离线入口</button>
-        {open && <OfflineIsolationDialog incidents={incidents} client={client} onClose={() => setOpen(false)} onChanged={onChanged} />}
-      </section>
-    )
-  }
   return (
-    <section className="offline-isolation-list">
-      <div className="offline-isolation-list-head">
-        <div className="offline-isolation-copy">
-          <h2>临时剔除<span className="offline-isolation-count">{active.length}</span></h2>
-          <p>这些入口暂不出现在新拉取的订阅里，已连接的会话不受影响。</p>
-        </div>
-        {incidents.length > 0 && <button type="button" className="ghost" onClick={() => setOpen(true)}>剔除离线入口</button>}
+    <Dialog
+      isOpen
+      size="lg"
+      onClose={busyID ? () => undefined : onClose}
+      title={<span className="offline-isolation-title">临时剔除<span className="offline-isolation-count">{active.length}</span></span>}
+      footer={<button type="button" className="ghost" disabled={Boolean(busyID)} onClick={onClose}>关闭</button>}
+    >
+      <div className="offline-isolation-records">
+        <p className="muted">这些入口暂不出现在新拉取的订阅里，已连接的会话不受影响。</p>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <ul className="offline-isolation-items">
+          {sorted.map(item => {
+            const recovery = isolationRecovery(item, now)
+            return (
+              <li key={item.id}>
+                <div className="offline-isolation-target">
+                  <strong title={item.inbound_name}>{item.inbound_name}</strong>
+                  <span title={serverName(item)}>{serverName(item)}</span>
+                </div>
+                <div className="offline-isolation-recovery" title={item.restore_at ? new Date(item.restore_at).toLocaleString() : undefined}>
+                  <Clock3 size={16} aria-hidden="true" />
+                  <div><span>{recovery.label}</span><small>{recovery.detail}</small></div>
+                </div>
+                <button type="button" className="ghost" disabled={busyID === item.id} aria-label={`恢复 ${serverName(item)} ${item.inbound_name} 的订阅`} onClick={() => void restore(item)}>
+                  {busyID === item.id ? <Loader2 size={16} className="spin" aria-hidden="true" /> : <RotateCcw size={16} aria-hidden="true" />}
+                  {busyID === item.id ? '恢复中…' : '恢复订阅'}
+                </button>
+              </li>
+            )
+          })}
+        </ul>
       </div>
-      {error && <p className="form-error" role="alert">{error}</p>}
-      <ul className="offline-isolation-items">
-        {sorted.map(item => {
-          const recovery = isolationRecovery(item, now)
-          return (
-            <li key={item.id}>
-              <div className="offline-isolation-target">
-                <strong title={item.inbound_name}>{item.inbound_name}</strong>
-                <span title={serverName(item)}>{serverName(item)}</span>
-              </div>
-              <div className="offline-isolation-recovery" title={item.restore_at ? new Date(item.restore_at).toLocaleString() : undefined}>
-                <Clock3 size={16} aria-hidden="true" />
-                <div><span>{recovery.label}</span><small>{recovery.detail}</small></div>
-              </div>
-              <button type="button" className="ghost" disabled={busyID === item.id} aria-label={`恢复 ${serverName(item)} ${item.inbound_name} 的订阅`} onClick={() => void restore(item)}>
-                {busyID === item.id ? <Loader2 size={16} className="spin" aria-hidden="true" /> : <RotateCcw size={16} aria-hidden="true" />}
-                {busyID === item.id ? '恢复中…' : '恢复订阅'}
-              </button>
-            </li>
-          )
-        })}
-      </ul>
-      {open && <OfflineIsolationDialog incidents={incidents} client={client} onClose={() => setOpen(false)} onChanged={onChanged} />}
-    </section>
+    </Dialog>
   )
 }
 

@@ -54,41 +54,42 @@
   gap: 8px;
 }
 
-.offline-isolation-list {
-  margin: 0;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  background: var(--surface-solid);
-  box-shadow: var(--shadow-xs);
-  overflow: hidden;
+.offline-isolation-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.offline-isolation-list-head {
+.offline-isolation-open {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px 16px;
-  padding: 12px 16px;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-weight: 500;
 }
 
-.offline-isolation-list.is-compact {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px 14px;
-  padding: 12px 16px;
-  border-color: color-mix(in srgb, var(--danger) 28%, var(--border-color));
+.offline-isolation-open > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
-@media (max-width: 560px) {
-  .offline-isolation-list.is-compact { grid-template-columns: auto minmax(0, 1fr); }
-  .offline-isolation-list.is-compact > button { grid-column: 1 / -1; }
+.offline-isolation-open > span:last-child {
+  flex: none;
+  color: var(--text-primary);
 }
 
-.offline-isolation-list-head h2 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.offline-isolation-records > .muted {
+  margin: 0 0 12px;
+}
+
+.offline-isolation-records > .form-error {
+  margin: 0 0 12px;
 }
 
 .offline-isolation-count {
@@ -106,17 +107,13 @@
   font-variant-numeric: tabular-nums;
 }
 
-.offline-isolation-list > .form-error {
-  margin: 0 16px 12px;
-}
-
-
 .offline-isolation-items {
   display: block;
   margin: 0;
   padding: 0;
   list-style: none;
-  border-top: 1px solid var(--border-color);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
 }
 
 .offline-isolation-items li {
@@ -246,14 +243,7 @@
     min-height: 44px;
   }
 
-  .offline-isolation-list-head {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .offline-isolation-list-head > button {
-    min-height: 44px;
-  }
+  .offline-isolation-open { min-height: 44px; }
 
   .offline-isolation-items li {
     grid-template-columns: minmax(0, 1fr) auto;
