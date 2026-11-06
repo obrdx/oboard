@@ -120,7 +120,7 @@ export function VPNGatePage({ client, servers, canManage, notify }: { client: Cl
 
   return <section aria-label="VPNGate" aria-busy={loading} className="vpngate-page">
     <header className="vpngate-intro">
-      <p>从 VPNGate 公共节点中按地区和运营商挑选链路出口。出口服务器实测延迟，主控结合 IP 质量打分并自动维护热备；当前节点失效时秒级切换，找不到合适节点时暂停出站，不会改走其他线路。</p>
+      <p>按地区和运营商从 VPNGate 公共节点中挑选出口，自动选用延迟低、IP 干净的节点，失效时自动切换。没有可用节点时暂停出站，不会改走其他线路。</p>
       <div className="vpngate-actions">
         <button type="button" className="primary" disabled={!canManage || busy} onClick={create}><Plus size={15} aria-hidden="true" />新建出口池</button>
       </div>
