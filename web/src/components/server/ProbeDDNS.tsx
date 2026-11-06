@@ -34,8 +34,8 @@ export type ProbeDDNSRecord = {
   last_synced_at?: string
 }
 
-const emptyRecord = (serverID = 0): ProbeDDNSRecord => ({
-  id: 0, server_id: serverID, revision: 0, name: '', domain: '', record_types: 'a', proxy_enabled: false,
+const emptyRecord = (serverID = 0, recordTypes: ProbeDDNSRecord['record_types'] = 'a'): ProbeDDNSRecord => ({
+  id: 0, server_id: serverID, revision: 0, name: '', domain: '', record_types: recordTypes, proxy_enabled: false,
   interval_seconds: 300, enabled: true, address_family: '', exclude_private: false,
 })
 
@@ -58,6 +58,12 @@ const addressParts = (text?: string) => (text || '').split(/[，,]/).map(item =>
   const [type, ...rest] = item.split(/\s+/)
   return rest.length && /^(A|AAAA)$/i.test(type) ? { type: type.toUpperCase(), value: rest.join(' ') } : { type: '', value: item }
 })
+
+// The server whose default entry is this DDNS record, if any. Such a record can
+// be edited but not deleted or disabled until the server picks another entry.
+export function ddnsDefaultEntryServer(servers: Server[], record: Pick<ProbeDDNSRecord, 'id' | 'server_id'>) {
+  return servers.find(server => server.id === record.server_id && server.entry_ip_mode === 'ddns' && Number(server.entry_ddns_record_id || 0) === record.id)
+}
 
 type ServerGroup = { id: number; server?: Server; name: string; records: ProbeDDNSRecord[] }
 
@@ -184,7 +190,7 @@ export function ProbeDDNS({ client, servers, credentials, canManage, notify }: {
           </header>
           {open && <div id={panelID} className="probe-ddns-group-body">
             {!group.records.length ? <p className="muted probe-ddns-group-empty">这台服务器还没有 DDNS 记录。</p> : <ul className="probe-ddns-rows" aria-label={`${group.name} 的 DDNS 记录`}>{group.records.map(record => <li key={record.id} className="probe-ddns-row">
-              <div className="probe-ddns-cell is-name"><strong>{record.name} <small className="muted">#{record.id}</small></strong><span className="probe-task-target">{record.domain}</span></div>
+              <div className="probe-ddns-cell is-name"><strong>{record.name} <small className="muted">#{record.id}</small>{ddnsDefaultEntryServer(servers, record) ? <span className="probe-task-badge is-on" title="这台服务器的默认入口，所有跟随服务器的入口使用此域名">默认入口</span> : null}</strong><span className="probe-task-target">{record.domain}</span></div>
               <div className="probe-ddns-cell">
                 <span className="probe-ddns-label">当前解析</span>
                 {addressParts(record.current_address).length ? <span className="probe-ddns-addresses">{addressParts(record.current_address).map(part => <span key={part.value}><span className="probe-ddns-type">{part.type}</span><span className="probe-ddns-value">{part.value}</span></span>)}</span> : <span className="muted">尚未解析</span>}
@@ -195,7 +201,7 @@ export function ProbeDDNS({ client, servers, credentials, canManage, notify }: {
               <div className="probe-ddns-cell is-actions"><div className="probe-task-card-actions">
                 <button type="button" className="ghost" aria-label={`编辑 ${record.name}`} disabled={!canManage || busy} onClick={() => setEditing({ record, serverLocked: false })}><Pencil size={14} aria-hidden="true" />编辑</button>
                 <button type="button" className="ghost" disabled={!canManage || busy || !record.enabled} onClick={() => void mutate('run', record)}>立即更新</button>
-                <button type="button" className="ghost danger" aria-label={`删除 ${record.name}`} disabled={!canManage || busy} onClick={() => setDeleting(record)}><Trash2 size={14} aria-hidden="true" />删除</button>
+                <button type="button" className="ghost danger" aria-label={`删除 ${record.name}`} disabled={!canManage || busy || Boolean(ddnsDefaultEntryServer(servers, record))} title={ddnsDefaultEntryServer(servers, record) ? '这是服务器的默认入口，请先在服务器设置 → 网络中更换默认入口' : undefined} onClick={() => setDeleting(record)}><Trash2 size={14} aria-hidden="true" />删除</button>
               </div></div>
             </li>)}</ul>}
           </div>}
@@ -208,15 +214,20 @@ export function ProbeDDNS({ client, servers, credentials, canManage, notify }: {
       <button type="button" className="ghost" disabled={busy} onClick={() => setDeleting(null)}>取消</button>
       <button type="button" className="danger" disabled={busy} onClick={() => { if (deleting) void mutate('delete', deleting) }}>{busy ? '删除中…' : '确认删除'}</button>
     </>}>
-      <p>删除「{deleting?.name}」会同时删除域名服务商上的对应解析，并取消入口对它的引用。</p>
+      <p>删除「{deleting?.name}」会同时删除域名服务商上的对应解析，并取消入口对它的引用；引用它的入口会改回服务器默认地址。</p>
     </Dialog>
   </div>
 }
 
 const ddnsRecordTypeLabels: Record<ProbeDDNSRecord['record_types'], string> = { a: '仅 A 记录', aaaa: '仅 AAAA 记录', both: 'A + AAAA' }
 
-export function InboundDDNSField({ serverID, recordID, domain, client, credentials, onChange, notify }: {
+export function InboundDDNSField({ serverID, recordID, domain, client, credentials, onChange, notify, label = 'DDNS 记录', hint = '订阅 Host 使用这条记录的域名，解析由 DDNS 任务维护；TLS 入口未填写 SNI 时默认使用该域名。', defaultRecordTypes = 'a', onlyEnabled = false, disabled = false }: {
   serverID: number
+  label?: string
+  hint?: string
+  defaultRecordTypes?: ProbeDDNSRecord['record_types']
+  onlyEnabled?: boolean
+  disabled?: boolean
   notify?: ToastNotify
   recordID?: number
   domain?: string
@@ -233,12 +244,12 @@ export function InboundDDNSField({ serverID, recordID, domain, client, credentia
     setError('')
     try {
       const result = await v2(client, '/probe-ddns')
-      setRecords((result.records || []).filter((record: ProbeDDNSRecord) => record.server_id === serverID))
+      setRecords((result.records || []).filter((record: ProbeDDNSRecord) => record.server_id === serverID && (!onlyEnabled || record.enabled || record.id === recordID)))
       setError('')
     } catch (cause: any) {
       setError(cause?.message || 'DDNS 记录加载失败')
     }
-  }, [client, serverID])
+  }, [client, serverID, onlyEnabled])
   useEffect(() => { void load() }, [load])
   const selected = records.find(record => record.id === recordID)
   const create = async (record: ProbeDDNSRecord) => {
@@ -247,7 +258,7 @@ export function InboundDDNSField({ serverID, recordID, domain, client, credentia
     try {
       await v2(client, '/probe-ddns', { method: 'POST', body: JSON.stringify({ action: 'save', request_id: crypto.randomUUID(), input: inputOf(record) }) })
       const result = await v2(client, '/probe-ddns')
-      const next = ((result.records || []) as ProbeDDNSRecord[]).filter(item => item.server_id === serverID)
+      const next = ((result.records || []) as ProbeDDNSRecord[]).filter(item => item.server_id === serverID && (!onlyEnabled || item.enabled))
       setRecords(next)
       const created = next.find(item => !records.some(previous => previous.id === item.id) && item.name === record.name.trim() && item.domain === record.domain.trim().toLowerCase().replace(/\.$/, ''))
       if (created) onChange(created)
@@ -260,22 +271,22 @@ export function InboundDDNSField({ serverID, recordID, domain, client, credentia
     }
   }
   return <div className="inbound-editor-grid">
-    <FormField label="DDNS 记录" required hint="订阅 Host 使用这条记录的域名，解析由 DDNS 任务维护；证书 SNI 不变。">
-      <Select aria-label="选择 DDNS 记录" value={recordID || 0} onChange={event => {
+    <FormField label={label} required hint={hint}>
+      <Select aria-label="选择 DDNS 记录" value={recordID || 0} disabled={disabled} onChange={event => {
         const id = Number(event.target.value)
         onChange(records.find(record => record.id === id) || null)
       }}>
         <option value={0}>选择记录</option>
-        {records.map(record => <option key={record.id} value={record.id}>{record.name} · {record.domain}</option>)}
+        {records.map(record => <option key={record.id} value={record.id}>{record.name} · {record.domain}{record.record_types === 'both' ? ' · 双栈' : ''}{record.enabled ? '' : ' · 已停用'}</option>)}
       </Select>
     </FormField>
     <div className="inline-field-action inbound-ddns-action">
-      <button type="button" className="ghost" disabled={!serverID} onClick={() => setCreating(true)}>新建 DDNS</button>
+      <button type="button" className="ghost" disabled={!serverID || disabled} onClick={() => setCreating(true)}>新建 DDNS</button>
     </div>
     {selected && <p className="field-hint">当前 Host 将使用 {selected.domain}（{ddnsRecordTypeLabels[selected.record_types]}）。{selected.error ? ` 最近一次更新失败：${selected.error}` : ''}</p>}
     {!selected && domain && <p className="field-hint">已选记录暂时不在这台服务器的列表中。</p>}
     <Dialog isOpen={creating} onClose={() => { if (!busy) setCreating(false) }} title="新建 DDNS" size="lg">
-      <ProbeDDNSForm notify={notify} record={emptyRecord(serverID)} servers={[]} credentials={credentials} client={client} busy={busy} canManage serverLocked onCancel={() => setCreating(false)} onSubmit={create} />
+      <ProbeDDNSForm notify={notify} record={emptyRecord(serverID, defaultRecordTypes)} servers={[]} credentials={credentials} client={client} busy={busy} canManage serverLocked onCancel={() => setCreating(false)} onSubmit={create} />
     </Dialog>
   </div>
 }
@@ -481,8 +492,8 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
         </>}
       </div>}
       <div className="inbound-editor-switch">
-        <span><strong>启用</strong><small>停用后保留记录，但不再更新解析。</small></span>
-        <Switch checked={draft.enabled} ariaLabel="启用 DDNS" onChange={checked => setDraft({ ...draft, enabled: checked })} />
+        <span><strong>启用</strong><small>{record.id && record.enabled && ddnsDefaultEntryServer(servers, record) ? '这是服务器的默认入口，需先在服务器设置 → 网络中更换默认入口才能停用。' : '停用后保留记录，但不再更新解析。'}</small></span>
+        <Switch checked={draft.enabled} disabled={Boolean(record.id && record.enabled && ddnsDefaultEntryServer(servers, record))} ariaLabel="启用 DDNS" onChange={checked => setDraft({ ...draft, enabled: checked })} />
       </div>
       {formError && <p className="danger-text" role="alert">{formError}</p>}
       <div className="return-latency-form-actions">

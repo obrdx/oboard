@@ -31,8 +31,10 @@ export async function copyText(value: string) {
   }
 }
 
-export function serverCustomEntry(server: Pick<Server, 'entry_ip_mode' | 'entry_address'>) {
-  if (String(server.entry_ip_mode || 'auto') !== 'custom') return ''
+export function serverCustomEntry(server: Pick<Server, 'entry_ip_mode' | 'entry_address' | 'entry_ddns_domain'>) {
+  const mode = String(server.entry_ip_mode || 'auto')
+  if (mode === 'ddns') return String(server.entry_ddns_domain || '').trim()
+  if (mode !== 'custom') return ''
   return String(server.entry_address || '').trim()
 }
 

@@ -52,7 +52,7 @@ export function ServerNetworkDialog({ server, initialTab='overview', data, clien
     <ServerWorkspaceDialog server={server} title="网络工具" tabs={tabs as any} activeTab={tab} onTabChange={(id)=>setTab(id as Tab)} onClose={onClose}>
       {tab==='overview' && <NetworkOverviewTab server={server} />}
       {tab==='traffic' && <NetworkTrafficTab server={server} onResetTraffic={()=>void handleResetTraffic()} disabled={isViewer} />}
-      {tab==='settings' && <NetworkSettingsTab server={server} onSave={handleSaveNetwork} disabled={isViewer} disabledReason="当前账号只有查看权限" />}
+      {tab==='settings' && <NetworkSettingsTab server={server} onSave={handleSaveNetwork} disabled={isViewer} disabledReason="当前账号只有查看权限" client={client} credentials={data.dns_credentials||[]} notify={notify} />}
       {tab==='dns' && <NetworkDNSTab server={server} policy={policy} lists={lists} benchmarks={benchmarks} client={client} notify={notify} disabled={isViewer} disabledReason="当前账号只有查看权限" />}
       {tab==='mtu' && <NetworkMTUTab server={server} client={client} onSaved={onUpdated} disabled={isViewer} disabledReason="当前账号只有查看权限" />}
       {tab==='diagnostics' && <NetworkDiagnosticsTab server={server} client={client} notify={notify} disabled={isViewer||offline||neverEnrolled} disabledReason={isViewer ? '当前账号只有查看权限' : neverEnrolled? '未接入 Agent，无法执行诊断' : offline? 'Agent 当前离线' : undefined} />}

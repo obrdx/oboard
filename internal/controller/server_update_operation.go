@@ -19,6 +19,7 @@ type serverUpdateChanges struct {
 	Name                     *string                   `json:"name,omitempty"`
 	EntryAddress             *string                   `json:"entry_address,omitempty"`
 	EntryIPMode              *model.EntryIPMode        `json:"entry_ip_mode,omitempty"`
+	EntryDDNSRecordID        *int64                    `json:"entry_ddns_record_id,omitempty"`
 	RegionMode               *string                   `json:"region_mode,omitempty"`
 	RegionCode               *string                   `json:"region_code,omitempty"`
 	ListenIP                 *string                   `json:"listen_ip,omitempty"`
@@ -175,6 +176,9 @@ func (s *Server) validateServerUpdateCandidate(ctx context.Context, current mode
 	if err := validateServer(next); err != nil {
 		return err
 	}
+	if err := s.resolveServerEntryDDNS(ctx, next); err != nil {
+		return err
+	}
 	if !sameServerName(current.Name, next.Name) {
 		if err := s.rejectDuplicateServerName(ctx, next.Name, current.ID); err != nil {
 			return err
@@ -239,6 +243,10 @@ func applyServerUpdateChanges(next *model.Server, changes serverUpdateChanges) [
 	set("name", changes.Name != nil, func() { next.Name = *changes.Name })
 	set("entry_address", changes.EntryAddress != nil, func() { next.EntryAddress = *changes.EntryAddress })
 	set("entry_ip_mode", changes.EntryIPMode != nil, func() { next.EntryIPMode = *changes.EntryIPMode })
+	set("entry_ddns_record_id", changes.EntryDDNSRecordID != nil, func() {
+		id := *changes.EntryDDNSRecordID
+		next.EntryDDNSRecordID = &id
+	})
 	set("region_mode", changes.RegionMode != nil, func() { next.RegionMode = *changes.RegionMode })
 	set("region_code", changes.RegionCode != nil, func() { next.RegionCode = *changes.RegionCode })
 	set("listen_ip", changes.ListenIP != nil, func() { next.ListenIP = *changes.ListenIP })

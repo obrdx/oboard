@@ -6100,6 +6100,17 @@ func normalizeControllerRegionCode(code string) string {
 func validateEntryIPPolicy(v *model.Server) error {
 	switch v.EntryIPMode {
 	case model.EntryIPModeAuto, model.EntryIPModeIPv4, model.EntryIPModeIPv6, model.EntryIPModeCustom:
+		// Leaving the DDNS policy releases the record; it is not an error to
+		// carry the previous reference in a full-object update.
+		v.EntryDDNSRecordID = nil
+		v.EntryDDNSDomain = ""
+	case model.EntryIPModeDDNS:
+		if v.ID <= 0 {
+			return errors.New("新服务器还没有 DDNS 记录：请先创建服务器并添加 DDNS，再在网络设置中把默认入口设为 DDNS")
+		}
+		if v.EntryDDNSRecordID == nil || *v.EntryDDNSRecordID <= 0 {
+			return errors.New("默认入口设为 DDNS 时必须选择该服务器的一条 DDNS 记录（entry_ddns_record_id）")
+		}
 	default:
 		return fmt.Errorf("invalid entry_ip_mode %q", v.EntryIPMode)
 	}
@@ -6556,6 +6567,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
+		if err := s.inheritInboundDDNSSNI(r.Context(), &v); err != nil {
+			fail(w, err, 400)
+			return
+		}
 		if err := validateInbound(v); err != nil {
 			fail(w, err, 400)
 			return
@@ -6667,6 +6682,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if v.ConfigJSON, err = applyInboundConfigDefaults(v.Protocol, v.ConfigJSON); err != nil {
+			fail(w, err, 400)
+			return
+		}
+		if err := s.inheritInboundDDNSSNI(r.Context(), &v); err != nil {
 			fail(w, err, 400)
 			return
 		}

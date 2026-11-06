@@ -108,6 +108,12 @@ func (s *Service) PlanServerOnboarding(ctx context.Context, principal Principal,
 	}
 	switch model.EntryIPMode(normalizedEntryMode) {
 	case model.EntryIPModeAuto, model.EntryIPModeIPv4, model.EntryIPModeIPv6, model.EntryIPModeCustom:
+	case model.EntryIPModeDDNS:
+		return PlanResult{
+			Kind:     "server_onboarding",
+			Valid:    false,
+			Warnings: []string{"新服务器还没有 DDNS 记录：先以 entry_ip_mode=auto 接入，在 probe_ddns.save 创建该服务器的 DDNS 记录后，再用 servers.update 设置 entry_ip_mode=ddns 与 entry_ddns_record_id"},
+		}, nil
 	default:
 		return PlanResult{
 			Kind:     "server_onboarding",

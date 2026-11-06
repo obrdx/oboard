@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -258,6 +259,11 @@ func (s *Store) SaveProbeDDNS(ctx context.Context, server model.Server, v *model
 		v.CreatedAt = parseTime(ts)
 		v.UpdatedAt = v.CreatedAt
 	} else {
+		if !v.Enabled {
+			if err = probeDDNSServerEntryTx(ctx, tx, v.ID); err != nil {
+				return err
+			}
+		}
 		result, e := tx.ExecContext(ctx, `update probe_ddns_records set name=?,dns_credential_id=?,domain=?,record_types=?,proxy_enabled=?,interval_seconds=?,enabled=?,interface_name=?,interface_address=?,interface_prefix=?,address_family=?,exclude_private=?,revision=revision+1,next_at=0,updated_at=? where id=? and server_id=? and revision=?`, v.Name, v.DNSCredentialID, v.Domain, v.RecordTypes, boolInt(v.ProxyEnabled), v.IntervalSeconds, boolInt(v.Enabled), v.InterfaceName, v.InterfaceAddress, v.InterfacePrefix, v.AddressFamily, boolInt(v.ExcludePrivate), ts, v.ID, v.ServerID, v.Revision)
 		if e != nil {
 			return e
@@ -275,16 +281,47 @@ func (s *Store) SaveProbeDDNS(ctx context.Context, server model.Server, v *model
 	return tx.Commit()
 }
 
-func (s *Store) DeleteProbeDDNS(ctx context.Context, id, revision int64) error {
-	result, err := s.db.ExecContext(ctx, `delete from probe_ddns_records where id=? and revision=?`, id, revision)
+// ErrProbeDDNSServerEntry reports that a DDNS record is a server's default
+// entry and therefore cannot be removed or stopped.
+var ErrProbeDDNSServerEntry = errors.New("该 DDNS 是服务器的默认入口，请先在服务器网络设置中更换默认入口地址策略")
+
+func probeDDNSServerEntryTx(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, id int64) error {
+	var name string
+	err := q.QueryRowContext(ctx, `select name from servers where entry_ddns_record_id=? and entry_ip_mode='ddns' limit 1`, id).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	n, _ := result.RowsAffected()
-	if n != 1 {
+	return fmt.Errorf("%w（服务器 %s）", ErrProbeDDNSServerEntry, name)
+}
+
+// CheckProbeDDNSServerEntry returns ErrProbeDDNSServerEntry when a server uses
+// the record as its default entry.
+func (s *Store) CheckProbeDDNSServerEntry(ctx context.Context, id int64) error {
+	return probeDDNSServerEntryTx(ctx, s.db, id)
+}
+
+func (s *Store) DeleteProbeDDNS(ctx context.Context, id, revision int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = probeDDNSServerEntryTx(ctx, tx, id); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `delete from probe_ddns_records where id=? and revision=?`, id, revision)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
 		return errors.New("DDNS 记录已改变，请刷新")
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (s *Store) TouchProbeDDNS(ctx context.Context, id, revision int64) error {

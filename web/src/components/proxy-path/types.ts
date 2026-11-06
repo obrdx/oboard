@@ -5,7 +5,8 @@ import type { MonitoringDisplay } from '../../server-monitoring'
 
 export type Protocol = 'vless' | 'hy2' | 'anytls' | 'shadowsocks' | 'mieru' | 'snell' | 'socks' | 'ssh'
 export type ExternalProtocol = Exclude<Protocol, 'ssh'> | 'http'
-export type EntryIPMode = 'auto' | 'ipv4' | 'ipv6' | 'custom'
+// 'ddns' is server-only: the server's default entry is one of its DDNS records.
+export type EntryIPMode = 'auto' | 'ipv4' | 'ipv6' | 'custom' | 'ddns'
 export type RegionMode = 'auto' | 'manual'
 export type DNSRecordTypes = 'auto' | 'a' | 'aaaa' | 'both'
 export type CertificateMode = 'external' | 'auto' | 'exact' | 'wildcard' | 'explicit'
@@ -45,6 +46,8 @@ export type Server = {
   detected_region_code: string
   region_mode: RegionMode
   entry_ip_mode: EntryIPMode
+  entry_ddns_record_id?: number | null
+  entry_ddns_domain?: string
   listen_ip: string
   listen_mode: string
   ip_stack: string

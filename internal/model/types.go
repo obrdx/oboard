@@ -79,6 +79,10 @@ const (
 	EntryIPModeIPv4   EntryIPMode = "ipv4"
 	EntryIPModeIPv6   EntryIPMode = "ipv6"
 	EntryIPModeCustom EntryIPMode = "custom"
+	// EntryIPModeDDNS is server-only: the server's default client Host is the
+	// domain of one of its own DDNS records (EntryDDNSRecordID). Inbounds that
+	// follow the server inherit it; inbounds never store this mode.
+	EntryIPModeDDNS EntryIPMode = "ddns"
 )
 
 type IPStack string
@@ -1013,6 +1017,8 @@ type Server struct {
 	DetectedRegionCode          string             `json:"detected_region_code"`
 	RegionMode                  string             `json:"region_mode"`
 	EntryIPMode                 EntryIPMode        `json:"entry_ip_mode"`
+	EntryDDNSRecordID           *int64             `json:"entry_ddns_record_id,omitempty"`
+	EntryDDNSDomain             string             `json:"entry_ddns_domain,omitempty"`
 	ListenIP                    string             `json:"listen_ip"`
 	ListenMode                  ListenMode         `json:"listen_mode"`
 	IPStack                     IPStack            `json:"ip_stack"`

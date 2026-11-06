@@ -2987,7 +2987,7 @@ func ResolveReachableEntryAddress(source model.Server, inbound model.Inbound, ta
 	if mode == "" || mode == model.EntryIPModeAuto {
 		mode = target.EntryIPMode
 	}
-	if mode == "" || mode == model.EntryIPModeAuto {
+	if mode == "" || mode == model.EntryIPModeAuto || mode == model.EntryIPModeDDNS {
 		return resolveCompatibleServerAddress(source, target)
 	}
 	address := entryAddressForMode(mode, inbound.ExternalIP, target)
@@ -3064,7 +3064,7 @@ func ListenIPSupportsFamily(listenIP, family string) bool {
 
 func ResolveReachableServerEntryAddress(source, target model.Server) (string, error) {
 	mode := target.EntryIPMode
-	if mode == "" || mode == model.EntryIPModeAuto {
+	if mode == "" || mode == model.EntryIPModeAuto || mode == model.EntryIPModeDDNS {
 		return resolveCompatibleServerAddress(source, target)
 	}
 	return validateReachableServerAddress(source, target, entryAddressForMode(mode, "", target))
@@ -3211,10 +3211,37 @@ func ResolveEntryAddressHost(inbound model.Inbound, server model.Server, alwaysR
 	if inboundClientHostUsesDomain(inbound, server, alwaysResolve) {
 		return strings.TrimSpace(inbound.DNSDomain)
 	}
+	if domain := InheritedServerDDNSDomain(inbound, server); domain != "" {
+		return domain
+	}
 	if literal := ResolveLiteralEntryAddress(inbound, server); literal != "" {
 		return literal
 	}
 	return strings.TrimSpace(inbound.DNSDomain)
+}
+
+// ServerDDNSEntryDomain is the server's default client Host when its entry
+// policy is a DDNS record, or "" otherwise.
+func ServerDDNSEntryDomain(server model.Server) string {
+	if server.EntryIPMode != model.EntryIPModeDDNS || server.EntryDDNSRecordID == nil || *server.EntryDDNSRecordID <= 0 {
+		return ""
+	}
+	return strings.TrimSpace(server.EntryDDNSDomain)
+}
+
+// InheritedServerDDNSDomain is the server default DDNS domain for an inbound
+// that follows the server (entry_ip_mode auto) and has no DDNS record of its
+// own. Inbounds with an explicit IPv4, IPv6, custom, or DDNS choice keep it.
+func InheritedServerDDNSDomain(inbound model.Inbound, server model.Server) string {
+	switch inbound.EntryIPMode {
+	case "", model.EntryIPModeAuto:
+	default:
+		return ""
+	}
+	if inbound.DDNSRecordID != nil && *inbound.DDNSRecordID > 0 {
+		return ""
+	}
+	return ServerDDNSEntryDomain(server)
 }
 
 func ResolveEntryAddress(inbound model.Inbound, server model.Server) string {

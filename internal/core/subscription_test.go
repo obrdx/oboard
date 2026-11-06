@@ -487,6 +487,36 @@ func TestResolveEntryAddressHostUsesIPForStaticSingleStack(t *testing.T) {
 			want:    "ddns.example.com",
 		},
 		{
+			name:    "follows server default ddns",
+			inbound: model.Inbound{DNSRecordTypes: "auto", EntryIPMode: model.EntryIPModeAuto},
+			server:  model.Server{ID: 3, PublicIPv4: "203.0.113.10", PublicIPv6: "2001:db8::10", EntryIPMode: model.EntryIPModeDDNS, EntryDDNSRecordID: int64Ptr(9), EntryDDNSDomain: "node.example.com"},
+			want:    "node.example.com",
+		},
+		{
+			name:    "explicit ipv4 ignores server default ddns",
+			inbound: model.Inbound{EntryIPMode: model.EntryIPModeIPv4},
+			server:  model.Server{ID: 3, PublicIPv4: "203.0.113.10", EntryIPMode: model.EntryIPModeDDNS, EntryDDNSRecordID: int64Ptr(9), EntryDDNSDomain: "node.example.com"},
+			want:    "203.0.113.10",
+		},
+		{
+			name:    "own ddns wins over server default ddns",
+			inbound: model.Inbound{EntryIPMode: model.EntryIPModeAuto, DDNSRecordID: int64Ptr(7), DDNSDomain: "ddns.example.com"},
+			server:  model.Server{ID: 3, PublicIPv4: "203.0.113.10", EntryIPMode: model.EntryIPModeDDNS, EntryDDNSRecordID: int64Ptr(9), EntryDDNSDomain: "node.example.com"},
+			want:    "ddns.example.com",
+		},
+		{
+			name:    "own dual stack record wins over server default ddns",
+			inbound: model.Inbound{DNSSyncEnabled: true, DNSDomain: domain, DNSRecordTypes: "both", EntryIPMode: model.EntryIPModeAuto},
+			server:  model.Server{ID: 3, PublicIPv4: "203.0.113.10", PublicIPv6: "2001:db8::10", EntryIPMode: model.EntryIPModeDDNS, EntryDDNSRecordID: int64Ptr(9), EntryDDNSDomain: "node.example.com"},
+			want:    domain,
+		},
+		{
+			name:    "ddns mode without record falls back to ip",
+			inbound: model.Inbound{EntryIPMode: model.EntryIPModeAuto},
+			server:  model.Server{ID: 3, PublicIPv4: "203.0.113.10", EntryIPMode: model.EntryIPModeDDNS},
+			want:    "203.0.113.10",
+		},
+		{
 			name:    "always use domain",
 			inbound: model.Inbound{DNSSyncEnabled: true, DNSDomain: domain, DNSRecordTypes: "a", EntryIPMode: model.EntryIPModeAuto},
 			server:  ipv4,
@@ -814,4 +844,20 @@ func FuzzNormalizeSubscriptionFormat(f *testing.F) {
 			t.Fatalf("normalizer returned unsupported format %q for %q", normalized, raw)
 		}
 	})
+}
+
+func TestServerDDNSEntryKeepsInterServerLinksOnIP(t *testing.T) {
+	source := model.Server{ID: 1, Name: "src", PublicIPv4: "198.51.100.1"}
+	target := model.Server{ID: 2, Name: "dst", PublicIPv4: "203.0.113.10", PublicIPv6: "2001:db8::10", EntryIPMode: model.EntryIPModeDDNS, EntryDDNSRecordID: int64Ptr(9), EntryDDNSDomain: "node.example.com"}
+	address, err := ResolveReachableServerEntryAddress(source, target)
+	if err != nil || address != "203.0.113.10" {
+		t.Fatalf("server address = %q, %v", address, err)
+	}
+	address, err = ResolveReachableEntryAddress(source, model.Inbound{ServerID: 2, EntryIPMode: model.EntryIPModeAuto}, target)
+	if err != nil || address != "203.0.113.10" {
+		t.Fatalf("inbound address = %q, %v", address, err)
+	}
+	if got := ResolveLiteralEntryAddress(model.Inbound{EntryIPMode: model.EntryIPModeAuto}, target); got != "203.0.113.10" {
+		t.Fatalf("literal = %q", got)
+	}
 }

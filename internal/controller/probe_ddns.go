@@ -106,6 +106,16 @@ func (s *Server) registerProbeDDNSOperations() {
 				if err = s.prepareProbeDDNS(ctx, *server, &record); err != nil {
 					return nil, err
 				}
+				if current != nil && !record.Enabled {
+					if err = s.store.CheckProbeDDNSServerEntry(ctx, current.ID); err != nil {
+						return nil, err
+					}
+				}
+			}
+			if action == "delete" {
+				if err = s.store.CheckProbeDDNSServerEntry(ctx, current.ID); err != nil {
+					return nil, err
+				}
 			}
 			return map[string]any{"server_id": input.ServerID, "id": input.ID}, nil
 		}
@@ -377,6 +387,56 @@ func (s *Server) validateInboundDDNSRecord(ctx context.Context, inbound model.In
 	if record.ServerID != inbound.ServerID {
 		return errors.New("DDNS 记录必须属于该入口的服务器")
 	}
+	return nil
+}
+
+// inheritInboundDDNSSNI fills an empty managed-certificate SNI with the DDNS
+// domain the inbound's clients connect to: its own DDNS record first, then the
+// server default DDNS entry it follows. The SNI is stored on the inbound, so a
+// later change of the server default never re-issues an existing certificate.
+func (s *Server) inheritInboundDDNSSNI(ctx context.Context, inbound *model.Inbound) error {
+	if inbound == nil || !inbound.TLS || inbound.CertificateMode == "" || inbound.CertificateMode == model.CertificateModeExternal || strings.TrimSpace(inbound.CertificateDomain) != "" {
+		return nil
+	}
+	domain := ""
+	if inbound.DDNSRecordID != nil && *inbound.DDNSRecordID > 0 {
+		record, err := s.store.GetProbeDDNS(ctx, *inbound.DDNSRecordID)
+		if err == nil && record.ServerID == inbound.ServerID {
+			domain = record.Domain
+		}
+	} else if inbound.ServerID > 0 {
+		server, err := s.store.GetServer(ctx, inbound.ServerID)
+		if err == nil {
+			domain = core.InheritedServerDDNSDomain(*inbound, *server)
+		}
+	}
+	inbound.CertificateDomain = normalizeDomainName(domain)
+	return nil
+}
+
+// resolveServerEntryDDNS binds a server's DDNS default entry to one of its
+// own enabled records and refreshes the domain carried on the candidate.
+func (s *Server) resolveServerEntryDDNS(ctx context.Context, server *model.Server) error {
+	if server.EntryIPMode != model.EntryIPModeDDNS {
+		return nil
+	}
+	if server.EntryDDNSRecordID == nil || *server.EntryDDNSRecordID <= 0 {
+		return errors.New("默认入口设为 DDNS 时必须选择该服务器的一条 DDNS 记录（entry_ddns_record_id）")
+	}
+	record, err := s.store.GetProbeDDNS(ctx, *server.EntryDDNSRecordID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("所选 DDNS 记录不存在")
+	}
+	if err != nil {
+		return err
+	}
+	if record.ServerID != server.ID {
+		return errors.New("默认入口只能使用这台服务器自己的 DDNS 记录")
+	}
+	if !record.Enabled {
+		return errors.New("所选 DDNS 记录已停用，启用后才能作为默认入口")
+	}
+	server.EntryDDNSDomain = normalizeDomainName(record.Domain)
 	return nil
 }
 

@@ -14,6 +14,8 @@ type ServerDTO struct {
 	Status                      model.ServerStatus         `json:"status"`
 	EntryAddress                string                     `json:"entry_address"`
 	EntryIPMode                 model.EntryIPMode          `json:"entry_ip_mode"`
+	EntryDDNSRecordID           *int64                     `json:"entry_ddns_record_id,omitempty"`
+	EntryDDNSDomain             string                     `json:"entry_ddns_domain,omitempty"`
 	RegionMode                  string                     `json:"region_mode"`
 	RegionCode                  string                     `json:"region_code"`
 	DetectedRegionCode          string                     `json:"detected_region_code"`
@@ -252,7 +254,7 @@ func subscriptionPlanNodeDTOs(items []model.SubscriptionPlanNode) []Subscription
 func serverDTO(item model.Server) ServerDTO {
 	return ServerDTO{
 		ID: item.ID, Revision: revision(item.UpdatedAt), Name: item.Name, Status: item.Status,
-		EntryAddress: item.EntryAddress, EntryIPMode: item.EntryIPMode, RegionMode: item.RegionMode,
+		EntryAddress: item.EntryAddress, EntryIPMode: item.EntryIPMode, EntryDDNSRecordID: item.EntryDDNSRecordID, EntryDDNSDomain: item.EntryDDNSDomain, RegionMode: item.RegionMode,
 		RegionCode: item.RegionCode, DetectedRegionCode: item.DetectedRegionCode, PublicIPv4: item.PublicIPv4,
 		PublicIPv6: item.PublicIPv6, InterfaceIPv6: item.InterfaceIPv6, IPStack: item.IPStack,
 		ListenIP: item.ListenIP, ListenMode: item.ListenMode, UDPInboundMode: item.UDPInboundMode,

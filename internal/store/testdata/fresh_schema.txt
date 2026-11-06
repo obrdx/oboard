@@ -2000,6 +2000,7 @@ table servers
     detected_region_code TEXT notnull=1 default='' pk=0
     region_mode TEXT notnull=1 default='auto' pk=0
     entry_ip_mode TEXT notnull=1 default='auto' pk=0
+    entry_ddns_record_id INTEGER notnull=0 default=- pk=0
     listen_ip TEXT notnull=0 default=- pk=0
     ip_stack TEXT notnull=1 default='auto' pk=0
     udp_inbound_mode TEXT notnull=1 default='allow' pk=0
@@ -2798,6 +2799,8 @@ trigger routing_rev_outbounds_update on outbounds
 trigger routing_rev_port_forwards_delete on port_forwards
 trigger routing_rev_port_forwards_insert on port_forwards
 trigger routing_rev_port_forwards_update on port_forwards
+trigger routing_rev_probe_ddns_records_delete on probe_ddns_records
+trigger routing_rev_probe_ddns_records_update on probe_ddns_records
 trigger routing_rev_proxy_credentials_delete on proxy_credentials
 trigger routing_rev_proxy_credentials_insert on proxy_credentials
 trigger routing_rev_proxy_credentials_update on proxy_credentials

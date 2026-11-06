@@ -44,6 +44,7 @@ function serverDefaultEntryAddress(server?: Server) {
   if (mode==='ipv4') return server.public_ipv4||''
   if (mode==='ipv6') return server.public_ipv6 || server.interface_ipv6 || ''
   if (mode==='custom') return server.entry_address||''
+  if (mode==='ddns' && server.entry_ddns_domain) return server.entry_ddns_domain
   return server.public_ipv4 || server.public_ipv6 || server.interface_ipv6 || ''
 }
 

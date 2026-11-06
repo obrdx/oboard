@@ -2,14 +2,15 @@ import React, { useState } from 'react'
 import { Select } from '../../ui/select'
 import { FormField } from '../../ui/form-field'
 import type { Server, EntryIPMode } from '../../proxy-path/types'
+import { InboundDDNSField } from '../ProbeDDNS'
 
-const entryIPModes: EntryIPMode[] = ['auto','ipv4','ipv6','custom']
+const entryIPModes: EntryIPMode[] = ['auto','ipv4','ipv6','custom','ddns']
 const ipStacks = ['auto','ipv4_only','ipv6_only','dual_stack','prefer_ipv4','prefer_ipv6']
 const udpModes = ['allow','block','uot']
 const listenModes = ['auto','dual','ipv4_only']
 const listenModeLabels: Record<string,string> = { auto:'自动', dual:'双栈', ipv4_only:'仅 IPv4' }
 
-function labelValue(v:any){ const m:Record<string,string>={ auto:'自动', ipv4:'IPv4', ipv6:'IPv6', custom:'自定义', allow:'允许', block:'阻断', uot:'UoT', auto_detect:'自动', dual_stack:'双栈', ipv4_only:'仅 IPv4', ipv6_only:'仅 IPv6', prefer_ipv4:'优先 IPv4', prefer_ipv6:'优先 IPv6' }; return m[String(v)]||String(v) }
+function labelValue(v:any){ const m:Record<string,string>={ auto:'自动', ipv4:'IPv4', ipv6:'IPv6', custom:'自定义', ddns:'DDNS 域名', allow:'允许', block:'阻断', uot:'UoT', auto_detect:'自动', dual_stack:'双栈', ipv4_only:'仅 IPv4', ipv6_only:'仅 IPv6', prefer_ipv4:'优先 IPv4', prefer_ipv6:'优先 IPv6' }; return m[String(v)]||String(v) }
 
 function parsePortRangeInput(value: string){
   const match=value.trim().match(/^(\d+)\s*-\s*(\d+)$/)
@@ -37,10 +38,12 @@ function PortRangeInput({ start, end, onChange, onValidityChange }: { start:numb
   )
 }
 
-export function NetworkSettingsTab({ server, onSave, disabled, disabledReason }: { server: Server; onSave:(patch:any)=>Promise<void>; disabled?: boolean; disabledReason?: string }) {
+export function NetworkSettingsTab({ server, onSave, disabled, disabledReason, client, credentials=[], notify }: { server: Server; onSave:(patch:any)=>Promise<void>; disabled?: boolean; disabledReason?: string; client?: any; credentials?: any[]; notify?: (m:string,t?:any)=>void }) {
   const [draft, setDraft]=useState<any>(()=> ({
     entry_ip_mode: (server.entry_ip_mode||'auto') as EntryIPMode,
     entry_address: server.entry_address||'',
+    entry_ddns_record_id: server.entry_ddns_record_id||null,
+    entry_ddns_domain: server.entry_ddns_domain||'',
     listen_ip: server.listen_ip||'',
     listen_mode: server.listen_mode||'auto',
     ip_stack: server.ip_stack||'auto',
@@ -54,7 +57,7 @@ export function NetworkSettingsTab({ server, onSave, disabled, disabledReason }:
   const [internalValid, setInternalValid]=useState(true)
   const [saving, setSaving]=useState(false)
   const update=(patch:any)=> setDraft((o:any)=>({...o,...patch}))
-  const entryInvalid = Boolean(String(draft.entry_address||'').trim()) && draft.entry_ip_mode!=='custom'
+  const entryInvalid = (Boolean(String(draft.entry_address||'').trim()) && draft.entry_ip_mode!=='custom') || (draft.entry_ip_mode==='ddns' && !Number(draft.entry_ddns_record_id||0))
   const save=async()=>{
     if(saving|| !portValid|| !internalValid || entryInvalid || disabled) return
     setSaving(true)
@@ -64,11 +67,14 @@ export function NetworkSettingsTab({ server, onSave, disabled, disabledReason }:
     <div className="server-network-settings-tab">
       <section className="server-detail-section">
         <h3>公网地址</h3>
-        <FormField label="入口地址模式" hint="自动：忽略手动入口；自定义：才生效">
-          <Select value={draft.entry_ip_mode} onChange={e=>{ const n=e.target.value as EntryIPMode; update(n==='custom' ? {entry_ip_mode:n} : {entry_ip_mode:n, entry_address:''})}} disabled={disabled}>
+        <FormField label="入口地址模式" hint="「跟随服务器」的入口在订阅里使用的地址；DDNS 域名可让它们统一走双栈">
+          <Select value={draft.entry_ip_mode} onChange={e=>{ const n=e.target.value as EntryIPMode; update(n==='custom' ? {entry_ip_mode:n, entry_ddns_record_id:null, entry_ddns_domain:''} : n==='ddns' ? {entry_ip_mode:n, entry_address:''} : {entry_ip_mode:n, entry_address:'', entry_ddns_record_id:null, entry_ddns_domain:''})}} disabled={disabled}>
             {entryIPModes.map(x=> <option key={x} value={x}>{labelValue(x)}</option>)}
           </Select>
         </FormField>
+        {draft.entry_ip_mode==='ddns' && client ? (
+          <InboundDDNSField notify={notify as any} serverID={server.id} recordID={Number(draft.entry_ddns_record_id||0)||undefined} domain={draft.entry_ddns_domain} client={client} credentials={credentials} label="默认入口 DDNS" hint="只能选这台服务器已启用的 DDNS，建议记录类型选 A + AAAA。设为默认入口后，这条 DDNS 不能删除或停用。" defaultRecordTypes="both" onlyEnabled disabled={disabled} onChange={record=>update(record ? {entry_ddns_record_id:record.id, entry_ddns_domain:record.domain} : {entry_ddns_record_id:null, entry_ddns_domain:''})} />
+        ) : null}
         {draft.entry_ip_mode==='custom' ? (
           <FormField label="自定义入口地址" hint="可填写域名、IPv4 或 IPv6">
             <input value={draft.entry_address} onChange={e=>update({entry_address: e.target.value})} placeholder="例如 1.2.3.4 或 example.com" disabled={disabled} />
@@ -115,6 +121,8 @@ export function NetworkSettingsTab({ server, onSave, disabled, disabledReason }:
         <button type="button" className="ghost" disabled={saving} onClick={()=>setDraft({
           entry_ip_mode: (server.entry_ip_mode||'auto'),
           entry_address: server.entry_address||'',
+          entry_ddns_record_id: server.entry_ddns_record_id||null,
+          entry_ddns_domain: server.entry_ddns_domain||'',
           listen_ip: server.listen_ip||'',
           listen_mode: server.listen_mode||'auto',
           ip_stack: server.ip_stack||'auto',

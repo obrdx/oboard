@@ -251,7 +251,7 @@ func defaultDescriptors() []Descriptor {
 	displayTags := serverDisplayTagsSchema()
 	server := closedObject(map[string]any{
 		"id": positiveID, "revision": stringValue, "name": stringValue, "status": stringValue,
-		"entry_address": stringValue, "entry_ip_mode": stringValue, "region_mode": stringValue,
+		"entry_address": stringValue, "entry_ip_mode": stringValue, "entry_ddns_record_id": map[string]any{"type": []string{"integer", "null"}}, "entry_ddns_domain": stringValue, "region_mode": stringValue,
 		"region_code": stringValue, "detected_region_code": stringValue, "public_ipv4": stringValue,
 		"public_ipv6": stringValue, "interface_ipv6": stringValue, "ip_stack": stringValue,
 		"listen_ip": stringValue, "listen_mode": stringValue, "udp_inbound_mode": stringValue,
@@ -762,8 +762,10 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 	case "servers.update":
 		probeTarget := map[string]any{"type": "string", "enum": []string{"auto", "cloudflare", "12306", "google"}}
 		changes := closedObject(map[string]any{
-			"name": stringValue, "entry_address": stringValue, "entry_ip_mode": stringValue,
-			"region_mode": stringValue, "region_code": stringValue, "listen_ip": stringValue,
+			"name": stringValue, "entry_address": stringValue,
+			"entry_ip_mode":        map[string]any{"type": "string", "enum": []string{"auto", "ipv4", "ipv6", "custom", "ddns"}, "description": "服务器默认入口：auto 优先 IPv4、ipv4、ipv6、custom 使用 entry_address；ddns 使用该服务器一条已启用的 DDNS 记录的域名（需同时传 entry_ddns_record_id，记录在 probe_ddns.save 中创建，record_types=both 即双栈）。所有 entry_ip_mode=auto（跟随服务器）且未单独引用 DDNS 的入口，订阅 Host 改用该域名；单独选了 IPv4/IPv6/自定义/DDNS 或已开启自身解析的入口不受影响。服务器之间的链路仍直连 IP。改回其他模式会释放该记录"},
+			"entry_ddns_record_id": map[string]any{"type": "integer", "minimum": 1, "description": "entry_ip_mode=ddns 时必填：同一服务器上已启用的 DDNS 记录 ID。被设为默认入口的 DDNS 记录不能删除或停用"},
+			"region_mode":          stringValue, "region_code": stringValue, "listen_ip": stringValue,
 			"listen_mode": stringValue, "ip_stack": stringValue, "udp_inbound_mode": stringValue,
 			"mtu_mode": stringValue, "mtu_value": map[string]any{"type": "integer"},
 			"mtu_probe_host": stringValue, "mtu_probe_port": map[string]any{"type": "integer"},

@@ -545,7 +545,7 @@ const proxyPathChainMethods = [
 const ipStacks = ['auto', 'ipv4_only', 'ipv6_only', 'dual_stack', 'prefer_ipv4', 'prefer_ipv6']
 const listenModes = ['auto', 'dual', 'ipv4_only']
 const listenModeLabels: Record<string, string> = { auto: '自动', dual: '双栈', ipv4_only: '仅 IPv4' }
-const entryIPModes: EntryIPMode[] = ['auto', 'ipv4', 'ipv6', 'custom']
+const entryIPModes: EntryIPMode[] = ['auto', 'ipv4', 'ipv6', 'custom', 'ddns']
 const udpModes = ['allow', 'block', 'uot']
 const mtuModes = ['disabled', 'detect', 'apply']
 const defaultVLESSRealityServerName = 'gateway.icloud.com'
@@ -7143,7 +7143,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
           />
         </div>}
     <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} servers={data.servers || []} panelBBR={panelBBRFromDefaults(creationDefaults)} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
-    <AnimatePresence>{editServer && <ServerEditDialog server={editServer} client={client} notify={notify} role={role} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} panelBBR={panelBBRFromDefaults(creationDefaults)} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
+    <AnimatePresence>{editServer && <ServerEditDialog server={editServer} client={client} notify={notify} role={role} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} credentials={data.dns_credentials || []} inbounds={data.inbounds || []} panelBBR={panelBBRFromDefaults(creationDefaults)} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
     <AnimatePresence>{extendServer && <ServerExtendExpiryDialog server={extendServer} onCancel={() => setExtendServer(null)} onSubmit={extendServerExpiry} />}</AnimatePresence>
     <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} role={role} onResetTraffic={() => void resetServerTraffic(detailServer)} onClose={() => setDetailServer(null)} />}</AnimatePresence>
     <AnimatePresence>{aboutServer && <ServerAboutDialog server={aboutServer} onClose={() => setAboutServer(null)} />}</AnimatePresence>
@@ -7601,6 +7601,8 @@ type ServerSettingsDialogProps = {
   notify?: (message: string, tone?: string) => void
   role?: Role
   panelBBR?: PanelBBRDefaults
+  credentials?: DNSCredential[]
+  inbounds?: Inbound[]
 }
 
 type PanelBBRDefaults = { qdisc?: string; cakeMbit?: number; tcpTuning?: boolean }
@@ -7653,7 +7655,7 @@ function ServerBBRSettings({ draft, update, creating, enrolled, panelBBR }: { dr
   </SettingGroup>
 }
 
-export function ServerSettingsDialog({ mode, server, draft, update, onCancel, onSubmit, servers, connectionAuditGated, client, notify, role = 'viewer', panelBBR }: ServerSettingsDialogProps) {
+export function ServerSettingsDialog({ mode, server, draft, update, onCancel, onSubmit, servers, connectionAuditGated, client, notify, role = 'viewer', panelBBR, credentials = [], inbounds = [] }: ServerSettingsDialogProps) {
   const creating = mode === 'create'
   const [tab, setTab] = useState<ServerSettingsTab>('basic')
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
@@ -7662,7 +7664,8 @@ export function ServerSettingsDialog({ mode, server, draft, update, onCancel, on
   const [saving, setSaving] = useState(false)
   const [cycleMissing, setCycleMissing] = useState(false)
   const bodyRef = useRef<HTMLDivElement>(null)
-  const entryAddressInvalid = Boolean(String(draft.entry_address || '').trim()) && draft.entry_ip_mode !== 'custom'
+  const entryDDNSMissing = draft.entry_ip_mode === 'ddns' && !Number(draft.entry_ddns_record_id || 0)
+  const entryAddressInvalid = (Boolean(String(draft.entry_address || '').trim()) && draft.entry_ip_mode !== 'custom') || entryDDNSMissing
   const nameMissing = !String(draft.name || '').trim()
   const invalid: Partial<Record<ServerSettingsTab, boolean>> = {
     basic: nameMissing,
@@ -7822,9 +7825,26 @@ export function ServerSettingsDialog({ mode, server, draft, update, onCancel, on
 
           {tab === 'network' && <>
             <SettingGroup title="入口与监听">
-              <SettingRow label="默认入口地址策略" description="订阅默认使用的服务器地址。只有“自定义”会使用下方地址。">
-                <Select value={draft.entry_ip_mode} onChange={e => { const next = e.target.value as EntryIPMode; update(next === 'custom' ? { entry_ip_mode: next } : { entry_ip_mode: next, entry_address: '' }) }} aria-label="默认入口地址策略">{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
+              <SettingRow label="默认入口地址策略" description="所有「跟随服务器」的入口在订阅里使用的地址。选「DDNS 域名」可让这些入口一次性改用同一个双栈域名。">
+                <Select value={draft.entry_ip_mode} onChange={e => { const next = e.target.value as EntryIPMode; update(next === 'custom' ? { entry_ip_mode: next, entry_ddns_record_id: null, entry_ddns_domain: '' } : next === 'ddns' ? { entry_ip_mode: next, entry_address: '' } : { entry_ip_mode: next, entry_address: '', entry_ddns_record_id: null, entry_ddns_domain: '' }) }} aria-label="默认入口地址策略">{entryIPModes.map(x => <option key={x} value={x} disabled={x === 'ddns' && creating}>{x === 'ddns' && creating ? 'DDNS 域名（创建服务器后可选）' : labelValue(x)}</option>)}</Select>
               </SettingRow>
+              {draft.entry_ip_mode === 'ddns' && server ? <>
+                <InboundDDNSField
+                  notify={notify}
+                  serverID={server.id}
+                  recordID={Number(draft.entry_ddns_record_id || 0) || undefined}
+                  domain={String(draft.entry_ddns_domain || '')}
+                  client={client}
+                  credentials={credentials}
+                  label="默认入口 DDNS"
+                  hint="只能选这台服务器已启用的 DDNS。建议记录类型选 A + AAAA，客户端即可同时走 IPv4 与 IPv6。被设为默认入口后，这条 DDNS 不能删除或停用。"
+                  defaultRecordTypes="both"
+                  onlyEnabled
+                  disabled={!client}
+                  onChange={record => update(record ? { entry_ddns_record_id: record.id, entry_ddns_domain: record.domain } : { entry_ddns_record_id: null, entry_ddns_domain: '' })}
+                />
+                <ServerEntryDDNSImpact server={server} inbounds={inbounds} domain={String(draft.entry_ddns_domain || '')} />
+              </> : null}
               {draft.entry_ip_mode === 'custom' ? (
                 <SettingRow label="自定义入口地址" description="可填写域名、IPv4 或 IPv6。">
                   <input value={draft.entry_address || ''} onChange={e => update({ entry_address: e.target.value })} placeholder="例如 1.2.3.4 或 example.com" aria-label="自定义入口地址" />
@@ -7949,10 +7969,10 @@ function serverToDraft(server: Server) {
   }
 }
 
-function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, onSubmit, servers, connectionAuditGated, panelBBR }: { server: Server; client: any; notify?: (message: string, tone?: string) => void; role?: Role; onCancel: () => void; onSubmit: (server: any) => Promise<boolean>; servers?: Server[]; connectionAuditGated?: boolean; panelBBR?: PanelBBRDefaults }) {
+function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, onSubmit, servers, connectionAuditGated, panelBBR, credentials, inbounds }: { server: Server; client: any; notify?: (message: string, tone?: string) => void; role?: Role; onCancel: () => void; onSubmit: (server: any) => Promise<boolean>; servers?: Server[]; connectionAuditGated?: boolean; panelBBR?: PanelBBRDefaults; credentials?: DNSCredential[]; inbounds?: Inbound[] }) {
   const [draft, setDraft] = useState<any>(() => serverToDraft(server))
   const update = (patch: Record<string, any>) => setDraft((old: any) => applyBillingAnchorReset(old, patch))
-  return <ServerSettingsDialog mode="edit" server={server} draft={draft} update={update} onCancel={onCancel} onSubmit={() => onSubmit(draft)} servers={servers} connectionAuditGated={connectionAuditGated} client={client} notify={notify} role={role} panelBBR={panelBBR} />
+  return <ServerSettingsDialog mode="edit" server={server} draft={draft} update={update} onCancel={onCancel} onSubmit={() => onSubmit(draft)} servers={servers} connectionAuditGated={connectionAuditGated} client={client} notify={notify} role={role} panelBBR={panelBBR} credentials={credentials} inbounds={inbounds} />
 }
 
 type ServerExtendUnit = 'days' | 'months' | 'years'
@@ -9121,7 +9141,36 @@ function serverDefaultEntryAddress(server?: Server) {
   if (mode === 'ipv4') return server.public_ipv4 || ''
   if (mode === 'ipv6') return server.public_ipv6 || server.interface_ipv6 || ''
   if (mode === 'custom') return server.entry_address || ''
+  if (mode === 'ddns' && serverDDNSEntryDomain(server)) return serverDDNSEntryDomain(server)
   return server.public_ipv4 || server.public_ipv6 || server.interface_ipv6 || ''
+}
+// The server default DDNS domain, mirroring core.ServerDDNSEntryDomain.
+function serverDDNSEntryDomain(server?: Server) {
+  if (!server || server.entry_ip_mode !== 'ddns' || !Number(server.entry_ddns_record_id || 0)) return ''
+  return String(server.entry_ddns_domain || '').trim()
+}
+// An inbound inherits the server DDNS domain only while it follows the server
+// and has no DDNS record of its own (core.InheritedServerDDNSDomain).
+function inheritedServerDDNSDomain(entry: { entry_ip_mode?: EntryIPMode; ddns_record_id?: number | null }, server?: Server) {
+  const mode = entry.entry_ip_mode || 'auto'
+  if (mode !== 'auto' || Number(entry.ddns_record_id || 0) > 0) return ''
+  return serverDDNSEntryDomain(server)
+}
+// Which of this server's inbounds the default DDNS entry will reach, so the
+// operator sees the effect before saving.
+function ServerEntryDDNSImpact({ server, inbounds, domain }: { server: Server; inbounds: Inbound[]; domain: string }) {
+  const own = inbounds.filter(item => item.server_id === server.id)
+  const following = own.filter(item => (item.entry_ip_mode || 'auto') === 'auto' && !Number(item.ddns_record_id || 0))
+  const overridden = following.filter(item => item.dns_sync_enabled && String(item.dns_domain || '').trim())
+  const reached = following.length - overridden.length
+  const explicit = own.length - following.length
+  if (!own.length) return <p className="field-hint">之后添加的入口默认「跟随服务器」，订阅 Host 会使用{domain ? ` ${domain}` : '所选 DDNS 域名'}。</p>
+  return <div className="access-note">
+    <div>
+      <strong>{reached} 个入口将改用{domain ? ` ${domain}` : '该 DDNS 域名'}</strong>
+      <span>只影响「跟随服务器」的入口{explicit ? `；${explicit} 个入口单独选了 IPv4 / IPv6 / 自定义 / DDNS，保持不变` : ''}{overridden.length ? `；${overridden.length} 个入口仍在维护自己的解析域名，继续使用它（可在入口里停止解析后改为跟随）` : ''}。TLS 入口的 SNI 不会被改写；新建 TLS 入口未填 SNI 时默认使用该域名。服务器之间的链路仍直连 IP。</span>
+    </div>
+  </div>
 }
 function entryAddressByMode(server: Server | undefined, mode: EntryIPMode | undefined, customAddress = '') {
   const selectedMode = mode || 'auto'
@@ -9129,6 +9178,9 @@ function entryAddressByMode(server: Server | undefined, mode: EntryIPMode | unde
   if (!server) return ''
   if (selectedMode === 'ipv4') return server.public_ipv4 || ''
   if (selectedMode === 'ipv6') return server.public_ipv6 || server.interface_ipv6 || ''
+  // The literal address behind a DDNS default entry is the server IP; the
+  // DDNS name itself is applied by inheritedServerDDNSDomain.
+  if (server.entry_ip_mode === 'ddns') return server.public_ipv4 || server.public_ipv6 || server.interface_ipv6 || ''
   return serverDefaultEntryAddress(server)
 }
 function entryAddressModeLabel(mode: EntryIPMode, server?: Server) {
@@ -9147,12 +9199,13 @@ function formatHostPort(host: string, port: number) {
   return `${formattedHost}:${port || 0}`
 }
 
-function inboundClientEntryHost(entry: { dns_sync_enabled?: boolean; dns_domain?: string; entry_ip_mode?: EntryIPMode; external_ip?: string; dns_record_types?: string; ddns_domain?: string }, server: Server | undefined, alwaysUseDomain = false) {
+function inboundClientEntryHost(entry: { dns_sync_enabled?: boolean; dns_domain?: string; entry_ip_mode?: EntryIPMode; external_ip?: string; dns_record_types?: string; ddns_domain?: string; ddns_record_id?: number | null }, server: Server | undefined, alwaysUseDomain = false) {
   const ddnsDomain = String(entry.ddns_domain || '').trim()
   if (ddnsDomain) return ddnsDomain
   const domain = String(entry.dns_domain || '').trim()
   const literal = entryAddressByMode(server, entry.entry_ip_mode || 'auto', entry.external_ip || '')
-  if (!entry.dns_sync_enabled || !domain) return literal
+  const inherited = inheritedServerDDNSDomain(entry, server)
+  if (!entry.dns_sync_enabled || !domain) return inherited || literal
   if (alwaysUseDomain) return domain
   const host = String(literal || '').trim().replace(/^\[|\]$/g, '')
   const isIPv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(host)
@@ -9161,7 +9214,7 @@ function inboundClientEntryHost(entry: { dns_sync_enabled?: boolean; dns_domain?
   if (entry.entry_ip_mode === 'ipv4' || entry.entry_ip_mode === 'ipv6' || entry.entry_ip_mode === 'custom') return literal || domain
   const records = String(entry.dns_record_types || 'auto').toLowerCase()
   if (records === 'both') return domain
-  return literal || domain
+  return inherited || literal || domain
 }
 function inboundEntryAddress(data: any, entry: Inbound) {
   const server = (data.servers || []).find((s: Server) => s.id === entry.server_id)
@@ -13975,6 +14028,7 @@ function serverPreferredFamilyLabel(server?: Server) {
   if (mode === 'ipv4') return 'IPv4'
   if (mode === 'ipv6') return 'IPv6'
   if (mode === 'custom') return '自定义地址'
+  if (mode === 'ddns' && serverDDNSEntryDomain(server)) return 'DDNS'
   if (server?.public_ipv4) return 'IPv4'
   if (server?.public_ipv6 || server?.interface_ipv6) return 'IPv6'
   return '待检测'
@@ -14203,6 +14257,12 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   // A managed certificate needs an SNI hostname it covers, not a DNS record:
   // clients may connect to the server IP and still complete TLS from that SNI.
   const managedCertificateRequired = certificateRequired && draft.certificate_mode !== 'external'
+  // An empty managed SNI is filled by Controller from the DDNS name clients
+  // connect to: the entry's own DDNS record, else the server default DDNS.
+  const inheritedSNI = managedCertificateRequired && !draft.__custom_sni && draft.certificate_mode !== 'explicit'
+    ? (addressChoice === 'ddns' ? String(draft.ddns_domain || '').trim() : addressChoice === 'auto' ? inheritedServerDDNSDomain(draft, server) : '')
+    : ''
+  const effectiveSNI = String(draft.certificate_domain || '').trim() || inheritedSNI
   const sniFollowsDNS = dnsActive && Boolean(String(draft.dns_domain || '').trim()) && !draft.__custom_sni && draft.certificate_mode !== 'explicit'
   const serverIPv4 = String(server?.public_ipv4 || '')
   const serverIPv6 = String(server?.public_ipv6 || server?.interface_ipv6 || '')
@@ -14219,7 +14279,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     dnsActive && !hasDNSCredentials && '双栈入口需要先在「域名解析」添加 DNS 账号',
     dnsActive && hasDNSCredentials && !Number(draft.dns_credential_id || 0) && '请选择域名服务账号',
     dnsActive && hasDNSCredentials && !isDomainLike(String(draft.dns_domain || '')) && '请填写解析域名',
-    managedCertificateRequired && !isDomainLike(String(draft.certificate_domain || '')) && '请填写证书覆盖的 SNI 域名',
+    managedCertificateRequired && !isDomainLike(effectiveSNI) && '请填写证书覆盖的 SNI 域名',
     managedCertificateRequired && draft.certificate_mode === 'explicit' && !Number(draft.certificate_id || 0) && '请选择证书',
   ].filter(Boolean) as string[]
   const submitBlocked = problems.length > 0
@@ -14327,11 +14387,12 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             {addressChoice === 'ddns' && <InboundDDNSField notify={notify} serverID={Number(draft.server_id || 0)} recordID={Number(draft.ddns_record_id || 0) || undefined} domain={String(draft.ddns_domain || '')} client={client} credentials={dnsCredentials} onChange={record => update(record ? { ddns_record_id: record.id, ddns_domain: record.domain } : { ddns_record_id: null, ddns_domain: '' })} />}
             <div className="inbound-host-preview">
               <div><span>Host（server）</span><strong>{hostDisplay}</strong></div>
-              <div><span>DNS 解析</span><strong>{addressChoice === 'ddns' ? (String(draft.ddns_domain || '').trim() ? `由 DDNS 维护 · ${draft.ddns_domain}` : '由 DDNS 维护') : dnsActive && String(draft.dns_domain || '').trim() ? `${recordLabel} · ${draft.dns_domain}` : dnsActive ? `${recordLabel} · 待填写域名` : '不创建'}</strong></div>
+              <div><span>DNS 解析</span><strong>{addressChoice === 'auto' && !dnsActive && inheritedServerDDNSDomain(draft, server) ? `由服务器默认 DDNS 维护 · ${inheritedServerDDNSDomain(draft, server)}` : addressChoice === 'ddns' ? (String(draft.ddns_domain || '').trim() ? `由 DDNS 维护 · ${draft.ddns_domain}` : '由 DDNS 维护') : dnsActive && String(draft.dns_domain || '').trim() ? `${recordLabel} · ${draft.dns_domain}` : dnsActive ? `${recordLabel} · 待填写域名` : '不创建'}</strong></div>
             </div>
             {addressChoice === 'dual' && !hasDNSCredentials && <div className="access-note warning"><div><strong>需要 DNS 账号</strong><span>双栈入口用一个域名同时解析 A 与 AAAA 记录，请先到「域名解析」添加并验证账号。</span><ServerRelatedJumps serverID={server?.id} /></div></div>}
             {addressChoice === 'dual' && hasDNSCredentials && <p className="field-hint">客户端只能通过同一个域名同时拿到 IPv4 与 IPv6，所以双栈入口必须解析。</p>}
-            {addressChoice !== 'dual' && addressChoice !== 'ddns' && !alwaysResolve && !legacyDNS && <p className="field-hint">单栈入口直接用 IP 连接，不创建 DNS 记录，避免代理入口被当作网站扫描。需要时可在「设置 → 订阅」开启「始终解析」。</p>}
+            {addressChoice === 'auto' && inheritedServerDDNSDomain(draft, server) && !dnsActive && <p className="field-hint">服务器默认入口是 DDNS 域名 {inheritedServerDDNSDomain(draft, server)}，此入口直接使用它，无需再单独解析；解析记录由服务器的 DDNS 维护。</p>}
+            {addressChoice !== 'dual' && addressChoice !== 'ddns' && !(addressChoice === 'auto' && inheritedServerDDNSDomain(draft, server)) && !alwaysResolve && !legacyDNS && <p className="field-hint">单栈入口直接用 IP 连接，不创建 DNS 记录，避免代理入口被当作网站扫描。需要时可在「设置 → 订阅」开启「始终解析」。</p>}
             {addressChoice !== 'dual' && addressChoice !== 'ddns' && alwaysResolve && hasDNSCredentials && <div className="inbound-editor-switch">
               <span><strong>为此入口创建解析</strong><small>已开启「始终解析」：订阅 Host 改用解析域名</small></span>
               <Switch checked={dnsActive} onChange={toggleSingleStackDNS} ariaLabel="为此入口创建解析" />
@@ -14353,9 +14414,9 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
                 </Select>
               </FormField>
               {draft.certificate_mode === 'explicit' && <FormField label="证书" required hint="只列出已就绪的证书。"><Select value={Number(draft.certificate_id || 0)} onChange={e => { const certificateID = Number(e.target.value) || undefined; const certificate = certificates.find(item => item.id === certificateID); update({ certificate_id: certificateID, certificate_domain: draft.__custom_sni ? draft.certificate_domain : suggestedSNI(certificate || null) }) }}><option value={0}>选择证书</option>{certificates.filter(item => item.status === 'ready').map(item => <option key={item.id} value={item.id}>{item.name} · {item.domains.join(', ')}</option>)}</Select></FormField>}
-              {draft.certificate_mode !== 'external' && <FormField label="SNI 域名" required full hint={sniFollowsDNS ? '当前跟随解析域名；直接修改即可改用其他证书覆盖的域名。' : '证书覆盖的域名，例如 hk1.example.com；不需要有 DNS 记录。'}>
+              {draft.certificate_mode !== 'external' && <FormField label="SNI 域名" required full hint={sniFollowsDNS ? '当前跟随解析域名；直接修改即可改用其他证书覆盖的域名。' : inheritedSNI && !String(draft.certificate_domain || '').trim() ? `留空将使用 DDNS 域名 ${inheritedSNI}，保存后固定在此入口；也可填写其他证书覆盖的域名。` : '证书覆盖的域名，例如 hk1.example.com；不需要有 DNS 记录。'}>
                 <div className="inline-field-action">
-                  <input value={draft.certificate_domain || ''} onChange={e => update({ certificate_domain: e.target.value.trim(), __custom_sni: true })} placeholder="例如 hk1.example.com" autoCapitalize="none" autoCorrect="off" spellCheck={false} inputMode="url" />
+                  <input value={draft.certificate_domain || ''} onChange={e => update({ certificate_domain: e.target.value.trim(), __custom_sni: Boolean(e.target.value.trim()) })} placeholder={inheritedSNI || '例如 hk1.example.com'} autoCapitalize="none" autoCorrect="off" spellCheck={false} inputMode="url" />
                   {dnsActive && String(draft.dns_domain || '').trim() && draft.__custom_sni && draft.certificate_mode !== 'explicit' && <button type="button" className="ghost" onClick={() => update({ __custom_sni: false, certificate_domain: String(draft.dns_domain).trim(), certificate_id: certificateIDForDomain(String(draft.dns_domain).trim()) })}>跟随解析域名</button>}
                 </div>
               </FormField>}
@@ -14367,7 +14428,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             </div>
             <div className="inbound-host-preview is-tls">
               <div><span>Host（server）</span><strong>{addressChoice === 'dual' && !String(draft.dns_domain || '').trim() ? '解析域名（待填写）' : (entryAddress || '待检测')}</strong></div>
-              <div><span>SNI（servername）</span><strong>{draft.certificate_mode === 'external' ? (String(tlsForReality.server_name || '') || '待填写') : (String(draft.certificate_domain || '') || '待填写')}</strong></div>
+              <div><span>SNI（servername）</span><strong>{draft.certificate_mode === 'external' ? (String(tlsForReality.server_name || '') || '待填写') : (effectiveSNI || '待填写')}</strong></div>
             </div>
           </EntryEditorSection>}
 

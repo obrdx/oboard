@@ -85,3 +85,18 @@ it("toasts a failed edit once and keeps the DDNS form open", async () => {
   expect(document.body.querySelector<HTMLInputElement>('[aria-label="DDNS 名称"]')?.value).toBe("a")
   expect(document.body.textContent).not.toContain("DDNS 保存失败")
 })
+
+it("keeps a server's default entry DDNS from being deleted or disabled", async () => {
+  const entryServers = [{ id: 1, name: "Tokyo", entry_ip_mode: "ddns", entry_ddns_record_id: 1, entry_ddns_domain: "a.example.com" }] as Server[]
+  const requestV2 = vi.fn(async () => ({ records: [record(1, 1, "a"), record(2, 1, "b")] }))
+  await act(async () => root.render(<ProbeDDNS client={{ request: vi.fn(), requestV2 }} servers={entryServers} credentials={[]} canManage />))
+  const rows = [...document.body.querySelectorAll(".probe-ddns-row")]
+  expect(rows[0].textContent).toContain("默认入口")
+  expect(rows[1].textContent).not.toContain("默认入口")
+  expect(document.body.querySelector<HTMLButtonElement>('[aria-label="删除 a"]')!.disabled).toBe(true)
+  expect(document.body.querySelector<HTMLButtonElement>('[aria-label="删除 b"]')!.disabled).toBe(false)
+  act(() => root.unmount())
+  root = createRoot(host)
+  await act(async () => root.render(<ProbeDDNSForm record={record(1, 1, "a") as any} servers={entryServers} credentials={[]} client={{ request: vi.fn() }} busy={false} canManage onCancel={vi.fn()} onSubmit={vi.fn()} />))
+  expect(document.body.textContent).toContain("这是服务器的默认入口")
+})

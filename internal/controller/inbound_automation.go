@@ -398,6 +398,9 @@ func (s *Server) validateInboundAutomationCandidate(ctx context.Context, princip
 	if err := s.resolveInboundDNSCredential(ctx, inbound); err != nil {
 		return err
 	}
+	if err := s.inheritInboundDDNSSNI(ctx, inbound); err != nil {
+		return err
+	}
 	if err := validateInbound(*inbound); err != nil {
 		return err
 	}

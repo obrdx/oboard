@@ -102,3 +102,26 @@ it('lets one server turn off the panel TCP tuning switch', async () => {
   expect(onSubmit).toHaveBeenCalledTimes(1)
   expect(onSubmit.mock.calls[0][0]).toMatchObject({ tcp_tuning: 'off' })
 })
+
+it('explains which inbounds a DDNS default entry reaches and requires a record', async () => {
+  const server = { id: 4, name: 'edge', public_ipv4: '203.0.113.10', public_ipv6: '2001:db8::10', entry_ip_mode: 'ddns', entry_ddns_record_id: 0 } as any
+  const inbounds = [
+    { id: 1, server_id: 4, entry_ip_mode: 'auto' },
+    { id: 2, server_id: 4, entry_ip_mode: 'ipv4' },
+    { id: 3, server_id: 4, entry_ip_mode: 'auto', dns_sync_enabled: true, dns_domain: 'own.example.com' },
+    { id: 4, server_id: 9, entry_ip_mode: 'auto' },
+  ] as any[]
+  const client = { request: vi.fn(), requestV2: vi.fn(async () => ({ records: [{ id: 7, server_id: 4, name: 'dual', domain: 'edge.example.com', record_types: 'both', enabled: true }] })) }
+  const onSubmit = vi.fn().mockResolvedValue(undefined)
+  function EditHarness() {
+    const [draft, setDraft] = useState<any>({ ...baseDraft, ...server })
+    return <ServerSettingsDialog mode="edit" server={server} draft={draft} update={patch => setDraft((old: any) => ({ ...old, ...patch }))} onCancel={vi.fn()} onSubmit={() => onSubmit(draft)} client={client} inbounds={inbounds} role="admin" />
+  }
+  await act(async () => root.render(<EditHarness />))
+  await act(async () => tab('连接与端口').click())
+  const panel = () => document.querySelector('[role="tabpanel"]')?.textContent || ''
+  expect(panel()).toContain('1 个入口将改用')
+  expect(panel()).toContain('1 个入口单独选了')
+  expect(panel()).toContain('1 个入口仍在维护自己的解析域名')
+  expect(tab('连接与端口').querySelector('.ss-nav-alert')).not.toBeNull()
+})
