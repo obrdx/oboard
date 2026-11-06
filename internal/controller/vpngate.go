@@ -330,14 +330,6 @@ func (s *Server) vpngateReconcilePair(ctx context.Context, pool model.VPNGatePoo
 		state.NextRefreshAt = nil
 		state.LastProbeAt = nil
 	}
-	if !pool.Enabled {
-		if len(state.Members) > 0 {
-			state.History = append(state.History, model.VPNGateSwitchEvent{At: now, Reason: "出口池已停用，暂停出站", From: firstVPNGateMember(state.Members)})
-			state.Members = []model.VPNGateCandidate{}
-		}
-		state.LastError = "出口池已停用"
-		return s.vpngateEnsureApplied(ctx, pool, server, state, nodes)
-	}
 	if agentTaskImmediateFailure(&server) != "" {
 		return s.store.SaveVPNGatePoolServer(ctx, state)
 	}
@@ -749,14 +741,12 @@ func vpngatePlan(pool model.VPNGatePool, state *model.VPNGatePoolServer, nodes [
 		nodeByID[node.ID] = node
 	}
 	plan := model.VPNGatePoolPlan{PoolID: pool.ID, Tag: core.VPNGatePoolTag(pool.ID), HotStandby: pool.HotStandby, Members: []model.VPNGatePoolMember{}}
-	if pool.Enabled {
-		for _, member := range state.Members {
-			node, ok := nodeByID[member.NodeID]
-			if !ok {
-				continue
-			}
-			plan.Members = append(plan.Members, model.VPNGatePoolMember{MemberID: member.MemberID, OpenVPNSpec: node.Spec})
+	for _, member := range state.Members {
+		node, ok := nodeByID[member.NodeID]
+		if !ok {
+			continue
 		}
+		plan.Members = append(plan.Members, model.VPNGatePoolMember{MemberID: member.MemberID, OpenVPNSpec: node.Spec})
 	}
 	plan.ContentDigest = core.VPNGatePlanDigest(plan.HotStandby, plan.Members)
 	return plan

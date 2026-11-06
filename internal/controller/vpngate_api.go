@@ -28,15 +28,10 @@ type vpngatePoolInput struct {
 	PoolSize        int      `json:"pool_size,omitempty"`
 	SwitchPolicy    string   `json:"switch_policy,omitempty"`
 	RefreshMinutes  int      `json:"refresh_minutes,omitempty"`
-	Enabled         *bool    `json:"enabled,omitempty"`
 }
 
 func (v vpngatePoolInput) model() model.VPNGatePool {
-	enabled := true
-	if v.Enabled != nil {
-		enabled = *v.Enabled
-	}
-	return model.VPNGatePool{ID: v.ID, Name: v.Name, Countries: v.Countries, OperatorASNs: v.OperatorASNs, Network: v.Network, SelectMode: v.SelectMode, MaxRTTMS: v.MaxRTTMS, MinQualityScore: v.MinQualityScore, HotStandby: v.HotStandby, PoolSize: v.PoolSize, SwitchPolicy: v.SwitchPolicy, RefreshMinutes: v.RefreshMinutes, Enabled: enabled}
+	return model.VPNGatePool{ID: v.ID, Name: v.Name, Countries: v.Countries, OperatorASNs: v.OperatorASNs, Network: v.Network, SelectMode: v.SelectMode, MaxRTTMS: v.MaxRTTMS, MinQualityScore: v.MinQualityScore, HotStandby: v.HotStandby, PoolSize: v.PoolSize, SwitchPolicy: v.SwitchPolicy, RefreshMinutes: v.RefreshMinutes}
 }
 
 type vpngateIDInput struct {
@@ -302,7 +297,6 @@ func (s *Server) apiVPNGate(w http.ResponseWriter, r *http.Request) {
 type vpngateCanvasPool struct {
 	ID      int64                       `json:"id"`
 	Name    string                      `json:"name"`
-	Enabled bool                        `json:"enabled"`
 	Servers map[int64]vpngateCanvasExit `json:"servers"`
 }
 
@@ -317,7 +311,7 @@ type vpngateCanvasExit struct {
 func (s *Server) vpngateCanvasPools(pools []model.VPNGatePool, states []model.VPNGatePoolServer) []vpngateCanvasPool {
 	out := make([]vpngateCanvasPool, 0, len(pools))
 	for _, pool := range pools {
-		view := vpngateCanvasPool{ID: pool.ID, Name: pool.Name, Enabled: pool.Enabled, Servers: map[int64]vpngateCanvasExit{}}
+		view := vpngateCanvasPool{ID: pool.ID, Name: pool.Name, Servers: map[int64]vpngateCanvasExit{}}
 		for _, state := range states {
 			if state.PoolID != pool.ID {
 				continue

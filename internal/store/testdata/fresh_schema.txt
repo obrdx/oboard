@@ -2680,7 +2680,6 @@ table vpngate_pools
     id INTEGER notnull=0 default=- pk=1
     name TEXT notnull=1 default=- pk=0
     policy_json TEXT notnull=1 default='{}' pk=0
-    enabled INTEGER notnull=1 default=1 pk=0
     created_at TEXT notnull=1 default=- pk=0
     updated_at TEXT notnull=1 default=- pk=0
 table warp_profiles

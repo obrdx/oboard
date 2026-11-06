@@ -26,7 +26,6 @@ type VPNGatePool struct {
 	PoolSize        int       `json:"pool_size"`
 	SwitchPolicy    string    `json:"switch_policy"`
 	RefreshMinutes  int       `json:"refresh_minutes"`
-	Enabled         bool      `json:"enabled"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }

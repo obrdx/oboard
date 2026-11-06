@@ -58,20 +58,18 @@ func applyPolicy(pool *model.VPNGatePool, policy vpngatePolicy) {
 func scanVPNGatePool(scanner interface{ Scan(...any) error }) (model.VPNGatePool, error) {
 	var pool model.VPNGatePool
 	var policyJSON, created, updated string
-	var enabled int
-	if err := scanner.Scan(&pool.ID, &pool.Name, &policyJSON, &enabled, &created, &updated); err != nil {
+	if err := scanner.Scan(&pool.ID, &pool.Name, &policyJSON, &created, &updated); err != nil {
 		return pool, err
 	}
 	var policy vpngatePolicy
 	_ = json.Unmarshal([]byte(policyJSON), &policy)
 	applyPolicy(&pool, policy)
-	pool.Enabled = enabled == 1
 	pool.CreatedAt, pool.UpdatedAt = parseTime(created), parseTime(updated)
 	return pool, nil
 }
 
 func (s *Store) ListVPNGatePools(ctx context.Context) ([]model.VPNGatePool, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,name,policy_json,enabled,created_at,updated_at from vpngate_pools order by id`)
+	rows, err := s.db.QueryContext(ctx, `select id,name,policy_json,created_at,updated_at from vpngate_pools order by id`)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +86,7 @@ func (s *Store) ListVPNGatePools(ctx context.Context) ([]model.VPNGatePool, erro
 }
 
 func (s *Store) GetVPNGatePool(ctx context.Context, id int64) (*model.VPNGatePool, error) {
-	pool, err := scanVPNGatePool(s.db.QueryRowContext(ctx, `select id,name,policy_json,enabled,created_at,updated_at from vpngate_pools where id=?`, id))
+	pool, err := scanVPNGatePool(s.db.QueryRowContext(ctx, `select id,name,policy_json,created_at,updated_at from vpngate_pools where id=?`, id))
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +106,7 @@ func (s *Store) CreateVPNGatePool(ctx context.Context, pool *model.VPNGatePool) 
 	}
 	policy, _ := json.Marshal(policyFromPool(*pool))
 	ts := now()
-	result, err := s.db.ExecContext(ctx, `insert into vpngate_pools(name,policy_json,enabled,created_at,updated_at) values(?,?,?,?,?)`, pool.Name, string(policy), boolInt(pool.Enabled), ts, ts)
+	result, err := s.db.ExecContext(ctx, `insert into vpngate_pools(name,policy_json,created_at,updated_at) values(?,?,?,?)`, pool.Name, string(policy), ts, ts)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return errors.New("出口池名称已存在")
@@ -126,7 +124,7 @@ func (s *Store) UpdateVPNGatePool(ctx context.Context, pool *model.VPNGatePool) 
 	}
 	policy, _ := json.Marshal(policyFromPool(*pool))
 	ts := now()
-	result, err := s.db.ExecContext(ctx, `update vpngate_pools set name=?,policy_json=?,enabled=?,updated_at=? where id=?`, pool.Name, string(policy), boolInt(pool.Enabled), ts, pool.ID)
+	result, err := s.db.ExecContext(ctx, `update vpngate_pools set name=?,policy_json=?,updated_at=? where id=?`, pool.Name, string(policy), ts, pool.ID)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return errors.New("出口池名称已存在")

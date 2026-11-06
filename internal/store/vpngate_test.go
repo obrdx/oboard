@@ -19,7 +19,7 @@ func TestVPNGatePoolLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	pool := model.VPNGatePool{Name: "日本家宽", Countries: []string{"jp"}, OperatorASNs: []string{"4713"}, Enabled: true}
+	pool := model.VPNGatePool{Name: "日本家宽", Countries: []string{"jp"}, OperatorASNs: []string{"4713"}}
 	if err := s.CreateVPNGatePool(ctx, &pool); err != nil {
 		t.Fatal(err)
 	}

@@ -19,7 +19,6 @@ func vpngateDescriptors(id, text, boolean map[string]any) []Descriptor {
 		"pool_size":         integer(1, 8),
 		"switch_policy":     map[string]any{"type": "string", "enum": []string{"on_failure", "improve"}},
 		"refresh_minutes":   integer(15, 1440),
-		"enabled":           boolean,
 	}
 	object := rawSchema(map[string]any{"type": "object"})
 	write := func(d Descriptor) Descriptor {

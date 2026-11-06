@@ -22,7 +22,6 @@
 
 .vpngate-pools { display: flex; flex-direction: column; gap: var(--space-4); }
 .vpngate-pool { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--border); border-radius: 12px; background: var(--bg-card); box-shadow: var(--shadow-xs); min-width: 0; }
-.vpngate-pool.is-disabled { background: var(--bg-page); }
 .vpngate-pool > header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--space-2) var(--space-3); }
 .vpngate-pool-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
 .vpngate-pool-title h3 { margin: 0; font-size: 16px; overflow-wrap: anywhere; }

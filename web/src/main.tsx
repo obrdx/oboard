@@ -9283,7 +9283,7 @@ function graphEntityPrimaryActionLabel(entity: GraphEntity, step?: ProxyPathStep
 type CanvasServerInstance = { instance_id: string; server_id: number }
 type CanvasWARPInstance = { instance_id: string; root_server_id: number }
 type CanvasVPNGateInstance = { instance_id: string; root_server_id: number; pool_id: number }
-type VPNGateCanvasPool = { id: number; name: string; enabled: boolean; servers: Record<string, { members: number; healthy: number; egress_ip?: string; country_code?: string; error?: string }> }
+type VPNGateCanvasPool = { id: number; name: string; servers: Record<string, { members: number; healthy: number; egress_ip?: string; country_code?: string; error?: string }> }
 type CanvasRoutingInstance = { instance_id: string; root_server_id: number }
 
 function newCanvasDirectExitInstance(rootServerID: number, sequence: number): GraphDirectExitInstance {
@@ -11507,7 +11507,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
         title: '选择 VPNGate 出口池',
         message: '连接后，流量由前一台服务器经该出口池出站；出口池暂无可用节点时，这条链路会暂停出站，不会改走其他出口。',
         defaultValue: String(pools[0].id),
-        choices: pools.map(pool => ({ value: String(pool.id), label: `${pool.name}${pool.enabled ? '' : '（已停用）'}` })),
+        choices: pools.map(pool => ({ value: String(pool.id), label: pool.name })),
       })
       const pool = pools.find(item => String(item.id) === chosen)
       if (!pool) return
@@ -15690,7 +15690,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
         const server = (data.servers || []).find((item: Server) => item.id === serverID) as Server | undefined
         const pool = ((data.vpngate_pools || []) as VPNGateCanvasPool[]).find(item => item.id === vpngateStepPoolID(canonicalStep))
         const exit = pool?.servers?.[String(serverID)]
-        const status = !pool || !pool.enabled || (exit && !exit.members) ? 'failed' : exit ? 'ready' : 'needed'
+        const status = !pool || (exit && !exit.members) ? 'failed' : exit ? 'ready' : 'needed'
 	        nodes.push({ id, className: `graph-node warp-graph-node vpngate-graph-node proxy-path-instance-node status-${status}`, position, style: { width: 240 }, data: { entity, pathIDs: sharedPathIDs, label: <WARPGraphNode connected icon="vpngate" title={pool ? `VPNGate · ${pool.name}` : 'VPNGate'} meta={vpngateExitMeta(pool, serverID, server?.name || `服务器 ${serverID}`)} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
         return
       }
@@ -16094,7 +16094,6 @@ function vpngateStepPoolID(step: Pick<ProxyPathStep, 'config_json'>) {
 
 function vpngateExitMeta(pool: VPNGateCanvasPool | undefined, serverID: number, serverName: string) {
   if (!pool) return `${serverName} · 出口池不存在`
-  if (!pool.enabled) return `${serverName} · 已停用，暂停出站`
   const exit = pool.servers?.[String(serverID)]
   if (!exit) return `${serverName} · 部署后开始挑选`
   if (!exit.members) return `${serverName} · 暂无可用节点，暂停出站`

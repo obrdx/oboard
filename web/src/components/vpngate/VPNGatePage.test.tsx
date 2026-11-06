@@ -10,7 +10,7 @@ beforeEach(() => { (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true; host = d
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false })
 
 const button = (name: string) => [...document.body.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent?.includes(name))!
-const pool = { id: 3, name: "日本 NTT", countries: ["JP"], operator_asns: ["AS4713"], network: "any", select_mode: "latency", max_rtt_ms: 0, min_quality_score: 0, hot_standby: 1, pool_size: 4, switch_policy: "on_failure", refresh_minutes: 30, enabled: true, in_use: true }
+const pool = { id: 3, name: "日本 NTT", countries: ["JP"], operator_asns: ["AS4713"], network: "any", select_mode: "latency", max_rtt_ms: 0, min_quality_score: 0, hot_standby: 1, pool_size: 4, switch_policy: "on_failure", refresh_minutes: 30, in_use: true }
 const live = { pool_id: 3, server_id: 1, revision: 2, members: [{ node_id: 9, member_id: "n9", ip: "219.100.37.9", port: 443, network: "tcp", country_code: "JP", status: "succeeded", egress_ip: "153.1.1.1", asn: "AS4713", rtt_ms: 120, quality: 80, eligible: true, success_rate: 0.9, selected: true }], candidates: [
   { node_id: 9, member_id: "n9", ip: "219.100.37.9", port: 443, network: "tcp", country_code: "JP", status: "succeeded", egress_ip: "153.1.1.1", asn: "AS4713", rtt_ms: 120, quality: 80, eligible: true, success_rate: 0.9, selected: true },
   { node_id: 10, member_id: "n10", ip: "219.100.37.10", port: 443, network: "tcp", country_code: "JP", status: "succeeded", egress_ip: "126.2.2.2", asn: "AS17676", rtt_ms: 60, quality: 70, eligible: false, reason: "运营商不符", success_rate: 0.6, selected: false },
@@ -64,7 +64,7 @@ it("saves edits without overview metadata and keeps the draft open on failure", 
   expect(document.body.textContent).not.toContain("保存失败，请重试")
   const call = requestV2.mock.calls.find(([, init]) => init?.method === "POST")!
   expect(JSON.parse(String(call[1]?.body))).toMatchObject({ action: "save", input: { id: 3, name: "日本 NTT 新名称" } })
-  expect(Object.keys(JSON.parse(String(call[1]?.body)).input).sort()).toEqual(["id", "name", "countries", "operator_asns", "network", "select_mode", "max_rtt_ms", "min_quality_score", "hot_standby", "pool_size", "switch_policy", "refresh_minutes", "enabled"].sort())
+  expect(Object.keys(JSON.parse(String(call[1]?.body)).input).sort()).toEqual(["id", "name", "countries", "operator_asns", "network", "select_mode", "max_rtt_ms", "min_quality_score", "hot_standby", "pool_size", "switch_policy", "refresh_minutes"].sort())
   fail = false
   await act(async () => { save() })
   expect(notify).toHaveBeenCalledWith("已保存，将按新条件重新挑选节点", "success")

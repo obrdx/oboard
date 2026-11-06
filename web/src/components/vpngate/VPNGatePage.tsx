@@ -4,7 +4,6 @@ import { AlertTriangle, ListTree, Pencil, Plus, RotateCcw, Trash2 } from "lucide
 import { Dialog } from "../ui/dialog"
 import { FormField } from "../ui/form-field"
 import { Select } from "../ui/select"
-import { Switch } from "../ui/switch"
 import "./vpngate.css"
 
 type Client = { request: (path: string, init?: RequestInit) => Promise<any>; requestV2?: (path: string, init?: RequestInit) => Promise<any> }
@@ -23,7 +22,6 @@ export type VPNGatePool = {
   pool_size: number
   switch_policy: "on_failure" | "improve"
   refresh_minutes: number
-  enabled: boolean
 }
 
 type Candidate = { node_id: number; member_id: string; ip: string; port: number; network: string; country_code: string; status: string; stage?: string; error?: string; egress_ip?: string; asn?: string; organization?: string; handshake_ms?: number; rtt_ms?: number; quality: number; eligible: boolean; reason?: string; success_rate: number; selected: boolean }
@@ -32,7 +30,7 @@ type PoolServer = { pool_id: number; server_id: number; revision: number; member
 type PoolView = VPNGatePool & { in_use: boolean; servers: PoolServer[] }
 type Overview = { pools: PoolView[]; catalog: { fetched_at?: string; entries: number; skipped: number; total: number; error?: string }; providers: Record<string, boolean> }
 
-const emptyPool: VPNGatePool = { id: 0, name: "", countries: ["JP"], operator_asns: [], network: "any", select_mode: "latency", max_rtt_ms: 0, min_quality_score: 0, hot_standby: 1, pool_size: 4, switch_policy: "on_failure", refresh_minutes: 30, enabled: true }
+const emptyPool: VPNGatePool = { id: 0, name: "", countries: ["JP"], operator_asns: [], network: "any", select_mode: "latency", max_rtt_ms: 0, min_quality_score: 0, hot_standby: 1, pool_size: 4, switch_policy: "on_failure", refresh_minutes: 30 }
 
 // The ASNs are what the exit IP is matched against; the carrier names only
 // fill the field faster.
@@ -70,7 +68,6 @@ function criteria(pool: VPNGatePool) {
 }
 
 function exitState(pool: VPNGatePool, state: PoolServer): { tone: string; text: string; detail?: string } {
-  if (!pool.enabled) return { tone: "muted", text: "暂停出站", detail: "出口池已停用" }
   if (!state.members.length) return { tone: "danger", text: "暂停出站", detail: (state.last_error || "暂无可用节点").replace(/，?当前拒绝出站$/, "") }
   if (!state.status) return { tone: "muted", text: "等待上报" }
   if (state.status.revision !== state.revision) return { tone: "muted", text: "正在下发节点" }
@@ -155,15 +152,14 @@ export function VPNGatePage({ client, servers, canManage, notify }: { client: Cl
       </ol>
       <button type="button" className="primary" disabled={!canManage} onClick={create}><Plus size={15} aria-hidden="true" />新建出口池</button>
     </div> : <div className="vpngate-pools">
-      {pools.map(pool => <article key={pool.id} className={`vpngate-pool${pool.enabled ? "" : " is-disabled"}`}>
+      {pools.map(pool => <article key={pool.id} className="vpngate-pool">
         <header>
           <div className="vpngate-pool-title">
             <h3>{pool.name}</h3>
-            {!pool.enabled && <span className="probe-task-badge">已停用</span>}
             {pool.in_use && <span className="probe-task-badge online">使用中</span>}
           </div>
           <div className="vpngate-pool-actions">
-            <button type="button" className="ghost" disabled={!canManage || busy || !pool.enabled} title="重新获取节点目录并立即挑选" onClick={() => void mutate("reselect", { id: pool.id, refresh_catalog: true }, `「${pool.name}」正在重新挑选节点`)}><RotateCcw size={14} aria-hidden="true" />重新挑选</button>
+            <button type="button" className="ghost" disabled={!canManage || busy} title="重新获取节点目录并立即挑选" onClick={() => void mutate("reselect", { id: pool.id, refresh_catalog: true }, `「${pool.name}」正在重新挑选节点`)}><RotateCcw size={14} aria-hidden="true" />重新挑选</button>
             <button type="button" className="ghost" disabled={!canManage || busy} onClick={() => { setError(""); setEditing({ ...pool }) }}><Pencil size={14} aria-hidden="true" />编辑</button>
             <button type="button" className="ghost danger" disabled={!canManage || busy || pool.in_use} title={pool.in_use ? "请先在代理拓扑中移除使用它的出口" : undefined} onClick={() => { setError(""); setDeleting(pool) }}><Trash2 size={14} aria-hidden="true" />删除</button>
           </div>
@@ -265,7 +261,7 @@ function poolInput(pool: VPNGatePool): VPNGatePool {
     id: pool.id, name: pool.name, countries: pool.countries, operator_asns: pool.operator_asns,
     network: pool.network, select_mode: pool.select_mode, max_rtt_ms: pool.max_rtt_ms,
     min_quality_score: pool.min_quality_score, hot_standby: pool.hot_standby, pool_size: pool.pool_size,
-    switch_policy: pool.switch_policy, refresh_minutes: pool.refresh_minutes, enabled: pool.enabled,
+    switch_policy: pool.switch_policy, refresh_minutes: pool.refresh_minutes,
   }
 }
 
@@ -340,10 +336,6 @@ function PoolForm({ pool, busy, onChange, onSubmit }: { pool: VPNGatePool; busy:
         </FormField>
         <FormField label="复测间隔（分钟）" hint="15 分钟到 1 天。节点异常时会提前复测。">
           <input aria-label="复测间隔" type="number" min={15} max={1440} value={pool.refresh_minutes} onChange={event => update({ refresh_minutes: Number(event.target.value) || 30 })} />
-        </FormField>
-
-        <FormField label="启用" hint="停用后，使用它的链路暂停出站，不会改走其他线路。" full>
-          <Switch aria-label="启用" checked={pool.enabled} onChange={checked => update({ enabled: checked })} />
         </FormField>
       </div>
     </fieldset>
