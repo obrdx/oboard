@@ -74,6 +74,11 @@ export function StatusPill({ server }: { server: Server }) {
   return <span className={`fleet-status is-${status.tone}`} title={status.title}><span className="fleet-status-dot" aria-hidden="true" />{status.label}</span>
 }
 
+export function StatusDot({ server }: { server: Server }) {
+  const status = serverStatusView(server)
+  return <span className={`fleet-status is-dot is-${status.tone}`} role="img" aria-label={status.label} title={status.tone === 'offline' ? status.title : status.label}><span className="fleet-status-dot" aria-hidden="true" /></span>
+}
+
 export function Meter({ label, value, percent, sub, tone = '', title, muted = false }: { label: string; value: string; percent: number; sub?: string; tone?: Tone; title?: string; muted?: boolean }) {
   const resolved = tone || usageTone(percent)
   return (
@@ -171,11 +176,13 @@ export function ServerTile({ server, role, expectedBuild, uninstalling, sortCont
         {sortControls}
         <RegionFlag code={serverRegionCode(server)} size={22} className="fleet-flag" />
         <div className="fleet-tile-title">
-          <button type="button" className="fleet-name" onClick={event => { event.stopPropagation(); onAction('about', server) }} title="查看概要">{name}</button>
+          <span className="fleet-name-line">
+            <button type="button" className="fleet-name" onClick={event => { event.stopPropagation(); onAction('about', server) }} title="查看概要">{name}</button>
+            <StatusDot server={server} />
+          </span>
           <ServerAddresses server={server} />
         </div>
         <div className="fleet-tile-tools">
-          <StatusPill server={server} />
           <ServerActionMenu server={server} role={role} onAction={onAction} />
         </div>
       </header>

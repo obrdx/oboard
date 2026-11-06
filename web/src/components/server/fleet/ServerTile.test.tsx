@@ -49,14 +49,27 @@ afterEach(async () => {
   vi.unstubAllGlobals()
 })
 
-it('copies egress and entry addresses without opening the surrounding surface', async () => {
+it('keeps one address button and copies each address from its popover without opening the surface', async () => {
   const open = vi.fn()
   await act(async () => root.render(<div onClick={open}><ServerAddresses server={server} /></div>))
-  const buttons = [...host.querySelectorAll<HTMLButtonElement>('.fleet-address')]
+  const trigger = host.querySelector<HTMLButtonElement>('.fleet-address-trigger')!
+  expect(trigger.textContent).toBe('203.0.113.10+2')
+  expect(document.querySelector('.fleet-address-panel')).toBeNull()
+  await act(async () => trigger.click())
+  const buttons = [...document.querySelectorAll<HTMLButtonElement>('.fleet-address-panel .fleet-address')]
   expect(buttons.map(button => button.dataset.kind)).toEqual(['v4', 'v6', 'entry'])
   for (const button of buttons) await act(async () => button.click())
   expect(copy.mock.calls.map(call => call[0])).toEqual(['203.0.113.10', '2001:db8::1:2', '198.51.100.20'])
   expect(open).not.toHaveBeenCalled()
+  await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
+  expect(document.querySelector('.fleet-address-panel')).toBeNull()
+})
+
+it('shows only a status dot next to the card name', async () => {
+  await act(async () => root.render(<ServerTile server={server} onAction={() => {}} />))
+  const dot = host.querySelector('.fleet-name-line .fleet-status.is-dot')!
+  expect(dot.getAttribute('aria-label')).toBe('在线')
+  expect(dot.textContent).toBe('')
 })
 
 it('shows clear card metrics and routes card, name and chip clicks to separate actions', async () => {
