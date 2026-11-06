@@ -673,7 +673,7 @@ button.fleet-chip:hover:not(:disabled).is-danger { background: color-mix(in srgb
 
 .fleet-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
   gap: 12px;
 }
 
@@ -711,6 +711,7 @@ button.fleet-chip:hover:not(:disabled).is-danger { background: color-mix(in srgb
   box-shadow: var(--shadow-xs);
   cursor: pointer;
   transition: border-color var(--duration-control) ease, box-shadow var(--duration-control) ease;
+  container: fleet-tile / inline-size;
 }
 
 .fleet-tile:hover { border-color: color-mix(in srgb, var(--text-primary) 18%, var(--border-color)); box-shadow: var(--shadow-sm); }
@@ -1118,6 +1119,12 @@ button.fleet-chip:hover:not(:disabled).is-danger { background: color-mix(in srgb
   .fleet-tile-network { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .fleet-rates { flex-direction: row; gap: 14px; }
   .fleet-filter-trigger .fleet-control-label { display: none; }
+}
+
+@container fleet-tile (max-width: 360px) {
+  .fleet-tile-meters, .fleet-tile-network { gap: 10px; }
+  .fleet-tile-foot { column-gap: 12px; }
+  .fleet-latency-row { gap: 6px; }
 }
 
 @media (pointer: coarse) {
