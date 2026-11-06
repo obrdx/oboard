@@ -106,11 +106,15 @@ describe('return latency probe tasks', () => {
     expect(container.querySelectorAll('.probe-preset-option')).toHaveLength(1)
     await click(container.querySelector<HTMLButtonElement>('.probe-preset-option')!)
     expect(container.querySelector('[aria-label="预设目标"]')).toBeNull()
-    expect(container.querySelector<HTMLInputElement>('[aria-label="目标地址"]')!.value).toBe('')
-    expect(container.textContent).toContain('已绑定预设：广东 · 中国电信')
-    expect(container.textContent).toContain('地址随预设更新')
+    expect(container.querySelector('[aria-label="目标地址"]')).toBeNull()
+    expect(container.querySelector('.probe-preset-bound')!.textContent).toContain('广东 · 中国电信')
+    expect(container.textContent).toContain('地址随预设自动更新')
     await click(buttonIn(container, '创建任务')!)
     expect(submit.mock.calls[0][0]).toMatchObject({ name: '广东 · 中国电信', address: '', preset_id: 'gd-ct', method: 'tcp', port: 80 })
+    await click(buttonIn(container, '改填地址')!)
+    expect(container.querySelector('.probe-preset-bound')).toBeNull()
+    expect(container.querySelector<HTMLInputElement>('[aria-label="目标地址"]')!.required).toBe(true)
+    expect(buttonIn(container, '创建任务')!.disabled).toBe(true)
   })
 
   it.each(['Ping', 'HTTP'])('saves %s without presets and reports submission errors in the dialog', async method => {

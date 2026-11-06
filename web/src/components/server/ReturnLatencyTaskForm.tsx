@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { ChevronDown, Loader2, Search } from 'lucide-react'
 import { FormField } from '../ui/form-field'
 import { Select } from '../ui/select'
@@ -48,6 +48,7 @@ export function ReturnLatencyTaskForm({ task, presets = [], servers, loading, er
   const [serverQuery, setServerQuery] = useState('')
   const [saving, setSaving] = useState(false)
   const [submitError, setSubmitError] = useState('')
+  const addressInputRef = useRef<HTMLInputElement>(null)
 
   const provinces = useMemo(() => Array.from(new Set(presets.map(preset => preset.province))).sort((a, b) => a.localeCompare(b, 'zh-CN')), [presets])
   const carriers = useMemo(() => {
@@ -134,12 +135,20 @@ export function ReturnLatencyTaskForm({ task, presets = [], servers, loading, er
                     <p className="muted probe-method-hint">{method === 'tcp' ? '检测指定端口能否建立连接。' : method === 'icmp' ? '通过 ICMP 检测目标的可达性与延迟。' : '发送 GET 请求，跟随最多 3 次跳转，以 2xx 响应为成功。'}</p>
                   </FormField>
                   <FormField label={method === 'http' ? '目标 URL' : '目标地址'} required full={method !== 'tcp'}>
-                    <input aria-label="目标地址" required={!presetMode} aria-describedby="probe-address-hint" aria-invalid={Boolean(address && addressError)} type="text" maxLength={2048} placeholder={method === 'http' ? 'https://example.com/health' : '例如 example.com 或 1.1.1.1'} value={address} onChange={event => setAddress(event.target.value)} />
-                    <small id="probe-address-hint" className={(address || presetMissing) && addressError ? 'danger-text' : 'muted'}>{addressError || (presetMode ? `已绑定预设：${presetLabel || presetID}（${selectedPreset ? familyLabel(selectedPreset) : '全部目标'}），地址随预设更新。填写地址可改为固定目标。` : '由所选节点直接探测，支持 IPv4、IPv6 和内网目标。')}</small>
+                    {presetMode ? <>
+                      <div className="probe-preset-bound" role="group" aria-label="已绑定的预设目标" aria-describedby="probe-address-hint">
+                        <span className="probe-preset-bound-text"><strong>{presetLabel || presetID}</strong><span>{selectedPreset ? familyLabel(selectedPreset) : '全部目标'}</span></span>
+                        <button type="button" className="ghost probe-preset-unbind" onClick={() => { setPresetID(''); window.requestAnimationFrame(() => addressInputRef.current?.focus()) }}>改填地址</button>
+                      </div>
+                      <small id="probe-address-hint" className={presetMissing ? 'danger-text' : 'muted'}>{presetMissing ? '该运营商预设已下线，请重新选择或改填地址。' : '预设目标，地址随预设自动更新。'}</small>
+                    </> : <>
+                      <input ref={addressInputRef} aria-label="目标地址" required aria-describedby="probe-address-hint" aria-invalid={Boolean(address && addressError)} type="text" maxLength={2048} placeholder={method === 'http' ? 'https://example.com/health' : '例如 example.com 或 1.1.1.1'} value={address} onChange={event => setAddress(event.target.value)} />
+                      <small id="probe-address-hint" className={address && addressError ? 'danger-text' : 'muted'}>{address && addressError ? addressError : method === 'http' ? '由所选节点直接请求该 URL。' : '由所选节点直接探测，支持 IPv4、IPv6 和内网目标。'}</small>
+                    </>}
                   </FormField>
                   <div className="probe-preset-picker">
                     <button type="button" className="probe-preset-toggle" aria-expanded={presetOpen} aria-controls="probe-presets" onClick={() => setPresetOpen(!presetOpen)}>
-                      {presetOpen ? '收起预设目标' : '从预设中选择'}<ChevronDown size={16} aria-hidden="true" />
+                      {presetOpen ? '收起预设目标' : presetMode ? '更换预设' : '从预设中选择'}<ChevronDown size={16} aria-hidden="true" />
                     </button>
                     {presetOpen && <section id="probe-presets" aria-label="预设目标" className="probe-preset-panel">
                       {(loading || presets.length > 0) && <>
