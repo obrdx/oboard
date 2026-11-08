@@ -4,7 +4,7 @@ export type Notify = (message: string, tone?: 'success' | 'error' | 'warning') =
 export type NodeGroup = { id: number; kind: 'oboard' | 'remote' | 'manual'; system_key?: string; name: string; node_count: number }
 export type NodeSource = { id: number; group_id: number; url_display: string; status: string; last_error?: string; last_success_at?: string | null }
 export type FilterRule = { type: string; value: string }
-export type SubscriptionOutput = { id: number; name: string; is_default: boolean; enabled: boolean; group_ids: number[]; filters?: FilterRule[] }
+export type SubscriptionOutput = { id: number; name: string; is_default: boolean; enabled: boolean; group_ids: number[] | null; filters?: FilterRule[] | null }
 export type LibraryNode = { id: string; group_id: number; name: string; protocol: string; source: string; copyable: boolean; editable: boolean }
 export type ImportPreview = { nodes: Array<{ name: string; protocol: string; fingerprint: string }>; issues: Array<{ index: number; name?: string; message: string }> }
 export type Workspace = { subject: { id: number; username: string; nickname?: string }; node_groups: NodeGroup[]; node_sources: NodeSource[]; subscription_outputs: SubscriptionOutput[] }

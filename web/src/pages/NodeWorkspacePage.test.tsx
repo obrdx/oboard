@@ -402,6 +402,31 @@ describe('NodeWorkspacePage', () => {
     expect(created).toEqual([{ name: '新组合', group_ids: [1] }])
   })
 
+  it('opens combination subscriptions when an output has no groups', async () => {
+    const workspace = {
+      subject: { id: 7, username: 'alice' },
+      node_groups: [],
+      node_sources: [],
+      subscription_outputs: [{ id: 2, name: '默认组合', is_default: true, enabled: true, group_ids: null, filters: null }],
+    }
+    const request = vi.fn(async (path: string) => {
+      if (path.startsWith('/assignable-nodes?')) return { nodes: [], total: 0, page: 1, page_size: 50 }
+      if (path === '/node-workspace?user_id=7') return workspace
+      if (path === '/node-library?user_id=7') return { nodes: [] }
+      throw new Error(`unexpected request: ${path}`)
+    })
+    await act(async () => {
+      renderWithDialogs(root, <NodeWorkspacePage data={{ session: { role: 'admin' }, current_user: { id: 7 }, users: [{ id: 7, username: 'alice', status: 'active' }], servers: [], subscription_plans: [] }} client={{ request }} load={vi.fn()} />, dialogs)
+    })
+    await flushEffects()
+
+    act(() => (Array.from(document.querySelectorAll('[role="tab"]')).find(tab => tab.textContent === '用户节点') as HTMLButtonElement).click())
+    await flushEffects()
+    act(() => (Array.from(document.querySelectorAll('[aria-label="节点工作台"] [role="tab"]'))[2] as HTMLButtonElement).click())
+    expect(container.querySelector('[aria-label="组合订阅"]')?.textContent).toContain('未选择节点组')
+    expect(container.querySelector('.nw-output-list-meta')?.textContent).toContain('0 个节点组 · 0 条规则')
+  })
+
   it('keeps a rejected node edit open with its input and error', async () => {
     const request = vi.fn(async (path: string, init?: RequestInit) => {
       if (init?.method === 'PATCH') throw Object.assign(new Error('名称不可用'), { status: 400 })

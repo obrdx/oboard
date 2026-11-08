@@ -171,6 +171,7 @@ export function SubscriptionOutputsPanel({ workspace, data, client, subjectQuery
     } catch { message('未能复制订阅链接，请检查浏览器剪贴板权限后重试。', 'warning') }
   }
 
+  const savedGroupIDs = selected.group_ids || []
   const savedFilters = selected.filters || []
   const stats = preview?.preview
   return <section className="nw-section nw-outputs" aria-label="组合订阅">
@@ -178,7 +179,7 @@ export function SubscriptionOutputsPanel({ workspace, data, client, subjectQuery
       {listHead}
       {workspace.subscription_outputs.map(output => <button key={output.id} type="button" className={selected.id === output.id ? 'active' : ''} aria-current={selected.id === output.id ? 'true' : undefined} onClick={() => void selectOutput(output.id)}>
         <span className="nw-output-list-name">{output.name}{output.is_default && <small className="nw-tag">默认</small>}</span>
-        <span className="nw-output-list-meta">{output.group_ids.length} 个节点组 · {output.filters?.length || 0} 条规则</span>
+        <span className="nw-output-list-meta">{output.group_ids?.length || 0} 个节点组 · {output.filters?.length || 0} 条规则</span>
       </button>)}
     </aside>
 
@@ -194,7 +195,7 @@ export function SubscriptionOutputsPanel({ workspace, data, client, subjectQuery
       <div className="nw-output-summary">
         <section aria-label="输出节点组">
           <h4>节点组<small>按顺序输出</small></h4>
-          {selected.group_ids.length === 0 ? <p className="nw-muted">未选择节点组</p> : <ol className="nw-order-list">{selected.group_ids.map(id => <li key={id}><span>{groupByID.get(id)?.name || `节点组 #${id}`}</span><small>{groupByID.get(id)?.node_count ?? 0} 个节点</small></li>)}</ol>}
+          {savedGroupIDs.length === 0 ? <p className="nw-muted">未选择节点组</p> : <ol className="nw-order-list">{savedGroupIDs.map(id => <li key={id}><span>{groupByID.get(id)?.name || `节点组 #${id}`}</span><small>{groupByID.get(id)?.node_count ?? 0} 个节点</small></li>)}</ol>}
         </section>
         <section aria-label="过滤规则">
           <h4>过滤规则<small>{savedFilters.length ? `${savedFilters.length} 条，依次执行` : '未设置'}</small></h4>
