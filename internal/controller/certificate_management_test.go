@@ -528,6 +528,91 @@ fi
 	}
 }
 
+func TestDNSACMEIssueWithoutChallengeRecords(t *testing.T) {
+	cases := []struct {
+		name       string
+		issueOut   string
+		wantStatus string
+		wantError  string
+	}{
+		{name: "issued immediately", issueOut: "Cert success.", wantStatus: model.CertificateStatusReady},
+		{name: "no issuance and no records", issueOut: "nothing to do", wantStatus: model.CertificateStatusFailed, wantError: "did not return DNS validation records"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			certificatePEM, privateKeyPEM := testCertificateMaterial(t, []string{"entry.example.com"}, time.Now().Add(60*24*time.Hour))
+			fixtureDir := t.TempDir()
+			certSource := filepath.Join(fixtureDir, "cert.pem")
+			keySource := filepath.Join(fixtureDir, "key.pem")
+			if err := os.WriteFile(certSource, []byte(certificatePEM), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(keySource, []byte(privateKeyPEM), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			script := filepath.Join(fixtureDir, "fake-acme.sh")
+			scriptBody := `#!/bin/sh
+set -eu
+mode=""
+cert_file=""
+fullchain_file=""
+key_file=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --issue) mode=issue ;;
+    --install-cert) mode=install ;;
+    --cert-file) shift; cert_file=$1 ;;
+    --fullchain-file) shift; fullchain_file=$1 ;;
+    --key-file) shift; key_file=$1 ;;
+  esac
+  shift
+done
+if [ "$mode" = issue ]; then
+  echo "$FAKE_ACME_ISSUE_OUT"
+  exit 0
+fi
+if [ "$mode" = install ]; then
+  cp "$FAKE_ACME_CERT" "$cert_file"
+  cp "$FAKE_ACME_CERT" "$fullchain_file"
+  cp "$FAKE_ACME_KEY" "$key_file"
+fi
+`
+			if err := os.WriteFile(script, []byte(scriptBody), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("FAKE_ACME_CERT", certSource)
+			t.Setenv("FAKE_ACME_KEY", keySource)
+			t.Setenv("FAKE_ACME_ISSUE_OUT", tc.issueOut)
+			srv := newTestServer(db, "test-secret", "")
+			srv.acmeCommand = script
+			srv.acmeHome = filepath.Join(t.TempDir(), "acme")
+			certificate := &model.Certificate{Name: "dns", PrimaryDomain: "entry.example.com", Domains: []string{"entry.example.com"}, ChallengeType: model.CertificateChallengeDNSManual, ACMECA: "letsencrypt", Status: model.CertificateStatusPending, AutoRenew: true}
+			if err := db.CreateCertificate(context.Background(), certificate); err != nil {
+				t.Fatal(err)
+			}
+			if err := srv.startACMECertificateIssue(context.Background(), certificate, false, false); err != nil {
+				t.Fatal(err)
+			}
+			waitForCertificateStatus(t, db, certificate.ID, tc.wantStatus)
+			got, err := db.GetCertificate(context.Background(), certificate.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantStatus == model.CertificateStatusReady && (got.Revision == "" || got.PrivateKeyEncrypted == "" || got.LastError != "") {
+				t.Fatalf("issued certificate was not stored: %#v", got)
+			}
+			if tc.wantError != "" && (!strings.Contains(got.LastError, tc.wantError) || got.Revision != "") {
+				t.Fatalf("unexpected failure state: %#v", got)
+			}
+		})
+	}
+}
+
 func waitForCertificateStatus(t *testing.T, db *store.Store, id int64, status string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

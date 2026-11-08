@@ -20,6 +20,8 @@ import (
 var (
 	acmeDomainPattern   = regexp.MustCompile(`(?i)Domain:\s*['"]([^'"]+)['"]`)
 	acmeTXTValuePattern = regexp.MustCompile(`(?i)TXT\s+value:\s*['"]([^'"]+)['"]`)
+	// acme.sh prints these only after the CA has issued a certificate in this run.
+	acmeIssuedPattern = regexp.MustCompile(`(?i)\bCert success\b|\bYour cert is in\b`)
 )
 
 const certificateRenewalInterval = 12 * time.Hour
@@ -193,6 +195,15 @@ func (s *Server) runDNSCertificateIssue(ctx context.Context, certificate *model.
 		records := parseACMEDNSChallenges(output)
 		if len(records) == 0 {
 			if runErr == nil {
+				// The CA may reuse still-valid authorizations, so acme.sh can
+				// issue immediately and print no DNS challenge at all.
+				stored, err := s.storeFreshlyIssuedACMECertificate(ctx, certificate, output)
+				if err != nil {
+					return err
+				}
+				if stored {
+					return nil
+				}
 				return errors.New("acme.sh did not return DNS validation records")
 			}
 			return fmt.Errorf("start ACME DNS challenge: %s", trimACMEError(output))
@@ -304,34 +315,69 @@ func resumeACMEArgs(home string, certificate model.Certificate) []string {
 }
 
 func (s *Server) installAndStoreACMECertificate(ctx context.Context, certificate *model.Certificate) error {
-	workDir, err := os.MkdirTemp(s.acmeHome, "install-")
+	certificatePEM, fullchainPEM, privateKeyPEM, err := s.installACMECertificateMaterial(ctx, certificate)
 	if err != nil {
 		return err
 	}
+	return s.storeCertificateMaterial(ctx, certificate, certificatePEM, fullchainPEM, privateKeyPEM, certificateMaterialPolicy{})
+}
+
+// storeFreshlyIssuedACMECertificate stores the certificate acme.sh issued in
+// the run whose output is given, when there is one. It reports false, without
+// touching anything, when the run did not issue a certificate, so a leftover
+// certificate in the ACME home is never installed in its place. Once the run
+// reports an issuance, the installed material must match the requested
+// domains and private key and be inside its validity window.
+func (s *Server) storeFreshlyIssuedACMECertificate(ctx context.Context, certificate *model.Certificate, output string) (bool, error) {
+	if !acmeIssuedPattern.MatchString(output) {
+		return false, nil
+	}
+	certificatePEM, fullchainPEM, privateKeyPEM, err := s.installACMECertificateMaterial(ctx, certificate)
+	if err != nil {
+		return false, err
+	}
+	material, err := validateCertificateMaterial(certificatePEM, fullchainPEM, privateKeyPEM, certificate.Domains, certificateMaterialPolicy{})
+	if err != nil {
+		return false, fmt.Errorf("acme.sh issued a certificate that cannot be used: %w", err)
+	}
+	if now := time.Now(); now.Before(material.Leaf.NotBefore) || !now.Before(material.Leaf.NotAfter) {
+		return false, errors.New("acme.sh issued a certificate outside its validity period")
+	}
+	if err := s.storeCertificateMaterial(ctx, certificate, certificatePEM, fullchainPEM, privateKeyPEM, certificateMaterialPolicy{}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Server) installACMECertificateMaterial(ctx context.Context, certificate *model.Certificate) (string, string, string, error) {
+	workDir, err := os.MkdirTemp(s.acmeHome, "install-")
+	if err != nil {
+		return "", "", "", err
+	}
 	defer os.RemoveAll(workDir)
 	if err := os.Chmod(workDir, 0o700); err != nil { // #nosec G302 -- certificate staging uses a private traversable directory.
-		return err
+		return "", "", "", err
 	}
 	certPath := filepath.Join(workDir, "cert.pem")
 	fullchainPath := filepath.Join(workDir, "fullchain.pem")
 	keyPath := filepath.Join(workDir, "privkey.pem")
 	args := []string{"--home", s.acmeHome, "--config-home", s.acmeHome, "--install-cert", "--ecc", "-d", certificate.PrimaryDomain, "--cert-file", certPath, "--fullchain-file", fullchainPath, "--key-file", keyPath}
 	if output, err := s.runACME(ctx, args...); err != nil {
-		return fmt.Errorf("install ACME certificate: %s", trimACMEError(output))
+		return "", "", "", fmt.Errorf("install ACME certificate: %s", trimACMEError(output))
 	}
 	certificatePEM, err := os.ReadFile(certPath) // #nosec G304 -- fixed file in a private controller-created directory.
 	if err != nil {
-		return err
+		return "", "", "", err
 	}
 	fullchainPEM, err := os.ReadFile(fullchainPath) // #nosec G304 -- fixed file in a private controller-created directory.
 	if err != nil {
-		return err
+		return "", "", "", err
 	}
 	privateKeyPEM, err := os.ReadFile(keyPath) // #nosec G304 -- fixed file in a private controller-created directory.
 	if err != nil {
-		return err
+		return "", "", "", err
 	}
-	return s.storeCertificateMaterial(ctx, certificate, string(certificatePEM), string(fullchainPEM), string(privateKeyPEM), certificateMaterialPolicy{})
+	return string(certificatePEM), string(fullchainPEM), string(privateKeyPEM), nil
 }
 
 func (s *Server) runACME(ctx context.Context, args ...string) (string, error) {
