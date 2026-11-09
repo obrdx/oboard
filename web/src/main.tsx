@@ -16858,7 +16858,7 @@ async function copyManagedUserSubscription(user: User, notify?: (message: string
   notify?.(ok ? copiedMessage : '复制失败，请重试', ok ? 'success' : 'error')
 }
 
-function QuickOneTimeSubscriptionButton({ user, client, format = defaultSubscriptionFormat, encrypted = false, notify, className = 'ghost' }: { user: User; client: ReturnType<typeof api>; format?: SubscriptionFormat; encrypted?: boolean; notify?: (message: string, tone?: ToastKind) => void; className?: string }) {
+function QuickOneTimeSubscriptionButton({ user, client, format = defaultSubscriptionFormat, encrypted = false, includeUnsupported = true, notify, className = 'ghost' }: { user: User; client: ReturnType<typeof api>; format?: SubscriptionFormat; encrypted?: boolean; includeUnsupported?: boolean; notify?: (message: string, tone?: ToastKind) => void; className?: string }) {
   const dialogs = useDialogs()
   const [creating, setCreating] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -16869,7 +16869,7 @@ function QuickOneTimeSubscriptionButton({ user, client, format = defaultSubscrip
     setCreating(true)
     try {
       const result = await client.request(`/users/${user.id}/subscription-token/one-time`, { method: 'POST', body: '{}' }) as { subscription_token?: string }
-      const url = subscriptionURLForToken(result.subscription_token || '', format, useAge)
+      const url = subscriptionURLForToken(result.subscription_token || '', format, useAge, includeUnsupported)
       if (!url) throw new Error('未能生成一次性订阅链接')
       if (await copyText(url)) {
         setCopied(true)
@@ -16894,7 +16894,7 @@ function QuickOneTimeSubscriptionButton({ user, client, format = defaultSubscrip
   </button>
 }
 
-function SubscriptionUserRowMenu({ user, client, load, notify, subscriptionFormat, ageRequired, customPathBusy }: { user: User; client: ReturnType<typeof api>; load: () => Promise<void>; notify?: (message: string, tone?: ToastKind) => void; subscriptionFormat: SubscriptionFormat; ageRequired: boolean; customPathBusy: string }) {
+function SubscriptionUserRowMenu({ user, client, load, notify, subscriptionFormat, includeUnsupported, ageRequired, customPathBusy }: { user: User; client: ReturnType<typeof api>; load: () => Promise<void>; notify?: (message: string, tone?: ToastKind) => void; subscriptionFormat: SubscriptionFormat; includeUnsupported: boolean; ageRequired: boolean; customPathBusy: string }) {
   const dialogs = useDialogs()
   const [isOpen, setIsOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -16953,7 +16953,7 @@ function SubscriptionUserRowMenu({ user, client, load, notify, subscriptionForma
       notify?.(`${user.username} 尚未开启 Age 加密`, 'warning')
       return
     }
-    const url = subscriptionURLForUser(user, subscriptionFormat, useAge)
+    const url = subscriptionURLForUser(user, subscriptionFormat, useAge, includeUnsupported)
     if (!url) {
       notify?.(`${user.username} 尚无有效订阅令牌`, 'warning')
       return
@@ -16987,7 +16987,7 @@ function SubscriptionUserRowMenu({ user, client, load, notify, subscriptionForma
       notify?.(`${user.username} 尚未配置 Age 公钥`, 'warning')
       return
     }
-    const ok = await copyText(subscriptionURLForCustomPath(String(user.subscription_custom_path || ''), subscriptionFormat, encrypted))
+    const ok = await copyText(subscriptionURLForCustomPath(String(user.subscription_custom_path || ''), subscriptionFormat, encrypted, includeUnsupported))
     notify?.(ok ? `${user.username} 的自定义订阅链接已复制` : '复制失败，请重试', ok ? 'success' : 'error')
   }
 
@@ -18928,25 +18928,42 @@ const subscriptionClientFormats: Array<{ id: SubscriptionFormat; name: string; t
   { id: 'v2ray-uri', name: 'V2Ray URI', type: 'URI' },
 ]
 
-function subscriptionURLForToken(token: string, format: SubscriptionFormat, encrypted = false) {
+const surgeMacMihomoExecPath = '/usr/local/bin/mihomo'
+
+function applySubscriptionFormatParams(params: URLSearchParams, format: SubscriptionFormat, includeUnsupported: boolean) {
+  if (format !== 'mihomo') params.set('format', format)
+  if (format === 'surge-mac') params.set('mihomo', includeUnsupported ? 'auto' : 'off')
+}
+
+function SurgeMacUnsupportedOption({ checked, onChange }: { checked: boolean; onChange: (checked: boolean) => void }) {
+  return <div className="sub-format-option">
+    <div>
+      <div className="sub-format-option-title"><strong>包含未支持协议</strong><FieldHelp label="包含未支持协议" placement="bottom" hint={<span>Surge Mac 原生不支持的协议（如 VLESS、Mieru）通过 Mihomo Bridge 转交本机 Mihomo 核心承载。开启前请把 Mihomo 核心放到 <code>{surgeMacMihomoExecPath}</code>，并执行 <code>chmod +x {surgeMacMihomoExecPath}</code> 赋予可执行权限。关闭后订阅只输出 Surge 原生支持的节点。</span>} /></div>
+      <span>{checked ? <>未支持协议经 Mihomo Bridge 调用 <code>{surgeMacMihomoExecPath}</code></> : '仅输出 Surge 原生支持的节点'}</span>
+    </div>
+    <Switch checked={checked} onChange={onChange} ariaLabel="包含未支持协议" />
+  </div>
+}
+
+function subscriptionURLForToken(token: string, format: SubscriptionFormat, encrypted = false, includeUnsupported = true) {
   if (!token) return ''
 	const base = `${appSubscriptionURL()}/api/v1/subscriptions/${token}`
 	const params = new URLSearchParams()
-  if (format !== 'mihomo') params.set('format', format)
+  applySubscriptionFormatParams(params, format, includeUnsupported)
   if (encrypted) params.set('age', '1')
 	const query = params.toString()
 	return query ? `${base}?${query}` : base
 }
 
-function subscriptionURLForUser(user: User, format: SubscriptionFormat, encrypted = false) {
-  return subscriptionURLForToken(user.subscription_token, format, encrypted)
+function subscriptionURLForUser(user: User, format: SubscriptionFormat, encrypted = false, includeUnsupported = true) {
+  return subscriptionURLForToken(user.subscription_token, format, encrypted, includeUnsupported)
 }
 
-function subscriptionURLForCustomPath(alias: string, format: SubscriptionFormat, encrypted = false) {
+function subscriptionURLForCustomPath(alias: string, format: SubscriptionFormat, encrypted = false, includeUnsupported = true) {
   if (!alias) return ''
   const base = `${appSubscriptionURL()}/s/${alias}`
   const params = new URLSearchParams()
-  if (format !== 'mihomo') params.set('format', format)
+  applySubscriptionFormatParams(params, format, includeUnsupported)
   if (encrypted) params.set('age', '1')
   const query = params.toString()
   return query ? `${base}?${query}` : base
@@ -18957,6 +18974,7 @@ function MySubscriptions({ data, client, load, notify }: { data: any; client: Re
   const user: User | undefined = data.account_user || data.current_user
   const [iconsReady, setIconsReady] = useState(false)
   const [format, setFormat] = useState<SubscriptionFormat>(defaultSubscriptionFormat)
+  const [includeUnsupported, setIncludeUnsupported] = useState(true)
   const [customPathDraft, setCustomPathDraft] = useState(user?.subscription_custom_path || '')
   const [customPathBusy, setCustomPathBusy] = useState(false)
   const ageRequired = user?.subscription_age_policy === 'required'
@@ -18986,7 +19004,7 @@ function MySubscriptions({ data, client, load, notify }: { data: any; client: Re
       notify?.('请先在我的账户中配置 Age 公钥', 'warning')
       return
     }
-    const ok = await copyText(subscriptionURLForUser(user, format, useAge))
+    const ok = await copyText(subscriptionURLForUser(user, format, useAge, includeUnsupported))
     notify?.(ok ? `${useAge ? 'Age 加密' : '普通'}订阅链接已复制` : '复制失败，请重试', ok ? 'success' : 'error')
   }
 
@@ -18997,7 +19015,7 @@ function MySubscriptions({ data, client, load, notify }: { data: any; client: Re
       notify?.('请先在我的账户中配置 Age 公钥', 'warning')
       return
     }
-    const ok = await copyText(subscriptionURLForCustomPath(user.subscription_custom_path, format, useAge))
+    const ok = await copyText(subscriptionURLForCustomPath(user.subscription_custom_path, format, useAge, includeUnsupported))
     notify?.(ok ? '自定义订阅链接已复制' : '复制失败，请重试', ok ? 'success' : 'error')
   }
 
@@ -19048,6 +19066,7 @@ function MySubscriptions({ data, client, load, notify }: { data: any; client: Re
             <span>{item.type}</span>
           </button>)}
         </div>
+        {format === 'surge-mac' && <SurgeMacUnsupportedOption checked={includeUnsupported} onChange={setIncludeUnsupported} />}
       </section>
 
       <section className="sub-section self-subscription-card">
@@ -19115,6 +19134,7 @@ function Subscriptions({ data, client, load, notify }: any) {
   const dialogs = useDialogs()
   const [iconsReady, setIconsReady] = useState(false)
   const [subscriptionFormat, setSubscriptionFormat] = useState<SubscriptionFormat>(defaultSubscriptionFormat)
+  const [includeUnsupported, setIncludeUnsupported] = useState(true)
   const [customPathMode, setCustomPathMode] = useState<SubscriptionCustomPathMode>((data.settings?.subscription_custom_path_mode || 'disabled') as SubscriptionCustomPathMode)
 
   useEffect(() => {
@@ -19191,7 +19211,7 @@ function Subscriptions({ data, client, load, notify }: any) {
       notify?.(`${user.username} 尚未开启 Age 加密`, 'warning')
       return
     }
-    const url = subscriptionURLForUser(user, subscriptionFormat, useAge)
+    const url = subscriptionURLForUser(user, subscriptionFormat, useAge, includeUnsupported)
     if (!url) {
       notify?.(`${user.username} 尚无有效订阅令牌`, 'warning')
       return
@@ -19271,7 +19291,7 @@ function Subscriptions({ data, client, load, notify }: any) {
       notify?.(`${user.username} 尚未配置 Age 公钥`, 'warning')
       return
     }
-    const ok = await copyText(subscriptionURLForCustomPath(String(user.subscription_custom_path || ''), subscriptionFormat, encrypted))
+    const ok = await copyText(subscriptionURLForCustomPath(String(user.subscription_custom_path || ''), subscriptionFormat, encrypted, includeUnsupported))
     notify?.(ok ? `${user.username} 的自定义订阅链接已复制` : '复制失败，请重试', ok ? 'success' : 'error')
   }
 
@@ -19304,6 +19324,7 @@ function Subscriptions({ data, client, load, notify }: any) {
                 )
               })}
             </div>
+            {subscriptionFormat === 'surge-mac' && <SurgeMacUnsupportedOption checked={includeUnsupported} onChange={setIncludeUnsupported} />}
           </section>
 
           <section className="sub-section custom-path-admin-section">
@@ -19382,8 +19403,8 @@ function Subscriptions({ data, client, load, notify }: any) {
                   </div>
                   <div className="sub-user-actions">
                     <button type="button" className="ghost" onClick={() => void copyUserSub(user, isAgeSubscriptionFormat(subscriptionFormat) && ageRequired)} disabled={!user.subscription_token || user.subscription_suspended || (isAgeSubscriptionFormat(subscriptionFormat) && ageRequired && !user.subscription_age_public_key)}><Copy size={13} />订阅地址</button>
-                    <QuickOneTimeSubscriptionButton user={user} client={client} format={subscriptionFormat} encrypted={isAgeSubscriptionFormat(subscriptionFormat) && ageRequired} notify={notify} />
-                    <SubscriptionUserRowMenu user={user} client={client} load={load} notify={notify} subscriptionFormat={subscriptionFormat} ageRequired={ageRequired} customPathBusy={customPathBusy} />
+                    <QuickOneTimeSubscriptionButton user={user} client={client} format={subscriptionFormat} encrypted={isAgeSubscriptionFormat(subscriptionFormat) && ageRequired} includeUnsupported={includeUnsupported} notify={notify} />
+                    <SubscriptionUserRowMenu user={user} client={client} load={load} notify={notify} subscriptionFormat={subscriptionFormat} includeUnsupported={includeUnsupported} ageRequired={ageRequired} customPathBusy={customPathBusy} />
                   </div>
                 </div>
               )) : <div className="sub-empty">{userSearchQuery ? '没有找到匹配的用户' : '暂无用户'}</div>}
