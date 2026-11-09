@@ -6,6 +6,8 @@ export interface CustomSelectOption {
   value: string
   label: React.ReactNode
   disabled?: boolean
+  group?: string
+  groupLabel?: React.ReactNode
 }
 
 export interface CustomSelectProps {
@@ -70,7 +72,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
     const viewportPadding = 10
     const below = window.innerHeight - rect.bottom - viewportPadding
     const above = rect.top - viewportPadding
-    const desiredHeight = Math.min(menuHeader ? 420 : 280, Math.max(42, options.length * 40 + (menuHeader ? 112 : 2)))
+    const desiredHeight = Math.min(menuHeader ? 480 : 280, Math.max(42, options.length * 40 + (menuHeader ? 112 : 2)))
     const placement: MenuPosition['placement'] = below >= Math.min(desiredHeight, 180) || below >= above ? 'bottom' : 'top'
     const available = Math.max(96, (placement === 'bottom' ? below : above) - gutter)
     const maxHeight = Math.min(desiredHeight, available)
@@ -237,9 +239,11 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
             {options.length ? options.map((opt, index) => {
               const isSelected = opt.value === value
               const isHighlighted = index === highlightedIndex
+              const startsGroup = opt.group !== undefined && (index === 0 || options[index - 1]?.group !== opt.group)
               return (
+                <React.Fragment key={opt.value}>
+                {startsGroup ? <div className="custom-select-group-label" role="presentation">{opt.groupLabel ?? opt.group}</div> : null}
                 <button
-                  key={opt.value}
                   id={`${listId}-option-${index}`}
                   data-option-index={index}
                   type="button"
@@ -257,6 +261,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
                   <span>{opt.label}</span>
                   {isSelected ? <Check size={13} aria-hidden="true" /> : null}
                 </button>
+                </React.Fragment>
               )
             }) : <div className="custom-select-empty">{emptyMessage}</div>}
           </div>

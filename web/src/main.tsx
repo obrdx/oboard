@@ -187,6 +187,7 @@ import { AppearanceSettingsPanel } from './components/settings/AppearanceSetting
 import { SettingsDisclosure, SettingsGroup, SettingsRow, SettingsSwitchRow } from './components/settings/SettingsLayout'
 import { DNSRecordDialog, dnsRecordDraftFromRecord, dnsRecordPayload, emptyDNSRecordDraft } from './components/DNSRecordDialog'
 import { InboundDDNSField } from './components/server/ProbeDDNS'
+import { ServerPickerSelect } from './components/server/ServerPickerSelect'
 import { ServerAboutDialog } from './components/server/ServerAboutDialog'
 import { ServerBasicSettingsDialog } from './components/server/ServerBasicSettingsDialog'
 import { ServerNetworkDialog } from './components/server/ServerNetworkDialog'
@@ -9388,8 +9389,6 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
   // request from the mutation handler.
   const reconcileTopology = () => undefined
   const [inspectorOpen, setInspectorOpen] = useState(false)
-  const [entryServerQuery, setEntryServerQuery] = useState('')
-  const [entryServerRegion, setEntryServerRegion] = useState('all')
   const [focusedPathID, setFocusedPathID] = useState(0)
   const [hoveredGraphFocus, setHoveredGraphFocus] = useState<GraphFocusScope>()
   const workspaceRef = useRef<HTMLDivElement>(null)
@@ -11835,56 +11834,11 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       else openRouting({ canvasTargetID: entity.node_id })
     }
   }
-  const entryServerRegions = useMemo(() => {
-    return orderServerRegions(servers, regionLabel)
-  }, [servers])
-  const normalizedEntryServerQuery = entryServerQuery.trim().toLocaleLowerCase('zh-CN')
-  const filteredEntryServers = servers.filter(server => {
-    const code = serverRegionCode(server)
-    if (entryServerRegion !== 'all' && code !== entryServerRegion) return false
-    if (!normalizedEntryServerQuery) return true
-    return [server.name, `server-${server.id}`, code, regionLabel(code)]
-      .some(value => String(value || '').toLocaleLowerCase('zh-CN').includes(normalizedEntryServerQuery))
-  })
-  const serverSelectLabel = (server: Server) => {
-    const isServerOnline = server.status.toLowerCase() === 'online'
-    const entryCount = entries.filter(x => x.server_id === server.id).length
-    return <div className="entry-server-option-label">
-      <span className={`entry-server-status ${isServerOnline ? 'online' : 'offline'}`} aria-label={isServerOnline ? '在线' : '离线'} />
-      <RegionFlag code={serverRegionCode(server)} size={20} />
-      <span className="entry-server-name">{server.name || `server-${server.id}`}</span>
-      <span className="entry-server-count">({entryCount} 入口)</span>
-    </div>
-  }
-  const selectOptions = filteredEntryServers.map(server => ({ value: String(server.id), label: serverSelectLabel(server) }))
-  const selectedServerLabel = selected ? serverSelectLabel(selected) : undefined
-  const entryServerMenuHeader = <div className="entry-server-menu-tools">
-    <label className="entry-server-search">
-      <Search size={15} aria-hidden="true" />
-      <input
-        autoFocus
-        type="search"
-        value={entryServerQuery}
-        onChange={event => setEntryServerQuery(event.target.value)}
-        placeholder="搜索服务器或地区"
-        aria-label="搜索入口服务器"
-      />
-    </label>
-    <div className="entry-server-region-filters" role="group" aria-label="按地区筛选入口服务器">
-      <button type="button" className={entryServerRegion === 'all' ? 'selected' : ''} aria-pressed={entryServerRegion === 'all'} onClick={() => setEntryServerRegion('all')}>全部</button>
-      {entryServerRegions.map(({ code, count }) => <button
-        key={code || 'pending'}
-        type="button"
-        className={entryServerRegion === code ? 'selected' : ''}
-        aria-pressed={entryServerRegion === code}
-        onClick={() => setEntryServerRegion(code)}
-        title={`${regionLabel(code)}，${count} 台服务器`}
-      >
-        <RegionFlag code={code} size={16} />
-        <span>{code || '待检测'}</span>
-      </button>)}
-    </div>
-  </div>
+  const entryCountByServer = useMemo(() => {
+    const counts = new Map<number, number>()
+    for (const entry of entries) counts.set(entry.server_id, (counts.get(entry.server_id) || 0) + 1)
+    return counts
+  }, [entries])
 
   return <div className="proxy-overview">
     <div className="proxy-editor">
@@ -11892,19 +11846,14 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
         <div className="proxy-path-topbar-controls">
           <div className="proxy-path-entry-picker">
             <span className="proxy-path-entry-label">入口服务器</span>
-            <CustomSelect
+            <ServerPickerSelect
               className="graph-entry-select"
-              value={String(selected?.id || 0)}
-              onChange={value => {
-                selectEntryServer(value)
-                setEntryServerQuery('')
-                setEntryServerRegion('all')
-              }}
-              options={selectOptions}
-              selectedLabel={selectedServerLabel}
-              menuHeader={entryServerMenuHeader}
+              servers={servers}
+              value={selected?.id || 0}
+              onChange={selectEntryServer}
+              meta={server => `${entryCountByServer.get(server.id) || 0} 入口`}
               emptyMessage="没有匹配的入口服务器"
-              ariaLabel="选择当前入口服务器"
+              ariaLabel="入口服务器"
             />
           </div>
         </div>,
