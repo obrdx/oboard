@@ -25990,24 +25990,29 @@ button.ghost.icon-button.dns-list-more:active { background: var(--surface-3) !im
   .probe-monitor-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-/* Always-free "new branch" handle on the right edge of a server card; the
-   bottom row only holds handles that continue an existing branch. */
+/* Always-free "new branch" handle at the right end of a server card's bottom
+   row; the evenly spread handles before it only continue an existing branch. */
 .flow .react-flow__handle.server-branch-source-handle {
-  top: 50%;
-  right: -11px;
-  width: 22px;
-  height: 22px;
+  z-index: 12;
+  bottom: 0;
+  left: calc(100% - 18px);
+  width: 24px;
+  height: 24px;
   border-radius: var(--radius-full);
   background: transparent !important;
   box-shadow: none !important;
-  transform: translateY(-50%);
+  transform: translate(-50%, 0);
 }
 .flow .react-flow__handle.server-branch-source-handle::after {
   content: '+';
   position: absolute;
-  inset: 3px;
+  left: 50%;
+  top: 100%;
+  width: 16px;
+  height: 16px;
   display: grid;
   place-items: center;
+  box-sizing: border-box;
   border: 1.5px solid var(--graph-node-accent, var(--primary));
   border-radius: var(--radius-full);
   background: var(--surface-solid);
@@ -26015,6 +26020,7 @@ button.ghost.icon-button.dns-list-more:active { background: var(--surface-3) !im
   font-size: 13px;
   font-weight: 600;
   line-height: 1;
+  transform: translate(-50%, -50%);
   opacity: .6;
   transition: opacity .14s ease, transform .14s ease;
   pointer-events: none;
@@ -26023,4 +26029,4 @@ button.ghost.icon-button.dns-list-more:active { background: var(--surface-3) !im
 .flow .react-flow__node.graph-node:hover .server-branch-source-handle::after {
   opacity: 1;
 }
-.flow .react-flow__handle.server-branch-source-handle:hover::after { transform: scale(1.15); }
+.flow .react-flow__handle.server-branch-source-handle:hover::after { transform: translate(-50%, -50%) scale(1.15); }
