@@ -25989,3 +25989,38 @@ button.ghost.icon-button.dns-list-more:active { background: var(--surface-3) !im
 @media (max-width: 720px) {
   .probe-monitor-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Always-free "new branch" handle on the right edge of a server card; the
+   bottom row only holds handles that continue an existing branch. */
+.flow .react-flow__handle.server-branch-source-handle {
+  top: 50%;
+  right: -11px;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: translateY(-50%);
+}
+.flow .react-flow__handle.server-branch-source-handle::after {
+  content: '+';
+  position: absolute;
+  inset: 3px;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid var(--graph-node-accent, var(--primary));
+  border-radius: var(--radius-full);
+  background: var(--surface-solid);
+  color: var(--graph-node-accent, var(--primary));
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  opacity: .6;
+  transition: opacity .14s ease, transform .14s ease;
+  pointer-events: none;
+}
+.flow .react-flow__handle.server-branch-source-handle:hover::after,
+.flow .react-flow__node.graph-node:hover .server-branch-source-handle::after {
+  opacity: 1;
+}
+.flow .react-flow__handle.server-branch-source-handle:hover::after { transform: scale(1.15); }

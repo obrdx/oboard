@@ -16330,6 +16330,9 @@ function GraphNode({
         )
 	  })}
       {isServer && !independentSourceCount && <Handle id={SERVER_GRAPH_SOURCE_HANDLE} className="connect-handle connect-source server-shared-source-handle" type="source" position={Position.Bottom} title="从此服务器连接分流或后续节点" />}
+      {/* Per-path handles only continue an existing branch, so a card that
+          already has branches needs its own always-free handle for the next one. */}
+      {isServer && independentSourceCount > 0 && <Handle id={SERVER_GRAPH_SOURCE_HANDLE} className="connect-handle connect-source server-branch-source-handle" type="source" position={Position.Right} title="拖出一条新分支" />}
       {(isEntry || (!isServer && !independentSourceCount)) && <Handle id="source-bottom" className="connect-handle connect-source connect-source-bottom" type="source" position={Position.Bottom} />}
 
       {/* Header */}
