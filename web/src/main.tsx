@@ -13743,6 +13743,9 @@ function nextAvailableInboundPort(data: any, server: Server | undefined, protoco
   const start = Number(server.port_range_start || 0)
   const end = Number(server.port_range_end || 0)
   const used = new Set<number>((data.inbounds || []).filter((x: Inbound) => x.server_id === server.id && x.id !== excludeInboundID).map((x: Inbound) => Number(x.port)))
+  for (const allocation of (data.port_allocations || []) as Array<{ server_id: number; pool?: string; port: number }>) {
+    if (allocation.server_id === server.id && allocation.pool !== 'internal') used.add(Number(allocation.port))
+  }
   if (start > 0 && end >= start) {
     const preferred = preferredProtocolPortInRange(protocol, start, end, used)
     if (preferred) return preferred

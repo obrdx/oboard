@@ -2354,6 +2354,11 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}); err != nil {
 			return err
 		}
+		portAllocations, err := s.store.ListProxyPathPortAllocations(ctx)
+		if err != nil {
+			return err
+		}
+		out["port_allocations"] = portAllocations
 		out["inbounds"] = inbounds
 		out["outbounds"] = outbounds
 		out["routing_rules"] = rules
