@@ -1338,6 +1338,12 @@ button.fleet-chip:hover:not(:disabled).is-danger { background: color-mix(in srgb
 .ss-unit { flex: none; color: var(--muted); font-size: 13px; }
 .ss-row-control > .ss-inline-action { align-self: flex-end; }
 .ss-error { margin: 0; color: var(--fleet-red); font-size: 12.5px; }
+.inbound-ddns-setting { align-items: start; }
+.inbound-ddns-picker { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.inbound-ddns-picker > :first-child { flex: 1 1 auto; min-width: 0; }
+.inbound-ddns-picker > button { flex: none; display: inline-flex; align-items: center; gap: 4px; }
+.inbound-ddns-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12.5px; line-height: 1.5; }
+@media (pointer: coarse) { .inbound-ddns-picker > button { min-height: 44px; } }
 .ss-group-body > .access-note { margin: 0; padding: 12px 16px; border: 0; border-radius: 0; }
 .ss-group-body > .access-note + * { border-top: 1px solid var(--border-color); }
 .ss-group-body > .form-field .form-field-meta { padding-top: 0; }

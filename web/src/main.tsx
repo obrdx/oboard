@@ -7838,7 +7838,8 @@ export function ServerSettingsDialog({ mode, server, draft, update, onCancel, on
                   client={client}
                   credentials={credentials}
                   label="默认入口 DDNS"
-                  hint="只能选这台服务器已启用的 DDNS。建议记录类型选 A + AAAA，客户端即可同时走 IPv4 与 IPv6。被设为默认入口后，这条 DDNS 不能删除或停用。"
+                  hint="只能选这台服务器已启用的 DDNS；设为默认入口后，这条 DDNS 不能删除或停用。"
+                  layout="setting"
                   defaultRecordTypes="both"
                   onlyEnabled
                   disabled={!client}
@@ -9165,7 +9166,12 @@ function ServerEntryDDNSImpact({ server, inbounds, domain }: { server: Server; i
   const overridden = following.filter(item => item.dns_sync_enabled && String(item.dns_domain || '').trim())
   const reached = following.length - overridden.length
   const explicit = own.length - following.length
-  if (!own.length) return <p className="field-hint">之后添加的入口默认「跟随服务器」，订阅 Host 会使用{domain ? ` ${domain}` : '所选 DDNS 域名'}。</p>
+  if (!own.length) return <div className="access-note">
+    <div>
+      <strong>订阅 Host：{domain || '选择 DDNS 后生效'}</strong>
+      <span>这台服务器还没有入口；之后添加的入口默认「跟随服务器」，会使用该域名。</span>
+    </div>
+  </div>
   return <div className="access-note">
     <div>
       <strong>{reached} 个入口将改用{domain ? ` ${domain}` : '该 DDNS 域名'}</strong>

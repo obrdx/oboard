@@ -1,5 +1,5 @@
 import { useErrorToast, type ToastNotify } from "../ui/use-error-toast"
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useId, useMemo, useState, type FormEvent } from 'react'
 import { ChevronRight, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { RegionFlag, serverRegionCode } from '../ui/RegionFlag'
 import { Dialog } from '../ui/dialog'
@@ -221,8 +221,9 @@ export function ProbeDDNS({ client, servers, credentials, canManage, notify }: {
 
 const ddnsRecordTypeLabels: Record<ProbeDDNSRecord['record_types'], string> = { a: '仅 A 记录', aaaa: '仅 AAAA 记录', both: 'A + AAAA' }
 
-export function InboundDDNSField({ serverID, recordID, domain, client, credentials, onChange, notify, label = 'DDNS 记录', hint = '订阅 Host 使用这条记录的域名，解析由 DDNS 任务维护；TLS 入口未填写 SNI 时默认使用该域名。', defaultRecordTypes = 'a', onlyEnabled = false, disabled = false }: {
+export function InboundDDNSField({ serverID, recordID, domain, client, credentials, onChange, notify, label = 'DDNS 记录', hint = '订阅 Host 使用这条记录的域名，解析由 DDNS 任务维护；TLS 入口未填写 SNI 时默认使用该域名。', defaultRecordTypes = 'a', onlyEnabled = false, disabled = false, layout = 'grid' }: {
   serverID: number
+  layout?: 'grid' | 'setting'
   label?: string
   hint?: string
   defaultRecordTypes?: ProbeDDNSRecord['record_types']
@@ -252,6 +253,7 @@ export function InboundDDNSField({ serverID, recordID, domain, client, credentia
   }, [client, serverID, onlyEnabled])
   useEffect(() => { void load() }, [load])
   const selected = records.find(record => record.id === recordID)
+  const labelID = useId()
   const create = async (record: ProbeDDNSRecord) => {
     setBusy(true)
     setError('')
@@ -270,24 +272,47 @@ export function InboundDDNSField({ serverID, recordID, domain, client, credentia
       setBusy(false)
     }
   }
+  const select = <Select aria-label="选择 DDNS 记录" value={recordID || 0} disabled={disabled} onChange={event => {
+    const id = Number(event.target.value)
+    onChange(records.find(record => record.id === id) || null)
+  }}>
+    <option value={0}>选择记录</option>
+    {records.map(record => <option key={record.id} value={record.id}>{record.name} · {record.domain}{record.record_types === 'both' ? ' · 双栈' : ''}{record.enabled ? '' : ' · 已停用'}</option>)}
+  </Select>
+  const createDialog = <Dialog isOpen={creating} onClose={() => { if (!busy) setCreating(false) }} title="新建 DDNS" size="lg">
+    <ProbeDDNSForm notify={notify} record={emptyRecord(serverID, defaultRecordTypes)} servers={[]} credentials={credentials} client={client} busy={busy} canManage serverLocked onCancel={() => setCreating(false)} onSubmit={create} />
+  </Dialog>
+  if (layout === 'setting') {
+    return <div className="ss-row inbound-ddns-setting" role="group" aria-labelledby={labelID}>
+      <div className="ss-row-copy">
+        <span id={labelID} className="ss-row-label">{label}<em aria-label="必填">*</em></span>
+        {hint ? <span className="ss-row-desc">{hint}</span> : null}
+      </div>
+      <div className="ss-row-control">
+        <div className="inbound-ddns-picker">
+          {select}
+          <button type="button" className="ghost" disabled={!serverID || disabled} onClick={() => setCreating(true)}><Plus size={15} aria-hidden="true" />新建</button>
+        </div>
+        {selected ? <div className="inbound-ddns-status">
+          <span className={`probe-task-badge${selected.record_types === 'both' ? ' is-on' : ''}`}>{ddnsRecordTypeLabels[selected.record_types]}</span>
+          <span>{selected.record_types === 'both' ? '客户端可同时走 IPv4 与 IPv6' : selected.record_types === 'a' ? '仅 IPv4 客户端可用，建议改为 A + AAAA' : '仅 IPv6 客户端可用，建议改为 A + AAAA'}</span>
+        </div> : null}
+        {selected?.error ? <p className="ss-error">最近一次更新失败：{selected.error}</p> : null}
+        {!selected && domain ? <p className="ss-error">已选记录暂时不在这台服务器的列表中。</p> : null}
+      </div>
+      {createDialog}
+    </div>
+  }
   return <div className="inbound-editor-grid">
     <FormField label={label} required hint={hint}>
-      <Select aria-label="选择 DDNS 记录" value={recordID || 0} disabled={disabled} onChange={event => {
-        const id = Number(event.target.value)
-        onChange(records.find(record => record.id === id) || null)
-      }}>
-        <option value={0}>选择记录</option>
-        {records.map(record => <option key={record.id} value={record.id}>{record.name} · {record.domain}{record.record_types === 'both' ? ' · 双栈' : ''}{record.enabled ? '' : ' · 已停用'}</option>)}
-      </Select>
+      {select}
     </FormField>
     <div className="inline-field-action inbound-ddns-action">
       <button type="button" className="ghost" disabled={!serverID || disabled} onClick={() => setCreating(true)}>新建 DDNS</button>
     </div>
     {selected && <p className="field-hint">当前 Host 将使用 {selected.domain}（{ddnsRecordTypeLabels[selected.record_types]}）。{selected.error ? ` 最近一次更新失败：${selected.error}` : ''}</p>}
     {!selected && domain && <p className="field-hint">已选记录暂时不在这台服务器的列表中。</p>}
-    <Dialog isOpen={creating} onClose={() => { if (!busy) setCreating(false) }} title="新建 DDNS" size="lg">
-      <ProbeDDNSForm notify={notify} record={emptyRecord(serverID, defaultRecordTypes)} servers={[]} credentials={credentials} client={client} busy={busy} canManage serverLocked onCancel={() => setCreating(false)} onSubmit={create} />
-    </Dialog>
+    {createDialog}
   </div>
 }
 

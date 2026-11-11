@@ -63,6 +63,7 @@
 }
 
 .inbound-editor-grid > .inbound-ddns-action { align-self: end; }
+.inbound-editor-grid > .field-hint { grid-column: 1 / -1; margin: 0; }
 
 .inbound-editor-grid > .form-field-full,
 .inbound-editor-grid > .inbound-editor-switch,
