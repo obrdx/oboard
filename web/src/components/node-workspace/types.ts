@@ -27,3 +27,8 @@ export const filterProtocols = ['vless', 'vmess', 'trojan', 'tuic', 'hysteria2',
 export function errorText(error: unknown) {
   return error instanceof Error ? error.message : String((error as { message?: string })?.message || error)
 }
+
+export async function loadSavedNodeLink(client: Client, subjectQuery: string, nodeID: string) {
+  const result = await client.request<{ url?: string }>(`/node-library/share${subjectQuery}`, { method: 'POST', body: JSON.stringify({ node_id: nodeID }) })
+  return typeof result?.url === 'string' ? result.url : ''
+}

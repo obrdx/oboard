@@ -172,6 +172,7 @@ describe('NodeWorkspacePage', () => {
       requests.push({ path, body: String(init?.body || ''), method: init?.method })
       if (path === '/node-workspace') return workspace
       if (path === '/node-library') return { nodes: [{ id: 'private:1', group_id: 2, name: '香港 01', protocol: 'trojan', source: 'private', copyable: true, editable: true }] }
+      if (path === '/node-library/share' && init?.method === 'POST') return { url: 'trojan://saved-hongkong' }
       if (path === '/node-library/private:1' && init?.method === 'PATCH') return { node: { id: 'private:1', name: '香港 02', protocol: 'trojan', enabled: true } }
       if (path === '/node-import-preview') return { nodes: [{ name: '预览节点', protocol: 'vless', fingerprint: 'fp' }], issues: [] }
       throw new Error(`unexpected request: ${path} ${init?.method || ''}`)
@@ -182,6 +183,8 @@ describe('NodeWorkspacePage', () => {
     await flushEffects()
 
     act(() => (document.querySelector('[aria-label="编辑 香港 01"]') as HTMLButtonElement).click())
+    await flushEffects()
+    expect((document.querySelector('.nw-node-edit textarea') as HTMLTextAreaElement).value).toBe('trojan://saved-hongkong')
     const nameInput = document.querySelector('.nw-node-edit input') as HTMLInputElement
     act(() => {
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!.call(nameInput, '香港 02')
@@ -334,6 +337,65 @@ describe('NodeWorkspacePage', () => {
     await flushEffects()
     expect(document.querySelector('.nw-group-edit')).toBeNull()
     expect(document.querySelectorAll('[aria-label^="编辑 "]').length).toBe(3)
+  })
+
+  it('shows saved nodes in a group and updates one manual node from its current link', async () => {
+    const workspace = {
+      subject: { id: 7, username: 'alice' },
+      node_groups: [
+        { id: 2, kind: 'manual', name: '外部连接组 A', node_count: 1 },
+        { id: 3, kind: 'remote', name: '远程组', node_count: 1 },
+      ],
+      node_sources: [{ id: 9, group_id: 3, url_display: 'https://example.com/sub', status: 'ready', last_success_at: null }],
+      subscription_outputs: [],
+    }
+    const nodes = [
+      { id: 'private:1', group_id: 2, name: '节点 A', protocol: 'vless', source: 'private', copyable: true, editable: true },
+      { id: 'private:2', group_id: 3, name: '节点 B', protocol: 'trojan', source: 'private', copyable: true, editable: false },
+    ]
+    const request = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === '/node-workspace') return workspace
+      if (path === '/node-library') return { nodes }
+      if (path === '/node-library/share' && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as { node_id?: string }
+        return { url: body.node_id === 'private:1' ? 'vless://saved-node-a' : 'trojan://saved-node-b' }
+      }
+      if (path === '/node-library/private:1' && init?.method === 'PATCH') return { node: { id: 'private:1', name: '节点 A', protocol: 'vless' } }
+      throw new Error(`unexpected request: ${path} ${init?.method || ''}`)
+    })
+    await act(async () => {
+      renderWithDialogs(root, <NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />, dialogs)
+    })
+    await flushEffects()
+    act(() => (Array.from(document.querySelectorAll('[role="tab"]'))[1] as HTMLButtonElement).click())
+    act(() => (document.querySelector('[aria-label="编辑 外部连接组 A"]') as HTMLButtonElement).click())
+
+    const manualForm = document.querySelector('.nw-group-edit') as HTMLFormElement
+    expect(manualForm.textContent).toContain('节点 A')
+    expect(manualForm.textContent).toContain('新增节点链接')
+    act(() => (manualForm.querySelector('[aria-label="修改 节点 A"]') as HTMLButtonElement).click())
+    await flushEffects()
+    const link = manualForm.querySelector('[aria-label="节点链接"]') as HTMLTextAreaElement
+    expect(link.value).toBe('vless://saved-node-a')
+    expect(link.readOnly).toBe(false)
+    act(() => {
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!.set!.call(link, 'vless://edited-node-a')
+      link.dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+    act(() => (Array.from(manualForm.querySelectorAll('button')).find(button => button.textContent?.includes('保存这个节点')) as HTMLButtonElement).click())
+    await flushEffects()
+    expect(request.mock.calls).toContainEqual(['/node-library/private:1', expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ name: '节点 A', content: 'vless://edited-node-a' }) })])
+
+    act(() => (document.querySelector('[aria-label="编辑 远程组"]') as HTMLButtonElement).click())
+    const remoteForm = document.querySelector('.nw-group-edit') as HTMLFormElement
+    expect(remoteForm.textContent).toContain('节点 B')
+    expect(remoteForm.querySelector('[aria-label="修改 节点 B"]')).toBeNull()
+    act(() => (remoteForm.querySelector('[aria-label="查看 节点 B"]') as HTMLButtonElement).click())
+    await flushEffects()
+    const remoteLink = remoteForm.querySelector('[aria-label="已保存的节点链接"]') as HTMLTextAreaElement
+    expect(remoteLink.value).toBe('trojan://saved-node-b')
+    expect(remoteLink.readOnly).toBe(true)
+    expect(remoteForm.textContent).toContain('不能单独修改')
   })
 
   it('waits for shared confirmation before deleting a node group', async () => {

@@ -4,12 +4,13 @@ import { useDialogs } from '../ui/dialog-context'
 import { Dialog } from '../ui/dialog'
 import { errorText, type LibraryNode, type NodeGroup } from './types'
 
-export function NodeLibraryPanel({ nodes, groups, busy, onCopy, onEdit }: {
+export function NodeLibraryPanel({ nodes, groups, busy, onCopy, onEdit, onLoadContent }: {
   nodes: LibraryNode[]
   groups: NodeGroup[]
   busy: boolean
   onCopy: (node: LibraryNode) => Promise<void>
   onEdit: (node: LibraryNode, patch: { name?: string; content?: string }) => Promise<void>
+  onLoadContent: (node: LibraryNode) => Promise<string>
 }) {
   const [query, setQuery] = React.useState('')
   const [groupID, setGroupID] = React.useState(0)
@@ -18,10 +19,14 @@ export function NodeLibraryPanel({ nodes, groups, busy, onCopy, onEdit }: {
   const [editName, setEditName] = React.useState('')
   const [editContent, setEditContent] = React.useState('')
   const [editBusy, setEditBusy] = React.useState(false)
+  const [loadedContent, setLoadedContent] = React.useState('')
+  const [contentLoading, setContentLoading] = React.useState(false)
   const [editError, setEditError] = React.useState('')
   const [editStatus, setEditStatus] = React.useState('')
   const saving = React.useRef(false)
   const session = React.useRef(0)
+  const loadedRef = React.useRef('')
+  const contentTouched = React.useRef(false)
   const draft = React.useRef({ name: editName, content: editContent })
   draft.current = { name: editName, content: editContent }
   const dialogs = useDialogs()
@@ -31,10 +36,32 @@ export function NodeLibraryPanel({ nodes, groups, busy, onCopy, onEdit }: {
   const protocols = Array.from(new Set(nodes.map(node => node.protocol))).sort()
   const filtered = Boolean(needle || groupID || protocol)
 
-  const openEdit = (node: LibraryNode) => { session.current++; setEditing(node); setEditName(node.name); setEditContent(''); setEditError(''); setEditStatus('') }
+  const openEdit = (node: LibraryNode) => {
+    const ticket = ++session.current
+    contentTouched.current = false
+    loadedRef.current = ''
+    setEditing(node)
+    setEditName(node.name)
+    setEditContent('')
+    setLoadedContent('')
+    setContentLoading(node.copyable)
+    setEditError('')
+    setEditStatus('')
+    if (!node.copyable) return
+    void onLoadContent(node).then(url => {
+      if (session.current !== ticket || contentTouched.current) return
+      loadedRef.current = url
+      setLoadedContent(url)
+      setEditContent(url)
+    }).catch(error => {
+      if (session.current === ticket) setEditError(errorText(error))
+    }).finally(() => {
+      if (session.current === ticket) setContentLoading(false)
+    })
+  }
   const closeEdit = async () => {
     const closing = session.current
-    if ((editName !== editing?.name || editContent) && !await dialogs.confirm({ title: '关闭编辑？', message: editBusy ? '已提交的修改会继续处理。关闭将丢弃这里尚未保存的输入。' : '尚未保存的输入会丢失。', confirmText: '放弃并关闭', tone: 'danger' })) return
+    if ((editName !== editing?.name || editContent !== loadedContent) && !await dialogs.confirm({ title: '关闭编辑？', message: editBusy ? '已提交的修改会继续处理。关闭将丢弃这里尚未保存的输入。' : '尚未保存的输入会丢失。', confirmText: '放弃并关闭', tone: 'danger' })) return
     if (session.current !== closing) return
     session.current++
     setEditing(null)
@@ -48,7 +75,8 @@ export function NodeLibraryPanel({ nodes, groups, busy, onCopy, onEdit }: {
     setEditError('')
     setEditStatus('')
     try {
-      await onEdit(editing, { name: snapshot.name.trim(), content: snapshot.content.trim() })
+      const contentChanged = snapshot.content.trim() !== loadedRef.current.trim()
+      await onEdit(editing, { name: snapshot.name.trim(), content: contentChanged ? snapshot.content.trim() : '' })
       if (session.current !== savingSession) return
       if (draft.current.name === snapshot.name && draft.current.content === snapshot.content) setEditing(null)
       else setEditStatus('已保存提交的内容；当前还有未保存的修改。')
@@ -87,7 +115,7 @@ export function NodeLibraryPanel({ nodes, groups, busy, onCopy, onEdit }: {
     <Dialog isOpen={editing !== null} onClose={() => void closeEdit()} title={`编辑 ${editing?.name || '节点'}`} size="lg" className="nw-dialog">
       <div className="nw-form nw-node-edit">
         <label><span>节点名称</span><input value={editName} onChange={event => setEditName(event.target.value)} maxLength={80} placeholder="留空时使用新配置中的名称" /></label>
-        <label><span>替换节点配置</span><textarea value={editContent} onChange={event => setEditContent(event.target.value)} rows={4} placeholder="粘贴新的节点链接或配置；留空则只修改名称" /></label>
+        <label><span>节点链接<small>{contentLoading ? '正在读取已保存的链接' : loadedContent && editContent === loadedContent ? '当前保存的链接，可直接修改' : '留空则只修改名称'}</small></span><textarea value={editContent} onChange={event => { contentTouched.current = true; setEditContent(event.target.value) }} rows={5} placeholder={contentLoading ? '正在读取已保存的链接…' : '粘贴新的节点链接可以替换当前配置'} /></label>
         {editError && <p className="nw-form-error" role="alert">{editError}</p>}
         {editStatus && <p className="nw-form-status" role="status">{editStatus}</p>}
         <div className="nw-form-actions"><button type="button" className="ghost" onClick={() => void closeEdit()}><X size={15} />关闭</button><button type="button" disabled={editBusy || (!editName.trim() && !editContent.trim())} onClick={() => void saveEdit()}><Check size={15} />{editBusy ? '保存中…' : '保存'}</button></div>

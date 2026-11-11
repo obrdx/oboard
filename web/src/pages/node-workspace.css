@@ -381,6 +381,16 @@
 .nw-form-error { margin: 0; color: var(--color-danger); font-size: 13px; }
 .nw-form-status { margin: 0; color: var(--text-secondary); font-size: 13px; }
 .nw-form-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.nw-saved-nodes { display: grid; gap: 8px; min-width: 0; }
+.nw-saved-nodes-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; color: var(--text-secondary); font-size: 13px; font-weight: 650; }
+.nw-saved-nodes-head small { color: var(--text-muted); font-weight: 400; }
+.nw-saved-node-list { display: grid; gap: 6px; max-height: 240px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.nw-saved-node-list li { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 8px 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-control); }
+.nw-saved-node-list li.is-editing { border-color: var(--primary); background: var(--surface); }
+.nw-saved-node-list li strong { flex: 1; min-width: 0; color: var(--text-strong); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.nw-saved-node-list li .nw-mono-chip { flex: none; }
+.nw-saved-node-list li button { flex: none; min-height: 32px; padding: 4px 10px; font-size: 13px; }
+.nw-saved-node-edit { display: grid; gap: 12px; min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
 .nw-callout { margin: 0; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--color-warning-bg); color: var(--color-warning); font-size: 13px; line-height: 1.5; }
 .nw-segmented { display: inline-flex; justify-self: start; gap: 2px; padding: 3px; border-radius: var(--radius-sm); background: var(--bg-control); }
 .nw-segmented button { min-height: 32px; padding: 4px 14px; border: 0; border-radius: calc(var(--radius-sm) - 3px); background: transparent; color: var(--text-secondary); box-shadow: none; font-size: 13px; }

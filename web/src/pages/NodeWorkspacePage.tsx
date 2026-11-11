@@ -6,7 +6,7 @@ import { NodeAssignmentsPage } from './NodeAssignmentsPage'
 import { NodeLibraryPanel } from '../components/node-workspace/NodeLibraryPanel'
 import { NodeGroupsPanel } from '../components/node-workspace/NodeGroupsPanel'
 import { SubscriptionOutputsPanel } from '../components/node-workspace/SubscriptionOutputsPanel'
-import { errorText, type Client, type LibraryNode, type Notify, type Workspace } from '../components/node-workspace/types'
+import { errorText, loadSavedNodeLink, type Client, type LibraryNode, type Notify, type Workspace } from '../components/node-workspace/types'
 import { hasManagementAccess } from '../permissions'
 import { useRegisterPageRefresh } from '../page-refresh-context'
 
@@ -168,10 +168,10 @@ function PersonalWorkspace({ data, client, notify, role, subjectID, subscription
             }} onEdit={async (node, patch) => {
               await client.request(`/node-library/${node.id}${subjectQuery}`, { method: 'PATCH', body: JSON.stringify(patch) })
               void refresh()
-            }} />
+            }} onLoadContent={node => loadSavedNodeLink(client, subjectQuery, node.id)} />
           </TabsContent>
           <TabsContent value="groups" className="nw-view">
-            <NodeGroupsPanel workspace={visibleWorkspace} busy={busy} mutate={mutate} subjectQuery={subjectQuery} client={client} refresh={refresh} message={message} />
+            <NodeGroupsPanel workspace={visibleWorkspace} nodes={nodes} busy={busy} mutate={mutate} subjectQuery={subjectQuery} client={client} refresh={refresh} message={message} />
           </TabsContent>
           <TabsContent value="outputs" className="nw-view">
             <SubscriptionOutputsPanel workspace={visibleWorkspace} data={data} client={client} subjectQuery={subjectQuery} busy={busy} refresh={refresh} message={message} />

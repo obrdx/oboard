@@ -2,7 +2,7 @@ import * as React from 'react'
 import { Check, Eye, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import { useDialogs } from '../ui/dialog-context'
 import { Dialog } from '../ui/dialog'
-import { errorText, groupKindLabels, sourceStatusLabels, type Client, type ImportPreview, type NodeGroup, type Notify, type Workspace } from './types'
+import { errorText, groupKindLabels, loadSavedNodeLink, sourceStatusLabels, type Client, type ImportPreview, type LibraryNode, type NodeGroup, type Notify, type Workspace } from './types'
 
 const groupKindHints: Record<NodeGroup['kind'], string> = {
   oboard: '管理员授权给你的 OBoard 节点，随套餐自动更新。',
@@ -10,8 +10,9 @@ const groupKindHints: Record<NodeGroup['kind'], string> = {
   manual: '手动粘贴的节点链接或配置。',
 }
 
-export function NodeGroupsPanel({ workspace, busy, mutate, subjectQuery, client, refresh, message }: {
+export function NodeGroupsPanel({ workspace, nodes, busy, mutate, subjectQuery, client, refresh, message }: {
   workspace: Workspace
+  nodes: LibraryNode[]
   busy: boolean
   mutate: (path: string, init: RequestInit, success: string) => Promise<boolean>
   subjectQuery: string
@@ -32,6 +33,16 @@ export function NodeGroupsPanel({ workspace, busy, mutate, subjectQuery, client,
   const [editURL, setEditURL] = React.useState('')
   const [editContent, setEditContent] = React.useState('')
   const [refreshingID, setRefreshingID] = React.useState(0)
+  const [nodeTargetID, setNodeTargetID] = React.useState('')
+  const [nodeMode, setNodeMode] = React.useState<'edit' | 'view' | null>(null)
+  const [nodeName, setNodeName] = React.useState('')
+  const [nodeContent, setNodeContent] = React.useState('')
+  const [loadedNodeContent, setLoadedNodeContent] = React.useState('')
+  const [nodeError, setNodeError] = React.useState('')
+  const [nodeLoading, setNodeLoading] = React.useState(false)
+  const [nodeBusy, setNodeBusy] = React.useState(false)
+  const nodeTicket = React.useRef(0)
+  const nodeContentTouched = React.useRef(false)
   const latestDraft = React.useRef({ kind, name, value, editingID, editName, editURL, editContent })
   latestDraft.current = { kind, name, value, editingID, editName, editURL, editContent }
   const previewSequence = React.useRef(0)
@@ -59,8 +70,58 @@ export function NodeGroupsPanel({ workspace, busy, mutate, subjectQuery, client,
       setFormError(errorText(error))
     } finally { if (sequence === previewSequence.current) setPreviewBusy(false) }
   }
-  const openEdit = (group: NodeGroup) => { setFormError(''); setEditingID(group.id); setEditName(group.name); setEditURL(''); setEditContent('') }
-  const closeEdit = () => { setEditingID(0); setEditName(''); setEditURL(''); setEditContent('') }
+  const resetNodeEditor = () => {
+    nodeTicket.current++
+    nodeContentTouched.current = false
+    setNodeTargetID('')
+    setNodeMode(null)
+    setNodeName('')
+    setNodeContent('')
+    setLoadedNodeContent('')
+    setNodeError('')
+    setNodeLoading(false)
+  }
+  const openEdit = (group: NodeGroup) => { resetNodeEditor(); setFormError(''); setEditingID(group.id); setEditName(group.name); setEditURL(''); setEditContent('') }
+  const closeEdit = () => { resetNodeEditor(); setEditingID(0); setEditName(''); setEditURL(''); setEditContent('') }
+  const openNode = (node: LibraryNode, mode: 'edit' | 'view') => {
+    const ticket = ++nodeTicket.current
+    nodeContentTouched.current = false
+    setNodeTargetID(node.id)
+    setNodeMode(mode)
+    setNodeName(node.name)
+    setNodeContent('')
+    setLoadedNodeContent('')
+    setNodeError('')
+    if (!node.copyable) { setNodeLoading(false); return }
+    setNodeLoading(true)
+    void loadSavedNodeLink(client, subjectQuery, node.id).then(url => {
+      if (nodeTicket.current !== ticket || nodeContentTouched.current) return
+      setLoadedNodeContent(url)
+      setNodeContent(url)
+    }).catch(error => {
+      if (nodeTicket.current === ticket) setNodeError(errorText(error))
+    }).finally(() => {
+      if (nodeTicket.current === ticket) setNodeLoading(false)
+    })
+  }
+  const saveNode = async (node: LibraryNode) => {
+    const nextName = nodeName.trim()
+    const content = nodeContent.trim()
+    const contentChanged = content !== loadedNodeContent.trim()
+    if (nodeBusy || (!nextName && !contentChanged)) return
+    setNodeBusy(true)
+    setNodeError('')
+    try {
+      await client.request(`/node-library/${node.id}${subjectQuery}`, { method: 'PATCH', body: JSON.stringify({ name: nextName, content: contentChanged ? content : '' }) })
+      message('节点已更新')
+      resetNodeEditor()
+      await refresh()
+    } catch (error) {
+      setNodeError(errorText(error))
+    } finally {
+      setNodeBusy(false)
+    }
+  }
   const saveEdit = async (group: NodeGroup) => {
     const nextName = editName.trim()
     const url = editURL.trim()
@@ -138,14 +199,78 @@ export function NodeGroupsPanel({ workspace, busy, mutate, subjectQuery, client,
       </div>
     </Dialog>
 
-    <Dialog isOpen={editingGroup !== null} onClose={() => { if (!busy) closeEdit() }} title={`编辑 ${editingGroup?.name || '节点组'}`} size="lg" className="nw-dialog">
+    <Dialog isOpen={editingGroup !== null} onClose={() => { if (!busy && !nodeBusy) closeEdit() }} title={`编辑 ${editingGroup?.name || '节点组'}`} size="lg" className="nw-dialog">
       {editingGroup && <form className="nw-form nw-group-edit" onSubmit={event => { event.preventDefault(); void saveEdit(editingGroup) }}>
         <label><span>节点组名称</span><input value={editName} onChange={event => setEditName(event.target.value)} maxLength={80} /></label>
+        <SavedNodes
+          kind={editingGroup.kind}
+          nodes={nodes.filter(node => node.group_id === editingGroup.id)}
+          activeID={nodeTargetID}
+          mode={nodeMode}
+          nodeName={nodeName}
+          nodeContent={nodeContent}
+          loadedContent={loadedNodeContent}
+          loading={nodeLoading}
+          busy={busy || nodeBusy}
+          error={nodeError}
+          onName={setNodeName}
+          onContent={value => { nodeContentTouched.current = true; setNodeContent(value) }}
+          onOpen={openNode}
+          onClose={resetNodeEditor}
+          onSave={node => void saveNode(node)}
+        />
         {editingGroup.kind === 'remote' && <label><span>HTTPS 订阅 URL{editingSource && <small>当前 {editingSource.url_display}</small>}</span><input type="url" value={editURL} placeholder={editingSource?.url_display || 'https://'} onChange={event => setEditURL(event.target.value)} /></label>}
-        {editingGroup.kind === 'manual' && <label><span>新增节点链接</span><textarea value={editContent} rows={4} placeholder="粘贴新的节点链接或配置，留空则保持现有节点不变" onChange={event => setEditContent(event.target.value)} /></label>}
+        {editingGroup.kind === 'manual' && <label><span>新增节点链接</span><textarea value={editContent} rows={4} placeholder="粘贴新的节点链接或配置。已保存的节点不会被替换" onChange={event => setEditContent(event.target.value)} /></label>}
         {formError && <p className="nw-form-error" role="alert">{formError}</p>}
-        <div className="nw-form-actions"><button type="button" className="ghost" disabled={busy} onClick={closeEdit}><X size={15} />取消</button><button type="submit" disabled={busy || !editName.trim() || editUnchanged}><Check size={15} />保存</button></div>
+        <div className="nw-form-actions"><button type="button" className="ghost" disabled={busy || nodeBusy} onClick={closeEdit}><X size={15} />取消</button><button type="submit" disabled={busy || nodeBusy || !editName.trim() || editUnchanged}><Check size={15} />保存</button></div>
       </form>}
     </Dialog>
+  </section>
+}
+
+function SavedNodes({ kind, nodes, activeID, mode, nodeName, nodeContent, loadedContent, loading, busy, error, onName, onContent, onOpen, onClose, onSave }: {
+  kind: NodeGroup['kind']
+  nodes: LibraryNode[]
+  activeID: string
+  mode: 'edit' | 'view' | null
+  nodeName: string
+  nodeContent: string
+  loadedContent: string
+  loading: boolean
+  busy: boolean
+  error: string
+  onName: (value: string) => void
+  onContent: (value: string) => void
+  onOpen: (node: LibraryNode, mode: 'edit' | 'view') => void
+  onClose: () => void
+  onSave: (node: LibraryNode) => void
+}) {
+  const active = nodes.find(node => node.id === activeID) || null
+  const hint = kind === 'manual' ? '选择节点即可查看并修改已保存的链接。' : kind === 'remote' ? '这些节点由订阅同步，下次同步会按订阅内容更新，不能单独修改。' : '这些节点随套餐授权更新，不能在这里修改。'
+  const unchanged = Boolean(active) && nodeName.trim() === active?.name && nodeContent.trim() === loadedContent.trim()
+  return <section className="nw-saved-nodes" aria-label="已保存节点">
+    <div className="nw-saved-nodes-head"><span>已保存节点</span><small>{nodes.length} 个</small></div>
+    <p className="nw-form-hint">{hint}</p>
+    {nodes.length === 0
+      ? <p className="nw-form-hint">这个节点组里还没有节点。</p>
+      : <ul className="nw-saved-node-list">{nodes.map(node => <li key={node.id} className={node.id === activeID ? 'is-editing' : undefined}>
+        <strong>{node.name}</strong>
+        <span className="nw-mono-chip">{node.protocol}</span>
+        {node.editable
+          ? <button type="button" className="ghost" aria-label={`修改 ${node.name}`} disabled={busy} onClick={() => onOpen(node, 'edit')}>修改</button>
+          : node.copyable
+            ? <button type="button" className="ghost" aria-label={`查看 ${node.name}`} disabled={busy} onClick={() => onOpen(node, 'view')}>查看</button>
+            : null}
+      </li>)}</ul>}
+    {active && mode && <div className="nw-saved-node-edit" aria-label={mode === 'edit' ? `修改 ${active.name}` : `查看 ${active.name}`} onKeyDown={event => { if (event.key === 'Enter' && (event.target as HTMLElement).tagName === 'INPUT') event.preventDefault() }}>
+      {mode === 'edit' && <label><span>节点名称</span><input value={nodeName} onChange={event => onName(event.target.value)} maxLength={80} /></label>}
+      <label><span>节点链接{loading && <small>正在读取已保存的链接</small>}</span><textarea value={nodeContent} readOnly={mode === 'view' || loading} rows={4} aria-label={mode === 'edit' ? '节点链接' : '已保存的节点链接'} placeholder={loading ? '正在读取已保存的链接…' : mode === 'view' ? '无法读取已保存的链接' : active.copyable ? '修改当前保存的链接' : '当前配置无法显示为链接，粘贴新链接可以替换它'} onChange={event => onContent(event.target.value)} /></label>
+      {mode === 'edit' && !loading && loadedContent && <p className="nw-form-hint">这是当前保存的链接，改完后只更新这个节点。</p>}
+      {error && <p className="nw-form-error" role="alert">{error}</p>}
+      <div className="nw-form-actions">
+        <button type="button" className="ghost" onClick={onClose}>{mode === 'edit' ? '取消修改' : '收起'}</button>
+        {mode === 'edit' && <button type="button" disabled={busy || loading || unchanged || (!nodeName.trim() && !nodeContent.trim())} onClick={() => onSave(active)}><Check size={15} />保存这个节点</button>}
+      </div>
+    </div>}
   </section>
 }
