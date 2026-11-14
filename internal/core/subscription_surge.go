@@ -13,6 +13,62 @@ func renderSurgeLine(proxy subscriptionProxy, format model.SubscriptionFormat) (
 	host := subscriptionEndpoint(proxy.Server, 0)
 	parts := []string{}
 	switch proxy.Type {
+	case "vless":
+		parts = append(parts, fmt.Sprintf("%s=vless,%s,%d", name, host, proxy.Port), "username="+quoteConf(proxy.UUID))
+		if proxy.Flow != "" {
+			parts = append(parts, "flow="+proxy.Flow)
+		}
+		if proxy.Encryption != "" && proxy.Encryption != "none" {
+			parts = append(parts, "encryption="+quoteConf(proxy.Encryption))
+		}
+		if proxy.TLS.RealityPublicKey != "" {
+			parts = append(parts, "reality-public-key="+quoteConf(proxy.TLS.RealityPublicKey))
+			if proxy.TLS.RealityShortID != "" {
+				parts = append(parts, "reality-short-id="+quoteConf(proxy.TLS.RealityShortID))
+			}
+		} else if proxy.TLS.Enabled {
+			parts = append(parts, "tls=true")
+		}
+		tls := proxy.TLS
+		if tls.RealityPublicKey != "" {
+			tls.Insecure = false
+		}
+		appendSurgeTLSFields(&parts, tls)
+		switch proxy.Network {
+		case "ws", "httpupgrade":
+			parts = append(parts, "ws=true")
+			if proxy.Network == "httpupgrade" {
+				parts = append(parts, "ws-http-upgrade=true")
+			}
+			if proxy.Transport.Path != "" {
+				parts = append(parts, "ws-path="+quoteConf(proxy.Transport.Path))
+			}
+			if proxy.Transport.Host != "" {
+				parts = append(parts, "ws-headers="+quoteConf("Host:"+proxy.Transport.Host))
+			}
+		case "grpc":
+			parts = append(parts, "grpc=true")
+			if proxy.Transport.ServiceName != "" {
+				parts = append(parts, "grpc-service-name="+quoteConf(proxy.Transport.ServiceName))
+			}
+			if proxy.Transport.Mode != "" {
+				parts = append(parts, "grpc-mode="+quoteConf(proxy.Transport.Mode))
+			}
+			if proxy.Transport.Authority != "" {
+				parts = append(parts, "grpc-authority="+quoteConf(proxy.Transport.Authority))
+			}
+		case "xhttp":
+			parts = append(parts, "xhttp=true")
+			if proxy.Transport.Path != "" {
+				parts = append(parts, "xhttp-path="+quoteConf(proxy.Transport.Path))
+			}
+			if proxy.Transport.Host != "" {
+				parts = append(parts, "xhttp-host="+quoteConf(proxy.Transport.Host))
+			}
+			if proxy.Transport.Mode != "" {
+				parts = append(parts, "xhttp-mode="+quoteConf(proxy.Transport.Mode))
+			}
+		}
 	case "ss":
 		parts = append(parts, fmt.Sprintf("%s=ss,%s,%d", name, host, proxy.Port), "encrypt-method="+proxy.Method, "password="+quoteConf(proxy.Password))
 		parts = append(parts, "udp-relay="+strconv.FormatBool(!proxy.UoT))

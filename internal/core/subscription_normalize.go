@@ -31,6 +31,7 @@ type subscriptionProxy struct {
 	HostKeys       []string
 	Method         string
 	Flow           string
+	Encryption     string
 	PacketEncoding string
 	Network        string
 	Transport      subscriptionTransport
@@ -60,6 +61,8 @@ type subscriptionTransport struct {
 	Path        string
 	Host        string
 	ServiceName string
+	Mode        string
+	Authority   string
 }
 
 type subscriptionTLS struct {
@@ -101,6 +104,7 @@ func normalizeSubscriptionNode(node SubscriptionNode) (subscriptionProxy, error)
 		HostKeys:       stringListFromAny(raw["host_key"]),
 		Method:         stringFromAny(raw["method"]),
 		Flow:           stringFromAny(raw["flow"]),
+		Encryption:     stringFromAny(raw["encryption"]),
 		PacketEncoding: stringFromAny(raw["packet_encoding"]),
 		Network:        strings.ToLower(strings.TrimSpace(stringFromAny(raw["network"]))),
 		ServerPorts:    stringListFromAny(raw["server_ports"]),
@@ -240,6 +244,8 @@ func normalizeSubscriptionTransport(raw map[string]any) subscriptionTransport {
 	transport := subscriptionTransport{Type: strings.ToLower(strings.TrimSpace(stringFromAny(transportRaw["type"])))}
 	transport.Path = stringFromAny(transportRaw["path"])
 	transport.ServiceName = stringFromAny(transportRaw["service_name"])
+	transport.Mode = stringFromAny(transportRaw["mode"])
+	transport.Authority = stringFromAny(transportRaw["authority"])
 	if headers, ok := transportRaw["headers"].(map[string]any); ok {
 		transport.Host = stringFromAny(headers["Host"])
 		if transport.Host == "" {

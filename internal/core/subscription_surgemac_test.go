@@ -79,16 +79,16 @@ func TestSurgeMacMergeUsesOneMihomoAndLocalSOCKS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(output, "=vless,") || strings.Count(output, "=external,") != 1 {
+	if !strings.Contains(output, "VLESS IPv6=vless,") || strings.Count(output, "=external,") != 1 {
 		t.Fatalf("unexpected native/external mix:\n%s", output)
 	}
-	if !strings.Contains(output, "VLESS IPv6=socks5,127.0.0.1,51001") || !strings.Contains(output, "Mieru=socks5,127.0.0.1,51002") {
+	if strings.Contains(output, "VLESS IPv6=socks5,") || !strings.Contains(output, "Mieru=socks5,127.0.0.1,51001") {
 		t.Fatalf("missing merged socks lines:\n%s", output)
 	}
 	if !strings.Contains(output, `Mihomo-Core=external,exec="/opt/homebrew/bin/mihomo",local-port=51000`) {
 		t.Fatalf("missing merged core:\n%s", output)
 	}
-	if !strings.Contains(output, "addresses=2001:db8::10,2001:db8::20") {
+	if !strings.Contains(output, "addresses=2001:db8::20") {
 		t.Fatalf("missing VIF addresses:\n%s", output)
 	}
 	if !strings.Contains(output, "HY2=hysteria2,") || !strings.Contains(output, "Snell v6=snell,") {
@@ -100,22 +100,23 @@ func TestSurgeMacMergeUsesOneMihomoAndLocalSOCKS(t *testing.T) {
 	}
 	proxies := anySlice(config["proxies"])
 	listeners := anySlice(config["listeners"])
-	if len(proxies) != 2 || len(listeners) != 2 {
+	if len(proxies) != 1 || len(listeners) != 1 {
 		t.Fatalf("merged proxies/listeners = %#v %#v", proxies, listeners)
 	}
-	if stringFromAny(asMap(proxies[0])["type"]) != "vless" || stringFromAny(asMap(proxies[0])["name"]) != "p-51001" {
-		t.Fatalf("vless proxy = %#v", proxies[0])
+	if stringFromAny(asMap(proxies[0])["type"]) != "mieru" || stringFromAny(asMap(proxies[0])["name"]) != "p-51001" {
+		t.Fatalf("mieru proxy = %#v", proxies[0])
 	}
-	if stringFromAny(asMap(proxies[1])["type"]) != "mieru" || stringFromAny(asMap(proxies[1])["name"]) != "p-51002" {
-		t.Fatalf("mieru proxy = %#v", proxies[1])
+	mieru := asMap(proxies[0])
+	if mieru["transport"] != "TCP" || mieru["username"] != "oboard-u7" || mieru["password"] != "mieru-pass" || mieru["port-range"] != "25250-25252" || mieru["multiplexing"] != "MULTIPLEXING_HIGH" || mieru["traffic-pattern"] != "AA==" || mieru["udp"] != true {
+		t.Fatalf("incomplete mieru bridge config: %#v", mieru)
 	}
 	if stringFromAny(asMap(listeners[0])["proxy"]) != "p-51001" || intFromAny(asMap(listeners[0])["port"]) != 51001 {
-		t.Fatalf("vless listener = %#v", listeners[0])
+		t.Fatalf("mieru listener = %#v", listeners[0])
 	}
 }
 
 func TestSurgeMacPerNodeStartsOneExternalEach(t *testing.T) {
-	output, err := renderSubscriptionTargetWithOptions(subscriptionFormatFixtureNodes()[:1], model.SubscriptionFormatSurgeMac, SubscriptionRenderOptions{
+	output, err := renderSubscriptionTargetWithOptions(subscriptionFormatFixtureNodes()[5:6], model.SubscriptionFormatSurgeMac, SubscriptionRenderOptions{
 		SurgeMac: SurgeMacOptions{Mode: SurgeMacMihomoAuto, Merge: false, LocalPort: 62000},
 	})
 	if err != nil {
@@ -124,29 +125,29 @@ func TestSurgeMacPerNodeStartsOneExternalEach(t *testing.T) {
 	if strings.Count(output, "=external,") != 1 || strings.Contains(output, "Mihomo-Core=") || strings.Contains(output, "=socks5,127.0.0.1,") {
 		t.Fatalf("unexpected per-node output:\n%s", output)
 	}
-	if !strings.Contains(output, "VLESS IPv6=external,") || !strings.Contains(output, "local-port=62000") || !strings.Contains(output, "addresses=2001:db8::10") {
+	if !strings.Contains(output, "Mieru=external,") || !strings.Contains(output, "local-port=62000") || !strings.Contains(output, "addresses=2001:db8::20") {
 		t.Fatalf("missing per-node external:\n%s", output)
 	}
-	config := decodeSurgeMacExternalConfig(t, output, "VLESS IPv6")
+	config := decodeSurgeMacExternalConfig(t, output, "Mieru")
 	if intFromAny(config["mixed-port"]) != 62000 || stringFromAny(config["mode"]) != "global" {
 		t.Fatalf("per-node config = %#v", config)
 	}
 	proxies := anySlice(config["proxies"])
-	if len(proxies) != 1 || stringFromAny(asMap(proxies[0])["name"]) != "proxy" || stringFromAny(asMap(proxies[0])["type"]) != "vless" {
+	if len(proxies) != 1 || stringFromAny(asMap(proxies[0])["name"]) != "proxy" || stringFromAny(asMap(proxies[0])["type"]) != "mieru" {
 		t.Fatalf("per-node proxies = %#v", proxies)
 	}
 }
 
-func TestSurgeMacAlwaysUsesMihomoExceptUnsupportedNativeFallback(t *testing.T) {
-	nodes := []SubscriptionNode{subscriptionFormatFixtureNodes()[0], subscriptionFormatFixtureNodes()[7]}
+func TestSurgeMacAlwaysKeepsVLESSNative(t *testing.T) {
+	nodes := []SubscriptionNode{subscriptionFormatFixtureNodes()[0], subscriptionFormatFixtureNodes()[5], subscriptionFormatFixtureNodes()[7]}
 	output, err := renderSubscriptionTargetWithOptions(nodes, model.SubscriptionFormatSurgeMac, SubscriptionRenderOptions{
 		SurgeMac: SurgeMacOptions{Mode: SurgeMacMihomoAlways, Merge: true, LocalPort: 53000},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output, "VLESS IPv6=socks5,127.0.0.1,53001") {
-		t.Fatalf("always mode missing vless socks:\n%s", output)
+	if !strings.Contains(output, "VLESS IPv6=vless,") || strings.Contains(output, "VLESS IPv6=socks5,") || !strings.Contains(output, "Mieru=socks5,127.0.0.1,53001") {
+		t.Fatalf("always mode must keep vless native and bridge mieru:\n%s", output)
 	}
 	if !strings.Contains(output, "Snell v6=snell,") {
 		t.Fatalf("snell v6 should stay native because Mihomo cannot produce it:\n%s", output)
@@ -173,11 +174,35 @@ func TestSurgeMacOffMatchesNativeSurge(t *testing.T) {
 	}
 }
 
+func TestSurgeMacMieruUDPBridge(t *testing.T) {
+	node := subscriptionFormatFixtureNodes()[5]
+	node.Raw["transport"] = "UDP"
+	for _, merge := range []bool{false, true} {
+		output, err := renderSubscriptionTargetWithOptions([]SubscriptionNode{node}, model.SubscriptionFormatSurgeMac, SubscriptionRenderOptions{
+			SurgeMac: SurgeMacOptions{Mode: SurgeMacMihomoAuto, Merge: merge, LocalPort: 53000},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		helper := "Mieru"
+		if merge {
+			helper = "Mihomo-Core"
+		}
+		config := decodeSurgeMacExternalConfig(t, output, helper)
+		proxies := anySlice(config["proxies"])
+		if len(proxies) != 1 || asMap(proxies[0])["transport"] != "UDP" || asMap(proxies[0])["udp"] != true {
+			t.Fatalf("merge=%t lost mieru UDP transport: %#v", merge, config)
+		}
+		if strings.Contains(output, "tfo=true") {
+			t.Fatalf("mieru UDP advertised TCP fast open:\n%s", output)
+		}
+	}
+}
+
 func TestSurgeMacLeavesDomainServersWithoutAddresses(t *testing.T) {
-	node := SubscriptionNode{Name: "VLESS Domain", Group: "g", Raw: map[string]any{
-		"type": "vless", "server": "edge.example.com", "server_port": 443,
-		"uuid": "11111111-1111-4111-8111-111111111111",
-		"tls":  map[string]any{"enabled": true, "server_name": "edge.example.com"},
+	node := SubscriptionNode{Name: "Mieru Domain", Group: "g", Raw: map[string]any{
+		"type": "mieru", "server": "edge.example.com", "server_port": 25250,
+		"username": "test-user", "password": "test-password", "transport": "TCP",
 	}}
 	output, err := renderSubscriptionTargetWithOptions([]SubscriptionNode{node}, model.SubscriptionFormatSurgeMac, SubscriptionRenderOptions{
 		SurgeMac: SurgeMacOptions{Mode: SurgeMacMihomoAuto, Merge: false, LocalPort: 54000},
@@ -185,13 +210,13 @@ func TestSurgeMacLeavesDomainServersWithoutAddresses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(output, "addresses=") {
+	if !strings.Contains(output, "Mieru Domain=external,") || strings.Contains(output, "addresses=") {
 		t.Fatalf("domain node should not pin addresses:\n%s", output)
 	}
 }
 
 func TestSurgeMacPortOverflowIsAnError(t *testing.T) {
-	nodes := subscriptionFormatFixtureNodes()[:1]
+	nodes := subscriptionFormatFixtureNodes()[5:6]
 	_, err := renderSubscriptionTargetWithOptions(nodes, model.SubscriptionFormatSurgeMac, SubscriptionRenderOptions{
 		SurgeMac: SurgeMacOptions{Mode: SurgeMacMihomoAuto, Merge: true, LocalPort: 65535},
 	})
@@ -208,19 +233,19 @@ func TestSurgeMacPreviewKeepsMihomoBackedNodes(t *testing.T) {
 	if preview.FilteredCount != 0 || len(preview.Nodes) != 8 {
 		t.Fatalf("preview nodes=%d filtered=%d reasons=%v", len(preview.Nodes), preview.FilteredCount, preview.InvalidReasons)
 	}
-	if !strings.Contains(preview.Content, "VLESS IPv6=socks5,127.0.0.1,") || !strings.Contains(preview.Content, "Mihomo-Core=external,") {
+	if !strings.Contains(preview.Content, "VLESS IPv6=vless,") || !strings.Contains(preview.Content, "Mieru=socks5,127.0.0.1,") || !strings.Contains(preview.Content, "Mihomo-Core=external,") {
 		t.Fatalf("preview content missing Mihomo adapter:\n%s", preview.Content)
 	}
 }
 
 func TestSurgeMacStableJSONDoesNotChangeBetweenEncodes(t *testing.T) {
-	first, err := renderSubscriptionTargetWithOptions(subscriptionFormatFixtureNodes()[:1], model.SubscriptionFormatSurgeMac, SubscriptionRenderOptions{
+	first, err := renderSubscriptionTargetWithOptions(subscriptionFormatFixtureNodes()[5:6], model.SubscriptionFormatSurgeMac, SubscriptionRenderOptions{
 		SurgeMac: SurgeMacOptions{Mode: SurgeMacMihomoAuto, Merge: false, LocalPort: 60000, PortScopeKey: "stable"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := renderSubscriptionTargetWithOptions(subscriptionFormatFixtureNodes()[:1], model.SubscriptionFormatSurgeMac, SubscriptionRenderOptions{
+	second, err := renderSubscriptionTargetWithOptions(subscriptionFormatFixtureNodes()[5:6], model.SubscriptionFormatSurgeMac, SubscriptionRenderOptions{
 		SurgeMac: SurgeMacOptions{Mode: SurgeMacMihomoAuto, Merge: false, LocalPort: 60000, PortScopeKey: "stable"},
 	})
 	if err != nil {

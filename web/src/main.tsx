@@ -18896,7 +18896,7 @@ function applySubscriptionFormatParams(params: URLSearchParams, format: Subscrip
 function SurgeMacUnsupportedOption({ checked, onChange }: { checked: boolean; onChange: (checked: boolean) => void }) {
   return <div className="sub-format-option">
     <div>
-      <div className="sub-format-option-title"><strong>包含未支持协议</strong><FieldHelp label="包含未支持协议" placement="bottom" hint={<span>Surge Mac 原生不支持的协议（如 VLESS、Mieru）通过 Mihomo Bridge 转交本机 Mihomo 核心承载。开启前请把 Mihomo 核心放到 <code>{surgeMacMihomoExecPath}</code>，并执行 <code>chmod +x {surgeMacMihomoExecPath}</code> 赋予可执行权限。关闭后订阅只输出 Surge 原生支持的节点。</span>} /></div>
+      <div className="sub-format-option-title"><strong>包含未支持协议</strong><FieldHelp label="包含未支持协议" placement="bottom" hint={<span>Surge Mac 原生不支持的协议（如 Mieru）通过 Mihomo Bridge 转交本机 Mihomo 核心承载。开启前请把 Mihomo 核心放到 <code>{surgeMacMihomoExecPath}</code>，并执行 <code>chmod +x {surgeMacMihomoExecPath}</code> 赋予可执行权限。关闭后订阅只输出 Surge 原生支持的节点。VLESS 始终原生输出，需要 Surge Mac 6.12.0 或 iOS 6.0.0 及以上版本。</span>} /></div>
       <span>{checked ? <>未支持协议经 Mihomo Bridge 调用 <code>{surgeMacMihomoExecPath}</code></> : '仅输出 Surge 原生支持的节点'}</span>
     </div>
     <Switch checked={checked} onChange={onChange} ariaLabel="包含未支持协议" />

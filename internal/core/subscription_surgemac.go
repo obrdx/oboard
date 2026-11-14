@@ -48,10 +48,10 @@ type SurgeMacOptions struct {
 // SubscriptionRenderOptions carries target-specific render knobs that do not
 // change the authorized node set.
 type SubscriptionRenderOptions struct {
-	SurgeMac       SurgeMacOptions
-	Template       string
-	TemplateDigest string
-	UserAgent      string
+	SurgeMac        SurgeMacOptions
+	Template        string
+	TemplateDigest  string
+	UserAgent       string
 	RequestedFormat model.SubscriptionFormat
 }
 
@@ -189,6 +189,9 @@ func surgeNativeSupports(proxy subscriptionProxy) bool {
 func surgeMacRoute(proxy subscriptionProxy, opts SurgeMacOptions) (native bool, viaMihomo bool) {
 	opts = withNormalizedSurgeMacOptions(opts)
 	nativeOK := surgeNativeSupports(proxy)
+	if proxy.Type == "vless" {
+		return nativeOK, false
+	}
 	mihomoOK := subscriptionTargetSupports(model.SubscriptionFormatMihomo, proxy)
 	switch opts.Mode {
 	case SurgeMacMihomoOff:

@@ -11,9 +11,9 @@ import (
 type SubscriptionRoute string
 
 const (
-	SubscriptionRouteNative        SubscriptionRoute = "native"
-	SubscriptionRouteMihomoBridge  SubscriptionRoute = "mihomo_bridge"
-	SubscriptionRouteUnsupported   SubscriptionRoute = "unsupported"
+	SubscriptionRouteNative       SubscriptionRoute = "native"
+	SubscriptionRouteMihomoBridge SubscriptionRoute = "mihomo_bridge"
+	SubscriptionRouteUnsupported  SubscriptionRoute = "unsupported"
 )
 
 // SubscriptionCapability is the single capability matrix consumed by filtering,
@@ -219,7 +219,7 @@ func snellFormatSupports(format model.SubscriptionFormat, proxy subscriptionProx
 func surgeStyleSupports(format model.SubscriptionFormat, proxy subscriptionProxy) bool {
 	switch proxy.Type {
 	case "vless":
-		return false
+		return format != model.SubscriptionFormatSurfboard && surgeVLESSSupports(proxy)
 	case "anytls":
 		return (proxy.Network == "" || proxy.Network == "tcp") && proxy.TLS.RealityPublicKey == ""
 	case "ss":
@@ -236,6 +236,34 @@ func surgeStyleSupports(format model.SubscriptionFormat, proxy subscriptionProxy
 		return true
 	case "ssh":
 		return format == model.SubscriptionFormatSurge || format == model.SubscriptionFormatSurgeMac
+	default:
+		return false
+	}
+}
+
+func surgeVLESSSupports(proxy subscriptionProxy) bool {
+	if proxy.Flow != "" && proxy.Flow != "xtls-rprx-vision" && proxy.Flow != "xtls-rprx-vision-udp443" {
+		return false
+	}
+	secure := proxy.TLS.Enabled || proxy.TLS.RealityPublicKey != ""
+	encrypted := proxy.Encryption != "" && proxy.Encryption != "none"
+	if proxy.Flow != "" {
+		if proxy.Network == "grpc" {
+			return false
+		}
+		if !encrypted && (!secure || (proxy.Network != "" && proxy.Network != "tcp" && proxy.Network != "raw")) {
+			return false
+		}
+	}
+	switch proxy.Network {
+	case "", "tcp", "raw":
+		return true
+	case "xhttp":
+		return proxy.Transport.Mode == "" || stringSetContains([]string{"auto", "packet-up", "stream-up", "stream-one"}, proxy.Transport.Mode)
+	case "ws", "httpupgrade":
+		return proxy.TLS.RealityPublicKey == ""
+	case "grpc":
+		return secure && (proxy.Transport.Mode == "" || proxy.Transport.Mode == "gun" || proxy.Transport.Mode == "multi")
 	default:
 		return false
 	}
