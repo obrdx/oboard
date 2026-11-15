@@ -8842,6 +8842,9 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
   const [activeView, setActiveView] = useState<'load' | 'latency'>(initialView)
   const [loadWindowHours, setLoadWindowHours] = useState(1)
   const [windowKey, setWindowKey] = useState<ConnectivityWindowKey>('24h')
+  const [historyFallbackNotice, setHistoryFallbackNotice] = useState('')
+  const connectivityFallbackOrigin = useRef<ConnectivityWindowKey | null>(null)
+  const connectivityFallbackAttempted = useRef<ConnectivityWindowKey | null>(null)
   const connectivity = useServerMonitorQuery<LatencyChartResponse>(client, latencyChartRequestPath(server.id, windowKey), activeView === 'latency')
   const resources = useServerMonitorQuery<ServerResourceMetricsResponse>(client, `/servers/${server.id}/resource-metrics?hours=${loadWindowHours}`, activeView === 'load')
   const { response, loading } = connectivity
@@ -8894,6 +8897,41 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
   const windowLabels: Record<ConnectivityWindowKey, string> = { '1h': '1 小时', '6h': '6 小时', '12h': '12 小时', '24h': '1 天', '7d': '7 天', '30d': '30 天' }
   const retentionDays = Math.max(1, Number(response?.retention_days || resourceResponse?.retention_days) || 7)
   const latencyWindowOptions = (['1h', '6h', '12h', '24h', '7d', '30d'] as ConnectivityWindowKey[]).filter(key => windowHoursMap[key] <= retentionDays * 24)
+  const historyCoverageError = String((connectivity.error as any)?.code || '') === 'history_catching_up'
+  const currentLatencyWindowIndex = latencyWindowOptions.indexOf(windowKey)
+  const adjustLatencyWindow = (nextKey: ConnectivityWindowKey) => {
+    connectivityFallbackOrigin.current = null
+    connectivityFallbackAttempted.current = null
+    setHistoryFallbackNotice('')
+    setWindowKey(nextKey)
+  }
+  const handleLatencyWindowChange = (nextKey: ConnectivityWindowKey) => {
+    if (nextKey === windowKey) {
+      connectivity.refresh()
+      return
+    }
+    adjustLatencyWindow(nextKey)
+  }
+  const focusLatencyWindow = () => {
+    window.requestAnimationFrame(() => document.getElementById(`server-latency-window-${windowKey}`)?.focus())
+  }
+  useEffect(() => {
+    if (activeView !== 'latency' || !historyCoverageError) return
+    const currentIndex = latencyWindowOptions.indexOf(windowKey)
+    if (currentIndex <= 0 || connectivityFallbackAttempted.current === windowKey) return
+    connectivityFallbackAttempted.current = windowKey
+    if (!connectivityFallbackOrigin.current) connectivityFallbackOrigin.current = windowKey
+    const nextKey = latencyWindowOptions[currentIndex - 1]
+    setHistoryFallbackNotice(`历史汇总尚未覆盖 ${windowLabels[windowKey]}，正在尝试 ${windowLabels[nextKey]}…`)
+    setWindowKey(nextKey)
+  }, [activeView, historyCoverageError, latencyWindowOptions, windowKey])
+  useEffect(() => {
+    if (!response || connectivity.error || !connectivityFallbackOrigin.current || connectivityFallbackOrigin.current === windowKey) return
+    const origin = connectivityFallbackOrigin.current
+    connectivityFallbackOrigin.current = null
+    connectivityFallbackAttempted.current = null
+    setHistoryFallbackNotice(`历史汇总尚未覆盖 ${windowLabels[origin]}，已显示可获取的最远范围：${windowLabels[windowKey]}。如需调整，可直接选择其他时间范围。`)
+  }, [connectivity.error, response, windowKey])
   const [viewDirection, setViewDirection] = useState<'forward' | 'back'>('forward')
   const changeMonitorView = (view: 'load' | 'latency') => {
     if (view === activeView) return
@@ -8912,7 +8950,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
   const selectLatencyWindow = (index: number) => {
     const key = latencyWindowOptions[index]
     if (!key) return
-    setWindowKey(key)
+    handleLatencyWindowChange(key)
     window.requestAnimationFrame(() => document.getElementById(`server-latency-window-${key}`)?.focus())
   }
   const handleLatencyWindowKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -8970,17 +9008,18 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
       {activeView === 'load' ? <ServerLoadPanel server={server} response={resourceResponse} loading={resourceLoading} error={resourceError} windowHours={loadWindowHours} onWindowChange={setLoadWindowHours} onRetry={() => resources.refresh()} /> : <div className="server-monitor-panel" role="tabpanel" id="server-monitor-latency-panel" aria-labelledby="server-monitor-latency-tab">
         {connectivity.retrying && response ? <div className="monitor-note" role="status">主控繁忙，保留当前图表，稍后自动重试一次。</div> : null}
         {loadError && response ? <div className="monitor-note is-danger" role="alert">更新失败，当前显示上次读取的图表：{loadError}</div> : null}
+        {historyFallbackNotice ? <div className="monitor-note is-warning" role="status"><AlertTriangle size={13} aria-hidden="true" /><span>{historyFallbackNotice}</span>{response ? <button type="button" className="ghost monitor-note-action" onClick={focusLatencyWindow}>调整范围</button> : null}</div> : null}
         {probeError ? <div className="monitor-note is-danger" role="alert"><AlertTriangle size={13} aria-hidden="true" /><span>{probeError}</span></div> : null}
         {!response ? <div className="lp-bar"><span /><div className="lp-bar-actions">{probeButton}</div></div> : null}
         {loading && !response ? <div className="monitor-empty" aria-live="polite"><Loader2 size={18} className="spin" /><strong>{connectivity.retrying ? '主控繁忙，正在等待自动重试一次…' : '正在加载拨测数据'}</strong></div>
-          : loadError && !response ? <div className="monitor-empty" role="alert"><AlertTriangle size={18} /><strong>无法加载拨测数据</strong><span>{loadError}</span><button type="button" className="ghost" onClick={() => connectivity.refresh()}>重试</button></div>
+          : loadError && !response ? <div className="monitor-empty" role="alert"><AlertTriangle size={18} /><strong>{historyCoverageError ? '历史汇总尚未覆盖此范围' : '无法加载拨测数据'}</strong><span>{historyCoverageError ? '已尝试缩短范围；请选择一个更短的时间范围，或稍后刷新重试。' : loadError}</span><div className="monitor-empty-actions">{latencyWindowOptions.map(key => <button key={key} type="button" className={windowKey === key ? undefined : 'ghost'} onClick={() => adjustLatencyWindow(key)}>{key}</button>)}<button type="button" className="ghost" onClick={() => connectivity.refresh()}>重试</button></div></div>
           : response ? <LatencyDashboard
             response={response}
             windowKey={windowKey}
             windowHours={currentWindowHours}
             windowLabels={windowLabels}
             latencyWindowOptions={latencyWindowOptions}
-            onWindowChange={setWindowKey}
+            onWindowChange={handleLatencyWindowChange}
             onWindowKeyDown={handleLatencyWindowKeyDown}
             publicMode={server.latency_probe_mode}
             serverID={server.id}

@@ -147,6 +147,8 @@
 }
 
 .monitor-note.is-danger { border-color: color-mix(in srgb, #ef4444 35%, var(--border-color)); color: var(--color-danger); }
+.monitor-note.is-warning { border-color: color-mix(in srgb, #d97706 35%, var(--border-color)); color: var(--text-secondary); }
+.monitor-note-action { margin-left: auto; flex: 0 0 auto; min-height: 28px; padding: 0 9px; }
 
 .monitor-empty {
   display: flex;
@@ -160,6 +162,9 @@
 }
 
 .monitor-empty strong { color: var(--text-primary); }
+.monitor-empty > span { max-width: 520px; line-height: 1.6; }
+.monitor-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 4px; }
+.monitor-empty-actions button { min-width: 52px; }
 
 .monitor-probe-button { gap: 6px; white-space: nowrap; }
 
@@ -432,6 +437,8 @@
   .monitor-tabs { grid-area: tabs; }
   .monitor-head-actions { grid-area: actions; }
   .monitor-dialog .monitor-body { padding: 12px 12px 20px; }
+  .monitor-note { align-items: flex-start; flex-wrap: wrap; }
+  .monitor-note-action { margin-left: 0; }
   .lp-bar-actions { flex: 1 1 100%; flex-wrap: wrap; margin-left: 0; }
   .lp-segmented { flex: 1; }
   .lp-segmented button { flex: 1; min-width: 0; padding: 0 4px; }
