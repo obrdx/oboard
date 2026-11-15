@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"log"
 	"sync"
 	"time"
 
@@ -55,6 +56,9 @@ func (s *Server) registerAgentLive(serverID int64, ch chan any) {
 		s.agentLive = map[int64][]chan any{}
 	}
 	s.agentLive[serverID] = append(s.agentLive[serverID], ch)
+	if n := len(s.agentLive[serverID]); n > 1 {
+		log.Printf("agent duplicate control session server=%d sessions=%d", serverID, n)
+	}
 }
 
 func (s *Server) unregisterAgentLive(serverID int64, ch chan any) {

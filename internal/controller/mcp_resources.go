@@ -1133,7 +1133,24 @@ func mcpServerHealthPayload(payload any) map[string]any {
 		LastSeenAt         any      `json:"last_seen_at"`
 	}
 	_ = json.Unmarshal(encoded, &item)
-	return map[string]any{"server_id": item.ID, "status": item.Status, "agent_connected": item.AgentConnected, "agent_version": item.AgentVersion, "agent_build": item.AgentBuild, "kernel_version": item.KernelVersion, "kernel_capabilities": item.KernelCapabilities, "tcp_fastopen_state": item.TCPFastOpenState, "tcp_fastopen_value": item.TCPFastOpenValue, "last_seen_at": item.LastSeenAt}
+	health := map[string]any{}
+	var wrapped struct {
+		AgentHealth *model.AgentHealth `json:"agent_health"`
+	}
+	_ = json.Unmarshal(encoded, &wrapped)
+	if wrapped.AgentHealth != nil {
+		health = map[string]any{
+			"heartbeat_online": wrapped.AgentHealth.HeartbeatOnline, "task_channel_available": wrapped.AgentHealth.TaskChannelAvailable,
+			"config_applied": wrapped.AgentHealth.ConfigApplied, "dispatch": wrapped.AgentHealth.Dispatch,
+			"auth_code": wrapped.AgentHealth.AuthCode, "auth_reason": wrapped.AgentHealth.AuthReason,
+		}
+		item.AgentConnected = wrapped.AgentHealth.TaskChannelAvailable
+	}
+	out := map[string]any{"server_id": item.ID, "status": item.Status, "agent_connected": item.AgentConnected, "agent_version": item.AgentVersion, "agent_build": item.AgentBuild, "kernel_version": item.KernelVersion, "kernel_capabilities": item.KernelCapabilities, "tcp_fastopen_state": item.TCPFastOpenState, "tcp_fastopen_value": item.TCPFastOpenValue, "last_seen_at": item.LastSeenAt}
+	for key, value := range health {
+		out[key] = value
+	}
+	return out
 }
 
 func mcpTemplateID(uri, prefix string, suffixes ...string) (string, error) {

@@ -1083,7 +1083,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
         if (nodeSaveStatus === 'saving' || orderBusy || orderingBusy) return
         if (membershipChanged || nodeSaveStatus === 'error' || orderingDirty) { setDiscardDetailOpen(true); return }
         closeDetail()
-      }} title={plan ? `方案详情：${plan.name}` : '方案详情'} status={plan && <><Badge variant={plan.enabled ? 'success' : 'secondary'}>{plan.enabled ? '启用' : '已停用'}</Badge>{failedPendingChange ? <Badge variant="destructive">应用失败</Badge> : applying ? <Badge variant="warning">正在应用</Badge> : null}</>}>
+      }} title={plan ? `方案详情：${plan.name}` : '方案详情'} status={plan && <><Badge variant={plan.enabled ? 'success' : 'secondary'}>{plan.enabled ? '启用' : '已停用'}</Badge>{detail?.plan_phase?.phase === 'blocked' ? <Badge variant="destructive">已阻塞</Badge> : detail?.plan_phase?.phase === 'draft' ? <Badge variant="secondary">草稿</Badge> : detail?.plan_phase?.phase === 'published' ? <Badge variant="success">已发布</Badge> : failedPendingChange ? <Badge variant="destructive">应用失败</Badge> : applying ? <Badge variant="warning">正在应用</Badge> : null}</>}>
         <div className="signal-plan-detail-body">
           {detailError && <p style={{ color: 'var(--color-danger)', margin: 0 }}>{detailError}</p>}
           {message && <p role="status" style={{ color: 'var(--text-strong)', margin: 0 }}>{message}</p>}
@@ -1119,7 +1119,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                   </div>
                 </div>
                 <div className="signal-plan-overview-version">
-                  <span>{plan.current_revision_id === plan.latest_revision_id ? '当前已生效' : applying ? '正在应用最新保存版本' : '最新保存版本尚未生效'}</span>
+                  <span>{detail?.plan_phase?.detail || (plan.current_revision_id === plan.latest_revision_id ? '当前已生效' : applying ? '正在应用最新保存版本' : '最新保存版本尚未生效')}</span>
                   <time dateTime={latestVersionCreatedAt}>{formatPlanVersion(latestVersionCreatedAt)}</time>
                   {plan.current_revision_id !== plan.latest_revision_id && <small>当前生效：{formatPlanVersion((detail.revisions || []).find((r: Revision) => r.id === plan.current_revision_id)?.created_at)}</small>}
                 </div>

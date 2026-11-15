@@ -257,6 +257,13 @@ func TestConnectivityOfflineEventUsesEffectiveThreshold(t *testing.T) {
 			if got, want := parseTime(effective), lastSeen.Add(test.wantAfter); !got.Equal(want) {
 				t.Fatalf("offline effective_at = %s, want %s (poll was %s)", got, want, pollAt)
 			}
+			var storedSeen string
+			if err := db.db.QueryRowContext(ctx, `select last_seen_at from servers where id=?`, server.ID).Scan(&storedSeen); err != nil {
+				t.Fatal(err)
+			}
+			if got := parseTime(storedSeen); !got.Equal(lastSeen) {
+				t.Fatalf("offline sweep rewrote last_seen_at to %s, want the last heartbeat %s", got, lastSeen)
+			}
 		})
 	}
 }

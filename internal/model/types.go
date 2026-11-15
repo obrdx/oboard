@@ -944,6 +944,7 @@ type AccessChange struct {
 	ActivatedAt  *time.Time           `json:"activated_at,omitempty"`
 	FinalizedAt  *time.Time           `json:"finalized_at,omitempty"`
 	FailedAt     *time.Time           `json:"failed_at,omitempty"`
+	UpdatedAt    time.Time            `json:"updated_at,omitempty"`
 	Targets      []AccessChangeTarget `json:"targets,omitempty"`
 }
 
@@ -1132,6 +1133,25 @@ type Server struct {
 
 	MonitoringTargetTaskID int64                    `json:"monitoring_target_task_id"`
 	MonitoringDisplay      *ServerMonitoringDisplay `json:"monitoring_display,omitempty"`
+	// AgentHealth is derived at read time from the shared presence view. It is
+	// not stored. Heartbeat, task channel and applied configuration are
+	// separate so a live socket cannot be shown as a fresh heartbeat.
+	AgentHealth *AgentHealth `json:"agent_health,omitempty"`
+}
+
+// AgentHealth is the one presence reading used by the panel, API and dispatcher.
+type AgentHealth struct {
+	HeartbeatOnline      bool      `json:"heartbeat_online"`
+	HeartbeatAt          time.Time `json:"heartbeat_at,omitempty"`
+	TaskChannelAvailable bool      `json:"task_channel_available"`
+	ConfigApplied        bool      `json:"config_applied"`
+	AppliedConfigVersion int64     `json:"applied_config_version,omitempty"`
+	WantedConfigVersion  int64     `json:"wanted_config_version,omitempty"`
+	Dispatch             string    `json:"dispatch"`
+	AuthCode             string    `json:"auth_code,omitempty"`
+	AuthReason           string    `json:"auth_reason,omitempty"`
+	DuplicateSession     bool      `json:"duplicate_session,omitempty"`
+	ObservedAt           time.Time `json:"observed_at"`
 }
 
 type Inbound struct {
@@ -1668,6 +1688,36 @@ type ProxyPathPlan struct {
 	RuntimeNodes []ProxyPathRuntimeNode `json:"runtime_nodes"`
 	PortForwards []PortForward          `json:"port_forwards,omitempty"`
 	Tunnels      []Tunnel               `json:"tunnels,omitempty"`
+	Readiness    *PathReadiness         `json:"readiness,omitempty"`
+}
+
+// PathReadiness is the path diagnostic. Ready is true only after the entry
+// configuration, every hop handshake, a full-path probe and current-plan
+// membership have all passed.
+type PathReadiness struct {
+	Ready                 bool             `json:"ready"`
+	Reason                string           `json:"reason,omitempty"`
+	CorrelationID         string           `json:"correlation_id,omitempty"`
+	IncludedInCurrentPlan bool             `json:"included_in_current_plan"`
+	ChainProbe            string           `json:"chain_probe"`
+	Hops                  []PathHopReading `json:"hops"`
+}
+
+// PathHopReading is one hop on the path diagnostic.
+type PathHopReading struct {
+	Position             int    `json:"position"`
+	ServerID             int64  `json:"server_id,omitempty"`
+	ServerName           string `json:"server_name,omitempty"`
+	HeartbeatOnline      bool   `json:"heartbeat_online"`
+	TaskChannelAvailable bool   `json:"task_channel_available"`
+	ConfigApplied        bool   `json:"config_applied"`
+	AppliedConfigVersion int64  `json:"applied_config_version,omitempty"`
+	WantedConfigVersion  int64  `json:"wanted_config_version,omitempty"`
+	TaskID               int64  `json:"task_id,omitempty"`
+	LastError            string `json:"last_error,omitempty"`
+	HandshakeOK          bool   `json:"handshake_ok"`
+	ProbeOK              bool   `json:"probe_ok"`
+	ProbeScope           string `json:"probe_scope,omitempty"`
 }
 
 // ProxyPathPortAllocation records the port one generated proxy-path listener

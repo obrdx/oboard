@@ -313,3 +313,61 @@ func TestSupersedingAQueuedDeploymentReopensItsSync(t *testing.T) {
 		t.Fatalf("another server's sync changed: %#v err=%v", untouched, err)
 	}
 }
+
+func TestDeferConfigurationSyncKeepsTheWantedRevision(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "offline-node", Status: model.ServerOffline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.MarkConfigurationSyncPending(ctx, 8, []int64{server.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := db.ClaimConfigurationSync(ctx, server.ID, 8); err != nil || !claimed {
+		t.Fatalf("claim = %v err=%v", claimed, err)
+	}
+	retryAt := time.Now().UTC().Add(time.Minute)
+	if err := db.DeferConfigurationSync(ctx, server.ID, 8, retryAt, ConfigurationSyncTriggerBlockedOffline, "心跳未更新"); err != nil {
+		t.Fatal(err)
+	}
+	state, err := db.ConfigurationSyncState(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.State != "pending" || state.WantedRevision != 8 || state.RetryCount != 1 || state.TriggerReason != ConfigurationSyncTriggerBlockedOffline {
+		t.Fatalf("deferred sync = %#v", state)
+	}
+	if state.NextRetryAt == nil || state.NextRetryAt.Before(time.Now()) {
+		t.Fatalf("next retry = %v", state.NextRetryAt)
+	}
+	due, err := db.ListConfigurationSyncStates(ctx, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range due {
+		if item.ServerID == server.ID {
+			t.Fatal("a deferred server was prepared before its backoff")
+		}
+	}
+	if err := db.ReleaseOfflineConfigurationHold(ctx, server.ID); err != nil {
+		t.Fatal(err)
+	}
+	due, err = db.ListConfigurationSyncStates(ctx, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range due {
+		if item.ServerID == server.ID && item.WantedRevision == 8 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("releasing the hold did not return the same wanted revision")
+	}
+}

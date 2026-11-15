@@ -94,6 +94,17 @@ export type Server = {
   tcp_fastopen_state?: '' | 'unavailable' | 'disabled' | 'client' | 'server' | 'client_server'
   tcp_fastopen_value?: number
   agent_connected?: boolean
+  agent_health?: {
+    heartbeat_online: boolean
+    heartbeat_at?: string
+    task_channel_available: boolean
+    config_applied: boolean
+    dispatch: string
+    auth_code?: string
+    auth_reason?: string
+    duplicate_session?: boolean
+    observed_at?: string
+  }
   monitoring_mode: 'lightweight' | 'standard'
   resource_history_enabled: boolean
   traffic_reset_mode: string

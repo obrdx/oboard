@@ -403,9 +403,21 @@ func (s *Server) publishRealtime(resources ...string) {
 }
 
 func (s *Server) publishServerPatch(result store.HealthApplyResult) {
-	if s.realtime != nil {
-		s.realtime.publishServerPatch(healthRealtimePatch(result))
+	if s.realtime == nil {
+		return
 	}
+	patch := healthRealtimePatch(result)
+	if !result.Coalesced && result.Curr.ServerID > 0 {
+		server := &model.Server{ID: result.Curr.ServerID, LastSeenAt: result.Curr.LastSeenAt, Status: result.Curr.Status}
+		if patch.Fields == nil {
+			patch.Fields = map[string]any{}
+		}
+		patch.Fields["agent_health"] = s.agentHealthView(context.Background(), server, nil)
+		if result.Curr.LastSeenAt != nil {
+			patch.Fields["last_seen_at"] = result.Curr.LastSeenAt
+		}
+	}
+	s.realtime.publishServerPatch(patch)
 }
 
 func healthRealtimePatch(result store.HealthApplyResult) realtimeServerPatch {

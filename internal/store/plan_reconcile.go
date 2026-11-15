@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -147,6 +148,62 @@ func (s *Store) SetPlanReconcileWaiting(ctx context.Context, planID int64, reaso
 	return err
 }
 
+// FailStalePreparingPlanChange closes a prepare that has stopped moving.
+// The published current revision is not changed and revision nodes are left
+// in place. The returned revision is the candidate that was blocked.
+func (s *Store) FailStalePreparingPlanChange(ctx context.Context, planID int64, olderThan time.Time, reason string) (int64, bool, error) {
+	if planID <= 0 {
+		return 0, false, nil
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "应用超过 15 分钟没有进展"
+	}
+	now := now()
+	var revisionID int64
+	err := s.db.QueryRowContext(ctx, `update access_changes set status='failed', error=?, failed_at=?, updated_at=?
+		where id=(select id from access_changes where source_plan_id=? and status='preparing' and activated_at is null and updated_at < ? order by id desc limit 1)
+		returning candidate_revision_id`, reason, now, now, planID, olderThan.UTC().Format(time.RFC3339Nano)).Scan(&revisionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	if err := s.SetPlanReconcileBlocked(ctx, planID, revisionID, reason); err != nil {
+		return revisionID, true, err
+	}
+	return revisionID, true, nil
+}
+
+// SetPlanReconcileBlocked records a revision that did not publish. current
+// stays where it is; a newer latest revision is what unblocks the next attempt.
+func (s *Store) SetPlanReconcileBlocked(ctx context.Context, planID, revisionID int64, reason string) error {
+	ts := now()
+	var revision any
+	if revisionID > 0 {
+		revision = revisionID
+	}
+	_, err := s.db.ExecContext(ctx, `insert into subscription_plan_reconcile_states(plan_id,applying_revision_id,status,last_access_change_id,blocked_reason,blocked_json,attempt_count,created_at,updated_at) values(?,?,'blocked',null,?,'{}',1,?,?)
+		on conflict(plan_id) do update set applying_revision_id=excluded.applying_revision_id, status='blocked', blocked_reason=excluded.blocked_reason, updated_at=excluded.updated_at`,
+		planID, revision, reason, ts, ts)
+	return err
+}
+
+// ProxyPathInCurrentPlan reports whether any plan's published revision lists
+// this path. A draft or pending revision does not count.
+func (s *Store) ProxyPathInCurrentPlan(ctx context.Context, pathID int64) (bool, error) {
+	if pathID <= 0 {
+		return false, nil
+	}
+	var found int
+	err := s.db.QueryRowContext(ctx, `select exists(
+		select 1 from subscription_plan_revision_nodes n
+		join subscription_plans p on p.current_revision_id=n.revision_id
+		where n.node_type=? and n.node_id=?)`, string(model.AssignableNodeProxyPath), pathID).Scan(&found)
+	return found == 1, err
+}
+
 func (s *Store) SetPlanReconcileFailed(ctx context.Context, planID int64, reason string) error {
 	now := now()
 	_, err := s.db.ExecContext(ctx, `insert into subscription_plan_reconcile_states(plan_id,applying_revision_id,status,last_access_change_id,blocked_reason,blocked_json,attempt_count,created_at,updated_at) values(?,null,'failed',null,?,'{}',1,?,?)
@@ -217,6 +274,9 @@ func scanAccessChange(row *sql.Row) (*model.AccessChange, error) {
 	if failedAt.Valid && failedAt.String != "" {
 		t := parseTime(failedAt.String)
 		c.FailedAt = &t
+	}
+	if updatedAt.Valid && updatedAt.String != "" {
+		c.UpdatedAt = parseTime(updatedAt.String)
 	}
 	return &c, nil
 }

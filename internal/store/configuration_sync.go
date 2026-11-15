@@ -27,6 +27,10 @@ const (
 	// because it already holds a newer configuration. Planning restarts from the
 	// projection rather than from the outcome of that obsolete task.
 	ConfigurationSyncTriggerSuperseded = "superseded"
+	// ConfigurationSyncTriggerBlockedOffline means the dispatcher refused to
+	// queue because the shared presence view was not ready. The wanted
+	// revision stays put and is sent once, after backoff, when presence recovers.
+	ConfigurationSyncTriggerBlockedOffline = "blocked_offline"
 	// ConfigurationSyncMaxPreparationRetries bounds automatic retries of
 	// prepare-time failures that never queued an Agent task. A task that
 	// already ran and failed stays failed until the operator retries or the
@@ -435,6 +439,34 @@ func (s *Store) ListAllConfigurationSyncStates(ctx context.Context) ([]Configura
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+// DeferConfigurationSync puts a claimed sync back to pending without creating
+// an Agent task. A newer wanted revision already stored on the row is kept.
+// retry_count advances so the next wait grows.
+func (s *Store) DeferConfigurationSync(ctx context.Context, serverID int64, revision uint64, retryAt time.Time, trigger, reason string) error {
+	if serverID <= 0 || revision == 0 {
+		return fmt.Errorf("server id and configuration revision must be positive")
+	}
+	if trigger == "" {
+		trigger = ConfigurationSyncTriggerBlockedOffline
+	}
+	reason = strings.TrimSpace(reason)
+	if len(reason) > 2000 {
+		reason = reason[:2000]
+	}
+	_, err := s.db.ExecContext(ctx, `update configuration_sync_states set state='pending', trigger_reason=?, retry_count=retry_count+1, next_retry_at=?, last_error=?, updated_at=? where server_id=? and wanted_revision=? and state in ('pending','preparing')`, trigger, retryAt.UTC().Format(time.RFC3339Nano), reason, time.Now().UTC().Format(time.RFC3339Nano), serverID, revision)
+	return err
+}
+
+// ReleaseOfflineConfigurationHold lets a server whose heartbeat just resumed
+// be prepared on the next reconcile instead of waiting out the offline backoff.
+func (s *Store) ReleaseOfflineConfigurationHold(ctx context.Context, serverID int64) error {
+	if serverID <= 0 {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `update configuration_sync_states set next_retry_at=null, updated_at=? where server_id=? and state='pending' and trigger_reason=?`, time.Now().UTC().Format(time.RFC3339Nano), serverID, ConfigurationSyncTriggerBlockedOffline)
+	return err
 }
 
 func (s *Store) ConfigurationSyncState(ctx context.Context, serverID int64) (ConfigurationSyncState, error) {

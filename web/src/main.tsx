@@ -486,7 +486,7 @@ type PortForwardProbeResult = { id: number; port_forward_id: number; server_id: 
 type TunnelType = 'wireguard' | 'ssh'
 type Tunnel = { id: number; name: string; source_server_id: number; target_server_id: number; type: TunnelType; local_address: string; peer_address: string; listen_port: number; target_endpoint: string; target_port: number; priority: number; config_json: string; enabled: boolean }
 type ProxyPathRuntimeNode = { resource_key: string; step_id: number; kind: string; name: string; server_id: number; protocol: Protocol; profile?: string; listen_ip: string; port: number; network: ForwardProtocol; listen_scope: 'public' | 'loopback'; shared: boolean; reference_count: number }
-type ProxyPathPlan = { path_id: number; name: string; inbound_id: number; enabled: boolean; warnings?: string[]; runtime_nodes?: ProxyPathRuntimeNode[]; port_forwards?: PortForward[]; tunnels?: Tunnel[] }
+type ProxyPathPlan = { path_id: number; name: string; inbound_id: number; enabled: boolean; warnings?: string[]; runtime_nodes?: ProxyPathRuntimeNode[]; port_forwards?: PortForward[]; tunnels?: Tunnel[]; readiness?: { ready: boolean; reason?: string; correlation_id?: string; included_in_current_plan: boolean; chain_probe: string; hops?: Array<{ position: number; server_id?: number; server_name?: string; heartbeat_online: boolean; task_channel_available: boolean; config_applied: boolean; applied_config_version?: number; wanted_config_version?: number; task_id?: number; last_error?: string; handshake_ok: boolean; probe_ok: boolean }> } }
 type NotificationTemplate = { title: string; body: string }
 type NotificationEventDefinition = { value: string; label: string; description: string; variables: string[] }
 type NotificationChannel = { id: number; owner_user_id: number; owner_username?: string; name: string; type: 'telegram' | 'bark' | 'test'; enabled: boolean; events: string; config_json: string; templates_json: string; user_ids: number[] }
@@ -15085,10 +15085,24 @@ function RelatedPathsInspector({ data, client, target, onLocate }: {
 
 function ProxyPathRuntimeDetails({ plan, data }: { plan: ProxyPathPlan; data: any }) {
   const nodes = plan.runtime_nodes || []
+  const readiness = plan.readiness
   const forwards = plan.port_forwards || []
   const tunnels = plan.tunnels || []
   const hasResources = nodes.length > 0 || forwards.length > 0 || tunnels.length > 0
   return <div className="runtime-resource-view">
+    {readiness && <div className="runtime-resource-section">
+      <h4>{readiness.ready ? '路径可用' : '路径还不可用'}</h4>
+      <p className="muted">{readiness.reason || '入口配置、每一跳握手、整条路径探测和当前套餐都已通过。'}</p>
+      {readiness.correlation_id && <small>关联 {readiness.correlation_id}</small>}
+      <ul>{(readiness.hops || []).map(hop => <li key={`${hop.position}-${hop.server_id || 'external'}`}>
+        <span className="runtime-resource-icon"><Network size={14} aria-hidden="true" /></span>
+        <div>
+          <strong>{hop.server_name || `跳点 ${hop.position}`}</strong>
+          <span>{hop.heartbeat_online ? '心跳在线' : '心跳离线'} · {hop.task_channel_available ? '任务通道可用' : '任务通道不可用'} · {hop.config_applied ? '配置已应用' : '配置未应用'}</span>
+          <small>{hop.handshake_ok ? '握手已通过' : '握手未通过'} · {hop.probe_ok ? '整路径探测已通过' : '还没有整路径探测'}{hop.task_id ? ` · 任务 ${hop.task_id}` : ''}{hop.applied_config_version ? ` · 已应用 ${hop.applied_config_version}` : ''}{hop.wanted_config_version ? ` / 期望 ${hop.wanted_config_version}` : ''}{hop.last_error ? ` · ${hop.last_error}` : ''}</small>
+        </div>
+      </li>)}</ul>
+    </div>}
     {!hasResources && <div className="runtime-resource-empty">这条链路没有隐藏的内部运行节点。</div>}
     {nodes.length > 0 && <div className="runtime-resource-section">
       <h4>内部节点</h4>

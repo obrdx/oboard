@@ -19,6 +19,38 @@ import (
 // must re-preview before retrying.
 var ErrPlanRevisionConflict = errors.New("plan revision conflict: the plan changed since preview; re-preview and retry")
 
+// PlanRebaseError is a concurrent plan write. The published revision is left
+// in place; the caller retries against the latest revision named here.
+type PlanRebaseError struct {
+	LockVersion       int64
+	CurrentRevisionID int64
+	LatestRevisionID  int64
+}
+
+func (e *PlanRebaseError) Error() string {
+	if e == nil {
+		return ErrPlanRevisionConflict.Error()
+	}
+	return fmt.Sprintf("%s; current_revision_id=%d latest_revision_id=%d lock_version=%d", ErrPlanRevisionConflict.Error(), e.CurrentRevisionID, e.LatestRevisionID, e.LockVersion)
+}
+
+func (e *PlanRebaseError) Unwrap() error { return ErrPlanRevisionConflict }
+
+func (e *PlanRebaseError) Code() string { return "plan_revision_conflict" }
+
+func (e *PlanRebaseError) ErrorDetails() map[string]any {
+	if e == nil {
+		return nil
+	}
+	return map[string]any{"rebase": map[string]any{
+		"action":              "rebase",
+		"lock_version":        e.LockVersion,
+		"current_revision_id": e.CurrentRevisionID,
+		"latest_revision_id":  e.LatestRevisionID,
+		"kept_revision_id":    e.CurrentRevisionID,
+	}}
+}
+
 func marshalOrderPolicy(p model.SubscriptionNodeOrderPolicy) string {
 	raw, err := json.Marshal(p)
 	if err != nil {

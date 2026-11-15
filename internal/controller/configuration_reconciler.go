@@ -463,6 +463,16 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 			s.recordConfigurationPrepareError(ctx, state, err)
 		}
 	}
+	claimedByServer := make(map[int64]store.ConfigurationSyncState, len(claimed))
+	for _, state := range claimed {
+		claimedByServer[state.ServerID] = state
+	}
+	for serverID := range plan.changed {
+		state, ok := claimedByServer[serverID]
+		if ok && s.deferOfflineConfiguration(ctx, state) {
+			delete(plan.changed, serverID)
+		}
+	}
 	if len(plan.changed) == 0 {
 		s.publishRealtime("configuration", "deployments", "tasks")
 		return
@@ -471,10 +481,6 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 		if err := s.store.SupersedePendingTasksByServerType(ctx, serverID, model.AgentTaskTypeApplyDeployment, "新的期望配置已保存，旧任务已抑制"); err != nil {
 			logConfigurationError("supersede stale task", err)
 		}
-	}
-	claimedByServer := make(map[int64]store.ConfigurationSyncState, len(claimed))
-	for _, state := range claimed {
-		claimedByServer[state.ServerID] = state
 	}
 	preparedTasks, version, deployErr := s.deployConfigurationScoped(withAutomaticConfigurationSync(ctx), 0, true, plan.changed, nil, false)
 	if deployErr != nil {

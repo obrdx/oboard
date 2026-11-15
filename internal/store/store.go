@@ -4276,11 +4276,13 @@ func (s *Store) MarkStaleServersOfflineEffective(ctx context.Context, now time.T
 	}
 	defer tx.Rollback()
 	marked := []model.Server{}
-	ts := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, item := range stale {
 		// A status transition is runtime state, not topology content: it must
 		// not churn servers.updated_at (the routing-topology revision source).
-		res, err := tx.ExecContext(ctx, `update servers set status='offline', last_seen_at=? where id=? and status in ('online','degraded','unknown')`, ts, item.ID)
+		// last_seen_at stays the last accepted heartbeat. Overwriting it with the
+		// sweep time made a dead Agent look recently seen and hid the gap the
+		// presence view is supposed to show.
+		res, err := tx.ExecContext(ctx, `update servers set status='offline' where id=? and status in ('online','degraded','unknown')`, item.ID)
 		if err != nil {
 			return nil, err
 		}

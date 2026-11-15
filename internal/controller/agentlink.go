@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/agentlink"
+	"github.com/OboardProject/oboard/internal/core/agentpresence"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
 )
@@ -126,9 +127,13 @@ func (s *Server) handleStealthConnection(session *agentlink.Session) {
 // authStealthAgent mirrors authAgent's semantics over the binary protocol.
 func (s *Server) authStealthAgent(session *agentlink.Session, auth *agentlink.AuthRequest, ip string) (*model.Server, bool) {
 	agentID := strings.TrimSpace(auth.AgentID)
-	if s.unknownAgentIdentity(agentID) || s.agentAuthBlocked(ip) || agentID == "" || strings.TrimSpace(auth.Token) == "" {
-		s.noteAgentAuthFailure(ip)
-		session.RejectAuth("invalid agent credentials")
+	if s.agentAuthBlocked(ip) {
+		session.RejectAuth("too many failed agent authentications")
+		return nil, false
+	}
+	if s.unknownAgentIdentity(agentID) || agentID == "" || strings.TrimSpace(auth.Token) == "" {
+		s.rejectAgentAuth(nil, ip, 0, agentpresence.AuthIdentityUnknown, "invalid agent credentials")
+		session.RejectAuth(agentpresence.AuthIdentityUnknown + ": invalid agent credentials")
 		return nil, false
 	}
 	lookupCtx, cancel := context.WithTimeout(context.Background(), agentAuthLookupTimeout)
@@ -137,18 +142,19 @@ func (s *Server) authStealthAgent(session *agentlink.Session, auth *agentlink.Au
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			s.rememberUnknownAgent(agentID)
-			s.noteAgentAuthFailure(ip)
+			s.rejectAgentAuth(nil, ip, 0, agentpresence.AuthIdentityUnknown, "invalid agent credentials")
 		}
-		session.RejectAuth("invalid agent credentials")
+		session.RejectAuth(agentpresence.AuthIdentityUnknown + ": invalid agent credentials")
 		return nil, false
 	}
 	if !hmac.Equal([]byte(server.AgentTokenHash), []byte(security.HashSecret(auth.Token))) {
-		s.noteAgentAuthFailure(ip)
-		session.RejectAuth("invalid agent credentials")
+		s.rejectAgentAuth(nil, ip, server.ID, agentpresence.AuthTokenMismatch, "agent token does not match the controller binding")
+		session.RejectAuth(agentpresence.AuthTokenMismatch + ": agent token does not match the controller binding")
 		return nil, false
 	}
 	s.forgetUnknownAgent(agentID)
 	s.noteAgentAuthSuccess(ip)
+	s.clearAgentIdentityRejection(server.ID)
 	if auth.Purpose != "" && auth.Purpose != "control" && auth.Purpose != "rpc" && auth.Purpose != "interactive" {
 		session.RejectAuth("invalid session purpose")
 		return nil, false
@@ -405,8 +411,17 @@ func (s *Server) handleStealthDownloadRequest(req *agentlink.RequestFrame) *agen
 // pre-authenticated.
 func (s *Server) handleStealthRequest(server *model.Server, req *agentlink.RequestFrame, remoteIP string) *agentlink.ResponseFrame {
 	current, err := s.store.GetServerByAgent(context.Background(), server.AgentID)
-	if err != nil || current.ID != server.ID || !current.CreatedAt.Equal(server.CreatedAt) || current.AgentTokenHash != server.AgentTokenHash {
-		return &agentlink.ResponseFrame{ID: req.ID, Status: http.StatusUnauthorized, Error: "agent identity is no longer enrolled"}
+	if err != nil || current == nil || current.ID != server.ID {
+		s.noteAgentIdentityRejection(server.ID, agentpresence.AuthIdentityUnknown)
+		return agentIdentityFrame(req.ID, agentpresence.AuthIdentityUnknown, "invalid agent credentials")
+	}
+	if !current.CreatedAt.Equal(server.CreatedAt) {
+		s.noteAgentIdentityRejection(server.ID, agentpresence.AuthIdentityReplaced)
+		return agentIdentityFrame(req.ID, agentpresence.AuthIdentityReplaced, agentpresence.AuthReason(agentpresence.AuthIdentityReplaced))
+	}
+	if current.AgentTokenHash != server.AgentTokenHash {
+		s.noteAgentIdentityRejection(server.ID, agentpresence.AuthTokenMismatch)
+		return agentIdentityFrame(req.ID, agentpresence.AuthTokenMismatch, agentpresence.AuthReason(agentpresence.AuthTokenMismatch))
 	}
 	server = current
 	handler, ok := s.stealthAgentRoutes()[strings.TrimSpace(req.Path)]

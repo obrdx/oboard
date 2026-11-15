@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/core"
+	"github.com/OboardProject/oboard/internal/core/planphase"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
 )
@@ -748,8 +749,10 @@ func (s *Server) subscriptionPlanDetail(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	reconcileState, _ := s.store.GetPlanReconcileState(r.Context(), id)
+	phase := s.planPhase(r.Context(), plan, reconcileState)
 	write(w, 200, map[string]any{
 		"subscription_plan":          plan,
+		"plan_phase":                 phase,
 		"nodes":                      activeNodes,
 		"latest_nodes":               latestNodes,
 		"enriched_nodes":             enrichedActive,
@@ -1101,6 +1104,28 @@ func (s *Server) subscriptionPlanSubroutes(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+func planRebase(plan *model.SubscriptionPlan) error {
+	if plan == nil {
+		return store.ErrPlanRevisionConflict
+	}
+	return &store.PlanRebaseError{LockVersion: plan.LockVersion, CurrentRevisionID: plan.CurrentRevisionID, LatestRevisionID: plan.LatestRevisionID}
+}
+
+func (s *Server) planPhase(ctx context.Context, plan *model.SubscriptionPlan, state *model.PlanReconcileState) planphase.Phase {
+	facts := planphase.Facts{CurrentRevisionID: plan.CurrentRevisionID, LatestRevisionID: plan.LatestRevisionID, PendingRevisionID: plan.PendingRevisionID}
+	if state != nil {
+		facts.ReconcileStatus = state.Status
+		facts.BlockedReason = state.BlockedReason
+	}
+	if open, err := s.store.GetOpenPlanAccessChange(ctx, plan.ID); err == nil && open != nil {
+		facts.OpenChangeStatus = string(open.Status)
+		if !open.UpdatedAt.IsZero() {
+			facts.OpenChangeAge = time.Since(open.UpdatedAt)
+		}
+	}
+	return planphase.Evaluate(facts)
+}
+
 func planWriteStatus(err error) int {
 	if errors.Is(err, store.ErrPlanRevisionConflict) {
 		return http.StatusConflict
@@ -1126,7 +1151,7 @@ func (s *Server) planPublish(w http.ResponseWriter, r *http.Request, id int64) {
 		expected = plan.Revision
 	}
 	if plan.Revision != expected {
-		fail(w, store.ErrPlanRevisionConflict, http.StatusConflict)
+		fail(w, planRebase(plan), http.StatusConflict)
 		return
 	}
 	if plan.DraftRevisionID == 0 {

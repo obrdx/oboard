@@ -1092,7 +1092,7 @@ func (s *Server) planChangePreviewHandler(w http.ResponseWriter, r *http.Request
 		expected = plan.LockVersion
 	}
 	if plan.LockVersion != expected {
-		fail(w, store.ErrPlanRevisionConflict, http.StatusConflict)
+		fail(w, planRebase(plan), http.StatusConflict)
 		return
 	}
 	if plan.PendingRevisionID == 0 {
@@ -1124,7 +1124,7 @@ func (s *Server) planChangeApplyHandler(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if req.ExpectedActiveRevisionID != 0 && plan.CurrentRevisionID != req.ExpectedActiveRevisionID {
-		fail(w, store.ErrPlanRevisionConflict, http.StatusConflict)
+		fail(w, planRebase(plan), http.StatusConflict)
 		return
 	}
 	if plan.PendingRevisionID == 0 {
@@ -1132,7 +1132,7 @@ func (s *Server) planChangeApplyHandler(w http.ResponseWriter, r *http.Request, 
 		// pending version was applied, cancelled, or never created). Treat a
 		// stale apply attempt as a conflict so the client re-previewes
 		// instead of silently succeeding.
-		fail(w, store.ErrPlanRevisionConflict, http.StatusConflict)
+		fail(w, planRebase(plan), http.StatusConflict)
 		return
 	}
 	preview, err := s.planChangePreview(r.Context(), plan, plan.PendingRevisionID)

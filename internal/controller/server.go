@@ -41,6 +41,7 @@ import (
 	"github.com/OboardProject/oboard/internal/capability"
 	"github.com/OboardProject/oboard/internal/controllerupdate"
 	"github.com/OboardProject/oboard/internal/core"
+	"github.com/OboardProject/oboard/internal/core/agentpresence"
 	oboardgeoip "github.com/OboardProject/oboard/internal/geoip"
 	oboardlog "github.com/OboardProject/oboard/internal/logging"
 	"github.com/OboardProject/oboard/internal/model"
@@ -161,6 +162,8 @@ type Server struct {
 	stealthError                  string
 	agentLiveMu                   sync.Mutex
 	agentLive                     map[int64][]chan any
+	agentAuthMu                   sync.Mutex
+	agentAuthCode                 map[int64]string
 	agentConnsMu                  sync.Mutex
 	agentConns                    map[int64][]agentConnSession
 	remoteExecHub                 *remoteExecResultHub
@@ -2654,6 +2657,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err == nil && serverSnapshotLoaded {
 			err = timing.run("delivery", func() error {
 				s.annotateServerDeliveryStatusFromLaneStates(ctx, serverSnapshot, loadLaneStates())
+				s.attachAgentHealth(ctx, serverSnapshot)
 				return nil
 			})
 		}
@@ -2723,6 +2727,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err == nil && serverSnapshotLoaded {
 			err = timing.run("delivery", func() error {
 				s.annotateServerDeliveryStatusFromLaneStates(ctx, serverSnapshot, loadLaneStates())
+				s.attachAgentHealth(ctx, serverSnapshot)
 				return nil
 			})
 		}
@@ -4049,6 +4054,7 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.annotateServerDeliveryStatus(r.Context(), items)
+		s.attachAgentHealth(r.Context(), items)
 		out := map[string]any{"servers": items}
 		if r.URL.Query().Get("include_metrics") == "1" {
 			samples, err := s.fleetMetrics(r.Context())
@@ -10046,7 +10052,9 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 				write(w, 200, map[string]any{"plan": proxyPathPlanSummary(item, pathSteps)})
 				return
 			}
-			write(w, 200, map[string]any{"plan": publicProxyPathPlan(plan)})
+			published := publicProxyPathPlan(plan)
+			published.Readiness = s.pathReadiness(r.Context(), item, plan, servers, inbounds)
+			write(w, 200, map[string]any{"plan": published})
 			return
 		}
 		if id != 0 {
@@ -15667,6 +15675,7 @@ func (s *Server) agentSessionLoop(ctx context.Context, server *model.Server, con
 	var inFlightTimeout <-chan time.Time
 	mode, _ := serverMonitoringPolicy(server)
 	auditEnabled := s.effectiveConnectionAuditEnabled(ctx, server)
+	failInFlight := false
 	defer func() {
 		if inFlightTimer != nil {
 			inFlightTimer.Stop()
@@ -15683,6 +15692,21 @@ func (s *Server) agentSessionLoop(ctx context.Context, server *model.Server, con
 			if err := s.store.CompleteTask(context.Background(), inFlightTaskID, "failed", string(result)); err != nil {
 				log.Printf("complete remote exec task %d after agent disconnect: %v", inFlightTaskID, err)
 			} else {
+				s.publishRealtime(realtimeResourcesForTask(inFlightTaskType)...)
+			}
+			return
+		}
+		if failInFlight && inFlightTaskType != model.AgentTaskTypeUpdateAgent {
+			result, _ := json.Marshal(map[string]any{
+				"message": "Agent 超过时限没有回传执行结果，任务已结束",
+				"error":   "Agent 超过时限没有回传执行结果，任务已结束",
+				"code":    "task_timeout",
+				"timeout": true,
+			})
+			if err := s.store.CompleteTask(context.Background(), inFlightTaskID, "failed", string(result)); err != nil {
+				log.Printf("complete timed out task %d: %v", inFlightTaskID, err)
+			} else if task, err := s.store.GetTask(context.Background(), inFlightTaskID); err == nil && task != nil {
+				s.recordConfigurationTaskResult(context.Background(), *task, "failed", string(result))
 				s.publishRealtime(realtimeResourcesForTask(inFlightTaskType)...)
 			}
 			return
@@ -15712,6 +15736,9 @@ func (s *Server) agentSessionLoop(ctx context.Context, server *model.Server, con
 				return
 			}
 			server = latest
+			if s.agentHealthView(ctx, latest, nil).Dispatch != agentpresence.DispatchReady {
+				return
+			}
 			task, err := s.store.NextTask(ctx, server.ID)
 			if err != nil {
 				return
@@ -15782,6 +15809,7 @@ func (s *Server) agentSessionLoop(ctx context.Context, server *model.Server, con
 			acknowledged := false
 			if envelope.Type == "task_ack" && envelope.TaskID == inFlightTaskID {
 				acknowledged = true
+				s.clearAgentIdentityRejection(server.ID)
 				inFlightTaskID = 0
 				inFlightTaskType = ""
 				if inFlightTimer != nil {
@@ -15855,6 +15883,7 @@ func (s *Server) agentSessionLoop(ctx context.Context, server *model.Server, con
 			heartbeatTimer.Reset(heartbeatInterval)
 		case <-inFlightTimeout:
 			log.Printf("agent task timed out server=%d id=%d type=%s", server.ID, inFlightTaskID, safeLogField(inFlightTaskType))
+			failInFlight = true
 			return
 		}
 	}
@@ -15943,6 +15972,14 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 				s.hotPath.remoteAccessFailed.Add(1)
 			}
 			if err == nil {
+				s.clearAgentIdentityRejection(server.ID)
+				if !result.Coalesced {
+					_ = s.store.ReleaseOfflineConfigurationHold(ctx, server.ID)
+					s.signalConfigurationReconcile()
+					if s.tasks != nil {
+						s.tasks.wake(server.ID)
+					}
+				}
 				// Refresh the connection's in-memory server copy so heartbeat
 				// and plan generation observe the report without a reload.
 				applyHealthReportToServer(server, result)
@@ -16802,8 +16839,7 @@ func (s *Server) authAgent(w http.ResponseWriter, r *http.Request) (*model.Serve
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	ip := clientIP(r)
 	if s.unknownAgentIdentity(agentID) {
-		s.logAgentRestriction("invalid_credentials", ip, http.StatusUnauthorized)
-		fail(w, errors.New("invalid agent credentials"), 401)
+		s.rejectAgentAuth(w, ip, 0, agentpresence.AuthIdentityUnknown, "invalid agent credentials")
 		return nil, false
 	}
 	if s.agentAuthBlocked(ip) {
@@ -16812,8 +16848,7 @@ func (s *Server) authAgent(w http.ResponseWriter, r *http.Request) (*model.Serve
 		return nil, false
 	}
 	if agentID == "" || strings.TrimSpace(token) == "" {
-		s.noteAgentAuthFailure(ip)
-		fail(w, errors.New("invalid agent credentials"), 401)
+		s.rejectAgentAuth(w, ip, 0, agentpresence.AuthIdentityUnknown, "invalid agent credentials")
 		return nil, false
 	}
 	s.agentAuthLookups.Add(1)
@@ -16823,8 +16858,7 @@ func (s *Server) authAgent(w http.ResponseWriter, r *http.Request) (*model.Serve
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			s.rememberUnknownAgent(agentID)
-			s.noteAgentAuthFailure(ip)
-			fail(w, errors.New("invalid agent credentials"), 401)
+			s.rejectAgentAuth(w, ip, 0, agentpresence.AuthIdentityUnknown, "invalid agent credentials")
 		} else {
 			fail(w, err, http.StatusInternalServerError)
 		}
@@ -16832,8 +16866,7 @@ func (s *Server) authAgent(w http.ResponseWriter, r *http.Request) (*model.Serve
 	}
 	// Constant-time compare of hex-encoded SHA-256 hashes.
 	if !hmac.Equal([]byte(server.AgentTokenHash), []byte(security.HashSecret(token))) {
-		s.noteAgentAuthFailure(ip)
-		fail(w, errors.New("invalid agent credentials"), 401)
+		s.rejectAgentAuth(w, ip, server.ID, agentpresence.AuthTokenMismatch, "agent token does not match the controller binding")
 		return nil, false
 	}
 	if serverSupportsCapability(*server, "agentlink_v1") && r.URL.Path != "/api/v1/agent/transport" {
@@ -16842,6 +16875,7 @@ func (s *Server) authAgent(w http.ResponseWriter, r *http.Request) (*model.Serve
 	}
 	s.forgetUnknownAgent(agentID)
 	s.noteAgentAuthSuccess(ip)
+	s.clearAgentIdentityRejection(server.ID)
 	return server, true
 }
 

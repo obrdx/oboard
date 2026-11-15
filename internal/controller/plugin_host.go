@@ -60,7 +60,7 @@ func (h *pluginHost) serverInfo(ctx context.Context, server *model.Server) plugi
 	info := plugin.ServerInfo{
 		ID: server.ID, Name: server.Name, Status: string(server.Status), RegionCode: server.RegionCode,
 		PublicIPv4: server.PublicIPv4, PublicIPv6: server.PublicIPv6, Enrolled: strings.TrimSpace(server.AgentID) != "",
-		Online: h.server.agentControlOnline(server.ID), AgentVersion: server.AgentVersion, LastSeenAt: server.LastSeenAt,
+		Online: h.server.agentHealthView(ctx, server, nil).HeartbeatOnline, AgentVersion: server.AgentVersion, LastSeenAt: server.LastSeenAt,
 		Capabilities: append([]string(nil), server.KernelCapabilities...),
 	}
 	if status, err := h.server.store.GetServerRemoteAccessStatus(ctx, server.ID); err == nil {
@@ -88,28 +88,36 @@ func (h *pluginHost) ServerHealth(ctx context.Context, id int64) (map[string]any
 		return nil, plugin.Fail(plugin.CodeServerNotFound, "server no longer exists")
 	}
 	now := time.Now().UTC()
-	stale := true
 	lastSeen := ""
 	if server.LastSeenAt != nil {
 		lastSeen = server.LastSeenAt.UTC().Format(time.RFC3339)
-		stale = now.Sub(server.LastSeenAt.UTC()) > 3*time.Minute
 	}
 	sync := "unknown"
-	if state, err := h.server.store.ConfigurationSyncState(ctx, server.ID); err == nil && state.State != "" {
-		sync = state.State
+	health := h.server.agentHealthView(ctx, server, nil)
+	if state, err := h.server.store.ConfigurationSyncState(ctx, server.ID); err == nil {
+		health = h.server.agentHealthView(ctx, server, &state)
+		if state.State != "" {
+			sync = state.State
+		}
 	}
 	return map[string]any{
-		"server_id":           strconv.FormatInt(server.ID, 10),
-		"status":              string(server.Status),
-		"agent_connected":     h.server.agentControlOnline(server.ID),
-		"last_seen_at":        lastSeen,
-		"stale":               stale,
-		"config_sync":         sync,
-		"connectivity_status": server.ConnectivityStatus,
-		"agent_version":       server.AgentVersion,
-		"core_version":        server.SingBoxVersion,
-		"expired":             server.ExpiresAt != nil && !server.ExpiresAt.After(now),
-		"observed_at":         now.Format(time.RFC3339),
+		"server_id":              strconv.FormatInt(server.ID, 10),
+		"status":                 string(server.Status),
+		"agent_connected":        health.TaskChannelAvailable,
+		"heartbeat_online":       health.HeartbeatOnline,
+		"task_channel_available": health.TaskChannelAvailable,
+		"config_applied":         health.ConfigApplied,
+		"dispatch":               health.Dispatch,
+		"auth_code":              health.AuthCode,
+		"auth_reason":            health.AuthReason,
+		"last_seen_at":           lastSeen,
+		"stale":                  !health.HeartbeatOnline,
+		"config_sync":            sync,
+		"connectivity_status":    server.ConnectivityStatus,
+		"agent_version":          server.AgentVersion,
+		"core_version":           server.SingBoxVersion,
+		"expired":                server.ExpiresAt != nil && !server.ExpiresAt.After(now),
+		"observed_at":            now.Format(time.RFC3339),
 	}, nil
 }
 

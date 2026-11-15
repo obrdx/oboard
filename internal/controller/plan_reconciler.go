@@ -8,6 +8,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/core/planphase"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
 )
@@ -83,6 +84,11 @@ func (s *Server) reconcileOnePlan(ctx context.Context, plan model.SubscriptionPl
 	if plan.LatestRevisionID == 0 {
 		return nil
 	}
+	if _, released, err := s.store.FailStalePreparingPlanChange(ctx, plan.ID, time.Now().UTC().Add(-planphase.StaleApplyAfter), "应用超过 15 分钟没有进展，当前已发布版本保持不变"); err != nil {
+		return err
+	} else if released {
+		return nil
+	}
 	// If there is an open access change for this plan, wait for it
 	hasOpen, err := s.store.HasOpenPlanAccessChange(ctx, plan.ID)
 	if err != nil {
@@ -103,6 +109,9 @@ func (s *Server) reconcileOnePlan(ctx context.Context, plan model.SubscriptionPl
 	}
 	if fresh.CurrentRevisionID == fresh.LatestRevisionID {
 		return s.store.SetPlanReconcileIdleIfConverged(ctx, fresh.ID)
+	}
+	if state, err := s.store.GetPlanReconcileState(ctx, fresh.ID); err == nil && state != nil && state.Status == "blocked" && state.ApplyingRevisionID != nil && *state.ApplyingRevisionID == fresh.LatestRevisionID {
+		return nil
 	}
 	targetRevisionID := fresh.LatestRevisionID
 	// Dependency check: for MVP we treat all nodes as ready; allow saving
