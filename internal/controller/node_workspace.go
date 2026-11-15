@@ -374,6 +374,15 @@ func (s *Server) nodeLibraryItem(w http.ResponseWriter, r *http.Request) {
 		write(w, 200, map[string]any{"node": updated})
 		return
 	}
+	if len(parts) == 1 && r.Method == http.MethodDelete {
+		if deleteErr := s.deleteImportedNode(r.Context(), user.ID, parts[0]); deleteErr != nil {
+			nodeWorkspaceFail(w, deleteErr)
+			return
+		}
+		s.publishRealtime("nodes", "subscriptions")
+		write(w, 200, map[string]any{"deleted": true})
+		return
+	}
 	if r.Method != http.MethodPost || !((len(parts) == 1 && parts[0] == "share") || (len(parts) == 2 && parts[1] == "share")) {
 		http.NotFound(w, r)
 		return
@@ -1242,6 +1251,14 @@ func (s *Server) updateImportedNode(ctx context.Context, userID int64, key, name
 		return nil, updateErr
 	}
 	return map[string]any{"id": fmt.Sprintf("private:%d", updated.ID), "group_id": updated.GroupID, "name": updated.Name, "protocol": updated.Protocol, "source": "private", "editable": true, "enabled": updated.Enabled}, nil
+}
+
+func (s *Server) deleteImportedNode(ctx context.Context, userID int64, key string) error {
+	item, err := s.importedNodeForEdit(ctx, userID, key)
+	if err != nil {
+		return err
+	}
+	return s.store.DeleteImportedNode(ctx, userID, item.ID)
 }
 
 func (s *Server) previewRemoteNodeSource(ctx context.Context, rawURL string) (*core.PrivateImportResult, error) {

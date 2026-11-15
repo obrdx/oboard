@@ -48,6 +48,8 @@ export function NodeGroupsPanel({ workspace, nodes, busy, mutate, subjectQuery, 
   const previewSequence = React.useRef(0)
   const editingGroup = workspace.node_groups.find(group => group.id === editingID) || null
   const editingSource = editingGroup ? workspace.node_sources.find(item => item.group_id === editingGroup.id) : undefined
+  const activeNode = nodes.find(node => node.id === nodeTargetID) || null
+  const nodeUnchanged = Boolean(activeNode) && nodeName.trim() === activeNode?.name && nodeContent.trim() === loadedNodeContent.trim()
 
   const switchKind = (next: 'manual' | 'remote') => { setKind(next); setImportPreview(null); setFormError('') }
   const create = async () => {
@@ -103,6 +105,21 @@ export function NodeGroupsPanel({ workspace, nodes, busy, mutate, subjectQuery, 
     }).finally(() => {
       if (nodeTicket.current === ticket) setNodeLoading(false)
     })
+  }
+  const deleteNode = async (node: LibraryNode) => {
+    if (nodeBusy || !await dialogs.confirm({ title: `删除节点“${node.name}”？`, message: '只删除这个手动节点，同组的其他节点会保留。', confirmText: '删除', tone: 'danger' })) return
+    setNodeBusy(true)
+    setNodeError('')
+    try {
+      await client.request(`/node-library/${node.id}${subjectQuery}`, { method: 'DELETE' })
+      message('节点已删除')
+      if (nodeTargetID === node.id) resetNodeEditor()
+      await refresh()
+    } catch (error) {
+      setNodeError(errorText(error))
+    } finally {
+      setNodeBusy(false)
+    }
   }
   const saveNode = async (node: LibraryNode) => {
     const nextName = nodeName.trim()
@@ -206,18 +223,9 @@ export function NodeGroupsPanel({ workspace, nodes, busy, mutate, subjectQuery, 
           kind={editingGroup.kind}
           nodes={nodes.filter(node => node.group_id === editingGroup.id)}
           activeID={nodeTargetID}
-          mode={nodeMode}
-          nodeName={nodeName}
-          nodeContent={nodeContent}
-          loadedContent={loadedNodeContent}
-          loading={nodeLoading}
           busy={busy || nodeBusy}
-          error={nodeError}
-          onName={setNodeName}
-          onContent={value => { nodeContentTouched.current = true; setNodeContent(value) }}
           onOpen={openNode}
-          onClose={resetNodeEditor}
-          onSave={node => void saveNode(node)}
+          onDelete={node => void deleteNode(node)}
         />
         {editingGroup.kind === 'remote' && <label><span>HTTPS 订阅 URL{editingSource && <small>当前 {editingSource.url_display}</small>}</span><input type="url" value={editURL} placeholder={editingSource?.url_display || 'https://'} onChange={event => setEditURL(event.target.value)} /></label>}
         {editingGroup.kind === 'manual' && <label><span>新增节点链接</span><textarea value={editContent} rows={4} placeholder="粘贴新的节点链接或配置。已保存的节点不会被替换" onChange={event => setEditContent(event.target.value)} /></label>}
@@ -225,52 +233,46 @@ export function NodeGroupsPanel({ workspace, nodes, busy, mutate, subjectQuery, 
         <div className="nw-form-actions"><button type="button" className="ghost" disabled={busy || nodeBusy} onClick={closeEdit}><X size={15} />取消</button><button type="submit" disabled={busy || nodeBusy || !editName.trim() || editUnchanged}><Check size={15} />保存</button></div>
       </form>}
     </Dialog>
+    <Dialog isOpen={nodeMode !== null && activeNode !== null} onClose={() => { if (!nodeBusy) resetNodeEditor() }} title={nodeMode === 'edit' ? `修改 ${activeNode?.name || '节点'}` : `查看 ${activeNode?.name || '节点'}`} size="lg" className="nw-dialog" busy={nodeBusy}>
+      {activeNode && nodeMode && <div className="nw-form">
+        {nodeMode === 'edit' && <label><span>节点名称</span><input value={nodeName} onChange={event => setNodeName(event.target.value)} maxLength={80} /></label>}
+        <label><span>节点链接{nodeLoading && <small>正在读取已保存的链接</small>}</span><textarea value={nodeContent} readOnly={nodeMode === 'view' || nodeLoading} rows={6} aria-label={nodeMode === 'edit' ? '节点链接' : '已保存的节点链接'} placeholder={nodeLoading ? '正在读取已保存的链接…' : nodeMode === 'view' ? '无法读取已保存的链接' : activeNode.copyable ? '修改当前保存的链接' : '当前配置无法显示为链接，粘贴新链接可以替换它'} onChange={event => { nodeContentTouched.current = true; setNodeContent(event.target.value) }} /></label>
+        {nodeMode === 'edit' && !nodeLoading && loadedNodeContent && <p className="nw-form-hint">这是当前保存的链接，改完后只更新这个节点。</p>}
+        {nodeError && <p className="nw-form-error" role="alert">{nodeError}</p>}
+        <div className="nw-form-actions">
+          <button type="button" className="ghost" disabled={nodeBusy} onClick={resetNodeEditor}>{nodeMode === 'edit' ? '取消修改' : '收起'}</button>
+          {nodeMode === 'edit' && <button type="button" disabled={nodeBusy || nodeLoading || nodeUnchanged || (!nodeName.trim() && !nodeContent.trim())} onClick={() => void saveNode(activeNode)}><Check size={15} />保存这个节点</button>}
+        </div>
+      </div>}
+    </Dialog>
   </section>
 }
 
-function SavedNodes({ kind, nodes, activeID, mode, nodeName, nodeContent, loadedContent, loading, busy, error, onName, onContent, onOpen, onClose, onSave }: {
+function SavedNodes({ kind, nodes, activeID, busy, onOpen, onDelete }: {
   kind: NodeGroup['kind']
   nodes: LibraryNode[]
   activeID: string
-  mode: 'edit' | 'view' | null
-  nodeName: string
-  nodeContent: string
-  loadedContent: string
-  loading: boolean
   busy: boolean
-  error: string
-  onName: (value: string) => void
-  onContent: (value: string) => void
   onOpen: (node: LibraryNode, mode: 'edit' | 'view') => void
-  onClose: () => void
-  onSave: (node: LibraryNode) => void
+  onDelete: (node: LibraryNode) => void
 }) {
-  const active = nodes.find(node => node.id === activeID) || null
-  const hint = kind === 'manual' ? '选择节点即可查看并修改已保存的链接。' : kind === 'remote' ? '这些节点由订阅同步，下次同步会按订阅内容更新，不能单独修改。' : '这些节点随套餐授权更新，不能在这里修改。'
-  const unchanged = Boolean(active) && nodeName.trim() === active?.name && nodeContent.trim() === loadedContent.trim()
+  const hint = kind === 'manual' ? '点修改会单独打开这个节点，列表不会被表单撑开。' : kind === 'remote' ? '这些节点由订阅同步，下次同步会按订阅内容更新，不能单独修改。' : '这些节点随套餐授权更新，不能在这里修改。'
   return <section className="nw-saved-nodes" aria-label="已保存节点">
     <div className="nw-saved-nodes-head"><span>已保存节点</span><small>{nodes.length} 个</small></div>
     <p className="nw-form-hint">{hint}</p>
     {nodes.length === 0
       ? <p className="nw-form-hint">这个节点组里还没有节点。</p>
-      : <ul className="nw-saved-node-list">{nodes.map(node => <li key={node.id} className={node.id === activeID ? 'is-editing' : undefined}>
+      : <ul className="nw-saved-node-list">{nodes.map(node => <li key={node.id} className={node.id === activeID ? 'is-active' : undefined}>
         <strong>{node.name}</strong>
         <span className="nw-mono-chip">{node.protocol}</span>
-        {node.editable
-          ? <button type="button" className="ghost" aria-label={`修改 ${node.name}`} disabled={busy} onClick={() => onOpen(node, 'edit')}>修改</button>
-          : node.copyable
-            ? <button type="button" className="ghost" aria-label={`查看 ${node.name}`} disabled={busy} onClick={() => onOpen(node, 'view')}>查看</button>
-            : null}
+        <span className="nw-saved-node-actions">
+          {node.editable
+            ? <button type="button" className="ghost icon-button" title="修改" aria-label={`修改 ${node.name}`} disabled={busy} onClick={() => onOpen(node, 'edit')}><Pencil size={15} /></button>
+            : node.copyable
+              ? <button type="button" className="ghost icon-button" title="查看" aria-label={`查看 ${node.name}`} disabled={busy} onClick={() => onOpen(node, 'view')}><Eye size={15} /></button>
+              : null}
+          {node.editable && <button type="button" className="ghost icon-button danger-text" title="删除" aria-label={`删除 ${node.name}`} disabled={busy} onClick={() => onDelete(node)}><Trash2 size={15} /></button>}
+        </span>
       </li>)}</ul>}
-    {active && mode && <div className="nw-saved-node-edit" aria-label={mode === 'edit' ? `修改 ${active.name}` : `查看 ${active.name}`} onKeyDown={event => { if (event.key === 'Enter' && (event.target as HTMLElement).tagName === 'INPUT') event.preventDefault() }}>
-      {mode === 'edit' && <label><span>节点名称</span><input value={nodeName} onChange={event => onName(event.target.value)} maxLength={80} /></label>}
-      <label><span>节点链接{loading && <small>正在读取已保存的链接</small>}</span><textarea value={nodeContent} readOnly={mode === 'view' || loading} rows={4} aria-label={mode === 'edit' ? '节点链接' : '已保存的节点链接'} placeholder={loading ? '正在读取已保存的链接…' : mode === 'view' ? '无法读取已保存的链接' : active.copyable ? '修改当前保存的链接' : '当前配置无法显示为链接，粘贴新链接可以替换它'} onChange={event => onContent(event.target.value)} /></label>
-      {mode === 'edit' && !loading && loadedContent && <p className="nw-form-hint">这是当前保存的链接，改完后只更新这个节点。</p>}
-      {error && <p className="nw-form-error" role="alert">{error}</p>}
-      <div className="nw-form-actions">
-        <button type="button" className="ghost" onClick={onClose}>{mode === 'edit' ? '取消修改' : '收起'}</button>
-        {mode === 'edit' && <button type="button" disabled={busy || loading || unchanged || (!nodeName.trim() && !nodeContent.trim())} onClick={() => onSave(active)}><Check size={15} />保存这个节点</button>}
-      </div>
-    </div>}
   </section>
 }

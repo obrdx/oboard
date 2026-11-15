@@ -424,6 +424,19 @@ func (s *Store) UpdateImportedNode(ctx context.Context, userID, id int64, value 
 	return s.GetImportedNode(ctx, userID, id)
 }
 
+// DeleteImportedNode removes one manually pasted node. Nodes owned by a remote
+// subscription stay until that source is refreshed.
+func (s *Store) DeleteImportedNode(ctx context.Context, userID, id int64) error {
+	res, err := s.db.ExecContext(ctx, `delete from imported_nodes where id=? and user_id=? and source_id is null`, id, userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (s *Store) ListSubscriptionOutputs(ctx context.Context, userID int64) ([]model.SubscriptionOutput, error) {
 	rows, err := s.db.QueryContext(ctx, `select id,user_id,name,is_default,enabled,filters_json,created_at,updated_at from subscription_outputs where user_id=? order by is_default desc,id`, userID)
 	if err != nil {

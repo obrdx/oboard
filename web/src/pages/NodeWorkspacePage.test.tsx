@@ -373,16 +373,18 @@ describe('NodeWorkspacePage', () => {
     const manualForm = document.querySelector('.nw-group-edit') as HTMLFormElement
     expect(manualForm.textContent).toContain('节点 A')
     expect(manualForm.textContent).toContain('新增节点链接')
+    expect(manualForm.querySelector('[aria-label="节点链接"]')).toBeNull()
     act(() => (manualForm.querySelector('[aria-label="修改 节点 A"]') as HTMLButtonElement).click())
     await flushEffects()
-    const link = manualForm.querySelector('[aria-label="节点链接"]') as HTMLTextAreaElement
+    const link = document.querySelector('[aria-label="节点链接"]') as HTMLTextAreaElement
+    expect(manualForm.contains(link)).toBe(false)
     expect(link.value).toBe('vless://saved-node-a')
     expect(link.readOnly).toBe(false)
     act(() => {
       Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!.set!.call(link, 'vless://edited-node-a')
       link.dispatchEvent(new window.Event('input', { bubbles: true }))
     })
-    act(() => (Array.from(manualForm.querySelectorAll('button')).find(button => button.textContent?.includes('保存这个节点')) as HTMLButtonElement).click())
+    act(() => (Array.from(document.querySelectorAll('button')).find(button => button.textContent?.includes('保存这个节点')) as HTMLButtonElement).click())
     await flushEffects()
     expect(request.mock.calls).toContainEqual(['/node-library/private:1', expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ name: '节点 A', content: 'vless://edited-node-a' }) })])
 
@@ -392,7 +394,7 @@ describe('NodeWorkspacePage', () => {
     expect(remoteForm.querySelector('[aria-label="修改 节点 B"]')).toBeNull()
     act(() => (remoteForm.querySelector('[aria-label="查看 节点 B"]') as HTMLButtonElement).click())
     await flushEffects()
-    const remoteLink = remoteForm.querySelector('[aria-label="已保存的节点链接"]') as HTMLTextAreaElement
+    const remoteLink = document.querySelector('[aria-label="已保存的节点链接"]') as HTMLTextAreaElement
     expect(remoteLink.value).toBe('trojan://saved-node-b')
     expect(remoteLink.readOnly).toBe(true)
     expect(remoteForm.textContent).toContain('不能单独修改')

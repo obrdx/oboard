@@ -230,6 +230,13 @@ func TestNodeWorkspaceAutomationPreservesEnabledAndEnforcesPerspective(t *testin
 	if _, err := server.validateNodeWorkspaceOperation(t.Context(), principal, "node_library.update", badEdit); err == nil {
 		t.Fatal("automation accepted multi-node edit content")
 	}
+	deleteInput, _ := json.Marshal(map[string]any{"user_id": first.ID, "node_id": "private:" + itoa(imported[0].ID)})
+	if _, err := server.applyNodeWorkspaceOperation(t.Context(), principal, "node_library.delete", deleteInput); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.GetImportedNode(t.Context(), first.ID, imported[0].ID); err == nil {
+		t.Fatal("deleted manual node is still stored")
+	}
 	operator := application.Principal{ID: "operator", UserID: &first.ID, Role: model.RoleOperator}
 	otherInput, _ := json.Marshal(map[string]any{"user_id": second.ID})
 	if _, err := server.queryManagementCapability(t.Context(), operator, "node_groups.list", otherInput); err != nil {
