@@ -287,7 +287,7 @@ import {
 const ProviderEditor = lazySurface(() => import('./components/ai-provider/ProviderEditor').then(module => ({ default: module.ProviderEditor })))
 import { capabilityOutputModeLabel } from './components/ai-provider/CapabilityBadge'
 import { auditHealthScoreTone, normalizeAuditHealthScore } from './ai-audit-score'
-import { dashboardServerTrafficBytes } from './dashboard-traffic'
+import { dashboardLiveTotals, dashboardServerTrafficBytes } from './dashboard-traffic'
 import {
   deploymentStatusFromSummary,
   groupTasksForTimeline,
@@ -6119,6 +6119,8 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
   const elevatedRiskCount = Number(auditOverview.elevated_risk_count || 0)
   const auditWindowHours = Number(auditOverview.window_hours || 24)
   const totalTraffic = formatBytes(dashboardServerTrafficBytes(servers))
+  const live = dashboardLiveTotals(servers)
+  const liveUnknown = loading && !servers.length
 
   const pct = (used: unknown, total: unknown) => {
     const t = Number(total)
@@ -6198,6 +6200,22 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
           </div>
           <strong>{loading && !servers.length ? '—' : totalTraffic}</strong>
           <small>{totalServers} 台服务器 · 当前账期累计</small>
+        </div>
+        <div className="stat-cell">
+          <div className="stat-cell-head">
+            <span>实时连接</span>
+            <span className="stat-icon-wrap stat-icon-connections"><Cable size={16} /></span>
+          </div>
+          <strong>{liveUnknown ? '—' : live.connections.toLocaleString('zh-CN')}</strong>
+          <small>{live.reporting ? `TCP ${live.tcp.toLocaleString('zh-CN')} · UDP ${live.udp.toLocaleString('zh-CN')}` : '暂无在线服务器'}</small>
+        </div>
+        <div className="stat-cell">
+          <div className="stat-cell-head">
+            <span>实时速率</span>
+            <span className="stat-icon-wrap stat-icon-throughput"><ArrowDownUp size={16} /></span>
+          </div>
+          <strong className="stat-cell-rate">{liveUnknown ? '—' : <><ArrowDown size={16} aria-label="下载" />{formatByteRate(live.downloadBps)}</>}</strong>
+          <small className="stat-cell-rate-sub"><ArrowUp size={13} aria-label="上传" />{formatByteRate(live.uploadBps)} · {live.reporting} 台在线</small>
         </div>
       </section>
 
