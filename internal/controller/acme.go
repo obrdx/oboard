@@ -269,8 +269,8 @@ func (s *Server) runDNSCertificateIssue(ctx context.Context, certificate *model.
 			}
 		}
 	}
-	if err := clearACMEStaleOrderLink(s.acmeHome, certificate.PrimaryDomain); err != nil {
-		return fmt.Errorf("reset ACME order link: %w", err)
+	if err := clearACMEResumeState(s.acmeHome, certificate.PrimaryDomain); err != nil {
+		return fmt.Errorf("reset ACME resume state: %w", err)
 	}
 	output, err := s.runACME(ctx, resumeACMEArgs(s.acmeHome, *certificate)...)
 	if err != nil {
@@ -321,13 +321,16 @@ func (s *Server) certificateEABCredentials(ctx context.Context, certificate *mod
 	return certificate.EABKeyID, value, nil
 }
 
-// clearACMEStaleOrderLink removes Le_LinkOrder from the ECC domain config
-// before the DNS-manual resume. acme.sh saves only Le_OrderFinalize for the
-// order the --issue step created and keeps the previous issuance's order
-// link, so a CA that answers finalize with "processing" would otherwise be
-// polled through an old, invalid order. With the link removed, acme.sh takes
-// the current order link from the finalize response's Location header.
-func clearACMEStaleOrderLink(home, primaryDomain string) error {
+// clearACMEResumeState removes per-run state that acme.sh keeps in the ECC
+// domain config and would otherwise replay on the DNS-manual --renew step.
+// acme.sh saves only Le_OrderFinalize for the order the --issue step created
+// and keeps the previous issuance's Le_LinkOrder, so a CA that answers
+// finalize with "processing" would be polled through an old, invalid order;
+// without the link acme.sh uses the finalize response's Location header.
+// --install-cert also records its destination paths, which point into a
+// Controller staging directory that is deleted after every install, so a
+// later --renew would fail copying the new certificate there.
+func clearACMEResumeState(home, primaryDomain string) error {
 	domain := strings.TrimSpace(primaryDomain)
 	if domain == "" || strings.ContainsAny(domain, `/\`) || domain == "." || domain == ".." {
 		return errors.New("invalid ACME primary domain")
@@ -348,7 +351,7 @@ func clearACMEStaleOrderLink(home, primaryDomain string) error {
 	kept := make([]string, 0, len(lines))
 	removed := false
 	for _, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "Le_LinkOrder=") {
+		if acmeResumeStateLine(line) {
 			removed = true
 			continue
 		}
@@ -375,6 +378,18 @@ func clearACMEStaleOrderLink(home, primaryDomain string) error {
 		return err
 	}
 	return os.Rename(tmpPath, path)
+}
+
+var acmeResumeStateKeys = []string{"Le_LinkOrder", "Le_RealCertPath", "Le_RealCACertPath", "Le_RealKeyPath", "Le_RealFullChainPath", "Le_ReloadCmd"}
+
+func acmeResumeStateLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	for _, key := range acmeResumeStateKeys {
+		if strings.HasPrefix(trimmed, key+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 func resumeACMEArgs(home string, certificate model.Certificate) []string {

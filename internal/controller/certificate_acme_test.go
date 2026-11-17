@@ -198,7 +198,7 @@ exit 1
 	}
 }
 
-func TestDNSManualResumeDropsPreviousOrderLink(t *testing.T) {
+func TestDNSManualResumeDropsPreviousRunState(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	home := filepath.Join(dir, "home")
@@ -208,7 +208,7 @@ func TestDNSManualResumeDropsPreviousOrderLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	confPath := filepath.Join(confDir, domain+".conf")
-	previous := "Le_Domain='*.example.com'\nLe_OrderFinalize='https://ca.test/order/new/finalize'\nLe_LinkOrder='https://ca.test/order/old'\nLe_Keylength='ec-256'\n"
+	previous := "Le_Domain='*.example.com'\nLe_OrderFinalize='https://ca.test/order/new/finalize'\nLe_LinkOrder='https://ca.test/order/old'\nLe_Keylength='ec-256'\nLe_RealCertPath='/acme/install-1/cert.pem'\nLe_RealCACertPath=''\nLe_RealKeyPath='/acme/install-1/privkey.pem'\nLe_ReloadCmd=''\nLe_RealFullChainPath='/acme/install-1/fullchain.pem'\n"
 	if err := os.WriteFile(confPath, []byte(previous), 0o600); err != nil {
 		t.Fatal(err)
 	}
