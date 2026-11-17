@@ -8649,7 +8649,24 @@ body:has(.controller-update-immersive-layer) {
 
 .certificate-log-body {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
   gap: 14px;
+}
+
+.certificate-log-body .raw-log-copy,
+.certificate-log-body .copy-block {
+  min-width: 0;
+}
+
+.certificate-log-body .copy-block {
+  padding: 10px;
+}
+
+.certificate-log-body .raw-log-copy .copy-block code {
+  max-height: min(60vh, 560px);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .certificate-log-meta {
