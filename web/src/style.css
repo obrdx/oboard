@@ -8660,7 +8660,18 @@ body:has(.controller-update-immersive-layer) {
 }
 
 .certificate-log-body .copy-block {
-  padding: 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.certificate-log-body .raw-log-copy .copy-block-button {
+  order: -1;
+  flex: 0 0 auto;
+  align-self: flex-end;
 }
 
 .certificate-log-body .raw-log-copy .copy-block code {
