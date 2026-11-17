@@ -57,6 +57,13 @@ func TestDashboardPageDataUsesLightTaskProjection(t *testing.T) {
 	if _, exists := audit["elevated_risk_count"]; !exists {
 		t.Fatalf("dashboard connection_audit missing elevated_risk_count: %#v", audit)
 	}
+	routeMap, ok := page["route_map"].(map[string]any)
+	if !ok {
+		t.Fatalf("dashboard route_map missing: %#v", page["route_map"])
+	}
+	if _, ok := routeMap["links"].([]any); !ok {
+		t.Fatalf("dashboard route_map links = %#v", routeMap["links"])
+	}
 
 	tasksPage := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=tasks", token, nil, http.StatusOK)
 	assertLightTaskProjection(t, tasksPage["agent_tasks"], "tasks page-data")

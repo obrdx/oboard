@@ -321,6 +321,7 @@ const NodeWorkspacePage = lazySurface(() => import('./pages/NodeWorkspacePage').
 const SubscriptionPlansPage = lazySurface(() => import('./pages/SubscriptionPlansPage').then(module => ({ default: module.SubscriptionPlansPage })))
 const UserPlanDialog = lazyDialog(() => import('./pages/UserPlanDialog').then(module => ({ default: module.UserPlanDialog })), '用户套餐')
 import type { UserDashboardOverview } from './pages/UserDashboardPage'
+const DashboardGlobe = lazySurface(() => import('./components/dashboard-globe/DashboardGlobe').then(module => ({ default: module.DashboardGlobe })))
 const UserDashboardPage = lazySurface(() => import('./pages/UserDashboardPage').then(module => ({ default: module.UserDashboardPage })))
 const AccountPage = lazySurface(() => import('./pages/AccountPage').then(module => ({ default: module.AccountPage })))
 const PluginsWorkspace = lazySurface(() => import('./features/plugins/PluginsWorkspace').then(module => ({ default: module.PluginsWorkspace })))
@@ -6202,23 +6203,15 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
           <strong>{loading && !servers.length ? '—' : totalTraffic}</strong>
           <small>{totalServers} 台服务器 · 当前账期累计</small>
         </div>
-        <div className="stat-cell">
-          <div className="stat-cell-head">
-            <span>实时连接</span>
-            <span className="stat-icon-wrap stat-icon-connections"><Cable size={16} /></span>
-          </div>
-          <strong>{liveUnknown ? '—' : live.connections.toLocaleString('zh-CN')}</strong>
-          <small>{live.reporting ? `TCP ${live.tcp.toLocaleString('zh-CN')} · UDP ${live.udp.toLocaleString('zh-CN')}` : '暂无在线服务器'}</small>
-        </div>
-        <div className="stat-cell">
-          <div className="stat-cell-head">
-            <span>实时速率</span>
-            <span className="stat-icon-wrap stat-icon-throughput"><ArrowDownUp size={16} /></span>
-          </div>
-          <strong>{liveUnknown ? '—' : formatByteRate(live.downloadBps + live.uploadBps)}</strong>
-          <small>{live.reporting ? `↓ ${formatByteRate(live.downloadBps)} · ↑ ${formatByteRate(live.uploadBps)}` : '暂无在线服务器'}</small>
-        </div>
       </section>
+
+      <DashboardGlobe
+        routeMap={data.route_map}
+        stats={[
+          { label: '实时连接', value: liveUnknown ? '—' : live.connections.toLocaleString('zh-CN'), detail: live.reporting ? `TCP ${live.tcp.toLocaleString('zh-CN')} · UDP ${live.udp.toLocaleString('zh-CN')}` : '暂无在线服务器' },
+          { label: '实时速率', value: liveUnknown ? '—' : formatByteRate(live.downloadBps + live.uploadBps), detail: live.reporting ? `↓ ${formatByteRate(live.downloadBps)} · ↑ ${formatByteRate(live.uploadBps)}` : '暂无在线服务器' },
+        ]}
+      />
 
       <OfflineIsolationPrompt isolation={data.offline_isolation} client={client} onChanged={() => onCleaned?.()} />
       <ConfigHealthCard summary={configHealth} onOpen={() => setConfigHealthOpen(true)} />

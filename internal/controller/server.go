@@ -2662,11 +2662,17 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 				return nil
 			})
 		}
+		var dashboardInbounds []model.Inbound
 		if err == nil {
 			err = timing.run("inbounds", func() error {
-				var inbounds []model.Inbound
-				inbounds, err = s.store.ListInbounds(ctx)
-				out["inbounds"] = inbounds
+				dashboardInbounds, err = s.store.ListInbounds(ctx)
+				out["inbounds"] = dashboardInbounds
+				return err
+			})
+		}
+		if err == nil {
+			err = timing.run("route_map", func() error {
+				out["route_map"], err = s.dashboardRouteMap(ctx, serverSnapshot, dashboardInbounds)
 				return err
 			})
 		}
