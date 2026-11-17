@@ -937,7 +937,7 @@ func automationCertificateView(certificate model.Certificate) map[string]any {
 		"name": certificate.Name, "primary_domain": certificate.PrimaryDomain,
 		"wildcard": certificate.Wildcard, "challenge_type": certificate.ChallengeType,
 		"status": certificate.Status, "not_before": certificate.NotBefore, "not_after": certificate.NotAfter,
-		"auto_renew": certificate.AutoRenew, "last_error": certificate.LastError,
+		"auto_renew": certificate.AutoRenew, "issuance_origin": certificate.IssuanceOrigin, "last_error": certificate.LastError,
 		"last_issued_at": certificate.LastIssuedAt, "created_at": certificate.CreatedAt, "updated_at": certificate.UpdatedAt,
 	}
 }

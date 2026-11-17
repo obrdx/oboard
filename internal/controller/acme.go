@@ -26,6 +26,15 @@ var (
 
 const certificateRenewalInterval = 12 * time.Hour
 
+const (
+	acmeNonceRetryLimit = 3
+	// certificateNonceRetryCooldown stops a failed badNonce certificate from
+	// opening a new order on every configuration prepare.
+	certificateNonceRetryCooldown = 10 * time.Minute
+)
+
+var acmeNonceRetryDelay = time.Second
+
 func (s *Server) startACMECertificateIssue(ctx context.Context, certificate *model.Certificate, renew, resumeManual bool) error {
 	if certificate.ChallengeType == model.CertificateChallengeHTTP && (certificate.IssuanceServerID == nil || *certificate.IssuanceServerID <= 0) {
 		return errors.New("HTTP-01 certificate has no issuance server")
@@ -381,12 +390,51 @@ func (s *Server) installACMECertificateMaterial(ctx context.Context, certificate
 }
 
 func (s *Server) runACME(ctx context.Context, args ...string) (string, error) {
+	s.acmeRunMu.Lock()
+	defer s.acmeRunMu.Unlock()
+	var output string
+	var err error
+	for attempt := 1; attempt <= acmeNonceRetryLimit; attempt++ {
+		if attempt > 1 {
+			timer := time.NewTimer(acmeNonceRetryDelay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return output, ctx.Err()
+			case <-timer.C:
+			}
+		}
+		output, err = s.execACME(ctx, args...)
+		if err == nil || !acmeNonceReused(output) || attempt == acmeNonceRetryLimit {
+			return output, err
+		}
+		log.Printf("acme: nonce already used, retrying")
+	}
+	return output, err
+}
+
+func (s *Server) execACME(ctx context.Context, args ...string) (string, error) {
 	commandCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(commandCtx, s.acmeCommand, args...) // #nosec G204,G702 -- binary path is local startup configuration; validated values are passed as separate arguments without a shell.
 	cmd.Env = append(os.Environ(), "LE_WORKING_DIR="+s.acmeHome)
 	output, err := cmd.CombinedOutput()
 	return string(output), err
+}
+
+func acmeNonceReused(output string) bool {
+	lower := strings.ToLower(output)
+	return strings.Contains(lower, "badnonce") || strings.Contains(lower, "nonce has already been used")
+}
+
+func certificateNonceFailureRetryable(certificate *model.Certificate, now time.Time) bool {
+	if certificate == nil || !acmeNonceReused(certificate.LastError) {
+		return false
+	}
+	if certificate.LastRenewalAttemptAt == nil {
+		return true
+	}
+	return now.Sub(*certificate.LastRenewalAttemptAt) >= certificateNonceRetryCooldown
 }
 
 func parseACMEDNSChallenges(output string) []model.DNSRecord {
@@ -479,11 +527,20 @@ func (s *Server) renewCertificates(ctx context.Context) {
 		log.Printf("certificate renewal: list certificates: %v", err)
 		return
 	}
+	inbounds, err := s.store.ListInbounds(ctx)
+	if err != nil {
+		log.Printf("certificate renewal: list inbounds: %v", err)
+		return
+	}
 	now := time.Now()
+	s.archiveExpiredUnusedInboundCertificates(ctx, certificates, inbounds, now)
 	deadline := now.Add(30 * 24 * time.Hour)
 	renewalDeadline := now.Add(14 * 24 * time.Hour)
 	for i := range certificates {
 		certificate := &certificates[i]
+		if certificate.IssuanceOrigin == model.CertificateOriginInbound && !inboundUsesCertificate(inbounds, *certificate) {
+			continue
+		}
 		if (certificate.Status != model.CertificateStatusReady && certificate.Status != model.CertificateStatusFailed) || certificate.NotAfter == nil || certificate.NotAfter.After(deadline) {
 			continue
 		}
@@ -501,4 +558,48 @@ func (s *Server) renewCertificates(ctx context.Context) {
 			log.Printf("certificate renewal id=%d error=%v", certificate.ID, err)
 		}
 	}
+}
+
+func (s *Server) archiveExpiredUnusedInboundCertificates(ctx context.Context, certificates []model.Certificate, inbounds []model.Inbound, now time.Time) {
+	for i := range certificates {
+		certificate := &certificates[i]
+		if certificate.IssuanceOrigin != model.CertificateOriginInbound || certificate.Status == model.CertificateStatusArchived || certificate.Status == model.CertificateStatusIssuing || certificate.Status == model.CertificateStatusAwaitingDNS {
+			continue
+		}
+		if certificate.NotAfter == nil || certificate.NotAfter.After(now) || inboundUsesCertificate(inbounds, *certificate) {
+			continue
+		}
+		previousStatus, previousRenew, previousError := certificate.Status, certificate.AutoRenew, certificate.LastError
+		certificate.Status = model.CertificateStatusArchived
+		certificate.AutoRenew = false
+		certificate.LastError = ""
+		if err := s.store.UpdateCertificate(ctx, certificate); err != nil {
+			log.Printf("certificate %d: archive unused inbound certificate: %v", certificate.ID, err)
+			certificate.Status, certificate.AutoRenew, certificate.LastError = previousStatus, previousRenew, previousError
+			continue
+		}
+		log.Printf("certificate %d: archived unused inbound certificate %s", certificate.ID, certificate.PrimaryDomain)
+	}
+}
+
+func inboundUsesCertificate(inbounds []model.Inbound, certificate model.Certificate) bool {
+	for _, inbound := range inbounds {
+		if inbound.CertificateID != nil && *inbound.CertificateID == certificate.ID {
+			return true
+		}
+		switch inbound.CertificateMode {
+		case model.CertificateModeExternal, model.CertificateModeExplicit:
+			continue
+		case model.CertificateModeAuto, model.CertificateModeExact, model.CertificateModeWildcard:
+		default:
+			if !inbound.TLS {
+				continue
+			}
+		}
+		domain := inboundCertificateDomain(inbound)
+		if domain != "" && certificateDomainCovered(certificate.Domains, domain) {
+			return true
+		}
+	}
+	return false
 }

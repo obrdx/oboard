@@ -58,7 +58,8 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 		"id": positiveID, "revision": stringValue, "name": stringValue, "primary_domain": stringValue,
 		"wildcard": boolValue, "challenge_type": stringValue, "status": stringValue,
 		"not_before": nullableString(), "not_after": nullableString(), "auto_renew": boolValue,
-		"last_error": stringValue, "last_issued_at": nullableString(), "created_at": stringValue, "updated_at": stringValue,
+		"issuance_origin": stringValue,
+		"last_error":      stringValue, "last_issued_at": nullableString(), "created_at": stringValue, "updated_at": stringValue,
 	})
 	approvalPolicy := closedObject(map[string]any{
 		"id": stringValue, "principal_id": stringValue, "capability": stringValue,

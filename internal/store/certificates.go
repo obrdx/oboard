@@ -250,7 +250,8 @@ func (s *Store) CreateCertificate(ctx context.Context, v *model.Certificate) err
 	v.UpdatedAt = v.CreatedAt
 	domains, _ := json.Marshal(v.Domains)
 	validation, _ := json.Marshal(v.ValidationRecords)
-	res, err := s.db.ExecContext(ctx, `insert into certificates(name,primary_domain,domains_json,wildcard,challenge_type,dns_credential_id,issuance_server_id,acme_ca,account_email,google_eab_credential_id,eab_key_id,eab_hmac_key_encrypted,status,certificate_pem,fullchain_pem,private_key_encrypted,revision,not_before,not_after,auto_renew,validation_records_json,last_error,last_issued_at,last_renewal_attempt_at,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.Name, v.PrimaryDomain, string(domains), boolInt(v.Wildcard), v.ChallengeType, v.DNSCredentialID, v.IssuanceServerID, v.ACMECA, v.AccountEmail, v.GoogleEABCredentialID, v.EABKeyID, v.EABHMACKeyEncrypted, v.Status, v.CertificatePEM, v.FullchainPEM, v.PrivateKeyEncrypted, v.Revision, timePtrString(v.NotBefore), timePtrString(v.NotAfter), boolInt(v.AutoRenew), string(validation), v.LastError, timePtrString(v.LastIssuedAt), timePtrString(v.LastRenewalAttemptAt), ts, ts)
+	v.IssuanceOrigin = normalizeCertificateOrigin(v.IssuanceOrigin)
+	res, err := s.db.ExecContext(ctx, `insert into certificates(name,primary_domain,domains_json,wildcard,challenge_type,dns_credential_id,issuance_server_id,acme_ca,account_email,google_eab_credential_id,eab_key_id,eab_hmac_key_encrypted,status,certificate_pem,fullchain_pem,private_key_encrypted,revision,not_before,not_after,auto_renew,validation_records_json,last_error,last_issued_at,last_renewal_attempt_at,created_at,updated_at,issuance_origin) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.Name, v.PrimaryDomain, string(domains), boolInt(v.Wildcard), v.ChallengeType, v.DNSCredentialID, v.IssuanceServerID, v.ACMECA, v.AccountEmail, v.GoogleEABCredentialID, v.EABKeyID, v.EABHMACKeyEncrypted, v.Status, v.CertificatePEM, v.FullchainPEM, v.PrivateKeyEncrypted, v.Revision, timePtrString(v.NotBefore), timePtrString(v.NotAfter), boolInt(v.AutoRenew), string(validation), v.LastError, timePtrString(v.LastIssuedAt), timePtrString(v.LastRenewalAttemptAt), ts, ts, v.IssuanceOrigin)
 	if err != nil {
 		return err
 	}
@@ -261,7 +262,8 @@ func (s *Store) CreateCertificate(ctx context.Context, v *model.Certificate) err
 func (s *Store) UpdateCertificate(ctx context.Context, v *model.Certificate) error {
 	domains, _ := json.Marshal(v.Domains)
 	validation, _ := json.Marshal(v.ValidationRecords)
-	_, err := s.db.ExecContext(ctx, `update certificates set name=?,primary_domain=?,domains_json=?,wildcard=?,challenge_type=?,dns_credential_id=?,issuance_server_id=?,acme_ca=?,account_email=?,google_eab_credential_id=?,eab_key_id=?,eab_hmac_key_encrypted=?,status=?,certificate_pem=?,fullchain_pem=?,private_key_encrypted=?,revision=?,not_before=?,not_after=?,auto_renew=?,validation_records_json=?,last_error=?,last_issued_at=?,last_renewal_attempt_at=?,updated_at=? where id=?`, v.Name, v.PrimaryDomain, string(domains), boolInt(v.Wildcard), v.ChallengeType, v.DNSCredentialID, v.IssuanceServerID, v.ACMECA, v.AccountEmail, v.GoogleEABCredentialID, v.EABKeyID, v.EABHMACKeyEncrypted, v.Status, v.CertificatePEM, v.FullchainPEM, v.PrivateKeyEncrypted, v.Revision, timePtrString(v.NotBefore), timePtrString(v.NotAfter), boolInt(v.AutoRenew), string(validation), v.LastError, timePtrString(v.LastIssuedAt), timePtrString(v.LastRenewalAttemptAt), now(), v.ID)
+	v.IssuanceOrigin = normalizeCertificateOrigin(v.IssuanceOrigin)
+	_, err := s.db.ExecContext(ctx, `update certificates set name=?,primary_domain=?,domains_json=?,wildcard=?,challenge_type=?,dns_credential_id=?,issuance_server_id=?,acme_ca=?,account_email=?,google_eab_credential_id=?,eab_key_id=?,eab_hmac_key_encrypted=?,status=?,certificate_pem=?,fullchain_pem=?,private_key_encrypted=?,revision=?,not_before=?,not_after=?,auto_renew=?,validation_records_json=?,last_error=?,last_issued_at=?,last_renewal_attempt_at=?,issuance_origin=?,updated_at=? where id=?`, v.Name, v.PrimaryDomain, string(domains), boolInt(v.Wildcard), v.ChallengeType, v.DNSCredentialID, v.IssuanceServerID, v.ACMECA, v.AccountEmail, v.GoogleEABCredentialID, v.EABKeyID, v.EABHMACKeyEncrypted, v.Status, v.CertificatePEM, v.FullchainPEM, v.PrivateKeyEncrypted, v.Revision, timePtrString(v.NotBefore), timePtrString(v.NotAfter), boolInt(v.AutoRenew), string(validation), v.LastError, timePtrString(v.LastIssuedAt), timePtrString(v.LastRenewalAttemptAt), v.IssuanceOrigin, now(), v.ID)
 	return err
 }
 
@@ -290,7 +292,7 @@ func (s *Store) GetCertificate(ctx context.Context, id int64) (*model.Certificat
 	return &items[0], nil
 }
 
-const certificateSelectSQL = `select id,name,primary_domain,domains_json,wildcard,challenge_type,dns_credential_id,issuance_server_id,acme_ca,account_email,google_eab_credential_id,eab_key_id,eab_hmac_key_encrypted,status,certificate_pem,fullchain_pem,private_key_encrypted,revision,not_before,not_after,auto_renew,validation_records_json,last_error,last_issued_at,last_renewal_attempt_at,created_at,updated_at from certificates`
+const certificateSelectSQL = `select id,name,primary_domain,domains_json,wildcard,challenge_type,dns_credential_id,issuance_server_id,acme_ca,account_email,google_eab_credential_id,eab_key_id,eab_hmac_key_encrypted,status,certificate_pem,fullchain_pem,private_key_encrypted,revision,not_before,not_after,auto_renew,validation_records_json,last_error,last_issued_at,last_renewal_attempt_at,created_at,updated_at,issuance_origin from certificates`
 
 func scanCertificates(rows *sql.Rows) ([]model.Certificate, error) {
 	var out []model.Certificate
@@ -300,7 +302,7 @@ func scanCertificates(rows *sql.Rows) ([]model.Certificate, error) {
 		var dnsCredentialID, issuanceServerID, googleEABCredentialID sql.NullInt64
 		var notBefore, notAfter, lastIssuedAt, lastRenewalAttemptAt sql.NullString
 		var domainsJSON, validationJSON, createdAt, updatedAt string
-		if err := rows.Scan(&v.ID, &v.Name, &v.PrimaryDomain, &domainsJSON, &wildcard, &v.ChallengeType, &dnsCredentialID, &issuanceServerID, &v.ACMECA, &v.AccountEmail, &googleEABCredentialID, &v.EABKeyID, &v.EABHMACKeyEncrypted, &v.Status, &v.CertificatePEM, &v.FullchainPEM, &v.PrivateKeyEncrypted, &v.Revision, &notBefore, &notAfter, &autoRenew, &validationJSON, &v.LastError, &lastIssuedAt, &lastRenewalAttemptAt, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.Name, &v.PrimaryDomain, &domainsJSON, &wildcard, &v.ChallengeType, &dnsCredentialID, &issuanceServerID, &v.ACMECA, &v.AccountEmail, &googleEABCredentialID, &v.EABKeyID, &v.EABHMACKeyEncrypted, &v.Status, &v.CertificatePEM, &v.FullchainPEM, &v.PrivateKeyEncrypted, &v.Revision, &notBefore, &notAfter, &autoRenew, &validationJSON, &v.LastError, &lastIssuedAt, &lastRenewalAttemptAt, &createdAt, &updatedAt, &v.IssuanceOrigin); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(domainsJSON), &v.Domains)
@@ -376,4 +378,19 @@ func scanInboundCertificateBindings(rows *sql.Rows) ([]model.InboundCertificateB
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+func normalizeCertificateOrigin(origin string) string {
+	if origin == model.CertificateOriginInbound {
+		return model.CertificateOriginInbound
+	}
+	return model.CertificateOriginManual
+}
+
+func (s *Store) migrateCertificateIssuanceOrigin(ctx context.Context) error {
+	if err := s.ensureColumn(ctx, "certificates", "issuance_origin", `alter table certificates add column issuance_origin text not null default 'manual'`); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `update certificates set issuance_origin=? where issuance_origin=? and name = ? || primary_domain`, model.CertificateOriginInbound, model.CertificateOriginManual, model.AutomaticCertificateNamePrefix)
+	return err
 }

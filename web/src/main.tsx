@@ -4798,6 +4798,7 @@ const dnsProviderCredentialURLs: Record<DNSProvider, string> = {
 
 const certificateValueLabels: Record<string, string> = {
   issuing: '签发中',
+  archived: '已归档',
   awaiting_dns: '等待 DNS 解析',
   http01: 'Agent HTTP-01',
   dns01: '面板 DNS-01',

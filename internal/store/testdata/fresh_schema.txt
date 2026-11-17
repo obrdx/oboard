@@ -711,6 +711,7 @@ table certificates
     last_renewal_attempt_at TEXT notnull=0 default=- pk=0
     created_at TEXT notnull=1 default=- pk=0
     updated_at TEXT notnull=1 default=- pk=0
+    issuance_origin TEXT notnull=1 default='manual' pk=0
 table configuration_operation_attempts
     operation_id TEXT notnull=1 default=- pk=1
     target_type TEXT notnull=1 default=- pk=2

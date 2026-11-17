@@ -737,7 +737,19 @@ func (s *Server) ensureManagedCertificateIssue(ctx context.Context, inbound mode
 		case model.CertificateStatusIssuing:
 			return fmt.Errorf("%w: %s 正在签发", errCertificateProvisioning, issuanceDomain)
 		case model.CertificateStatusFailed:
+			if certificateNonceFailureRetryable(certificate, time.Now()) {
+				if err := s.startCertificateIssue(ctx, certificate, certificate.Revision != "" || certificate.NotAfter != nil, false); err != nil {
+					return err
+				}
+				return fmt.Errorf("%w: 正在重试签发 %s", errCertificateProvisioning, issuanceDomain)
+			}
 			return fmt.Errorf("证书 %s 自动签发失败：%s", issuanceDomain, certificate.LastError)
+		case model.CertificateStatusArchived:
+			certificate.AutoRenew = true
+			if err := s.startCertificateIssue(ctx, certificate, true, false); err != nil {
+				return err
+			}
+			return fmt.Errorf("%w: 已重新签发 %s", errCertificateProvisioning, issuanceDomain)
 		case model.CertificateStatusReady:
 			if err := s.startCertificateIssue(ctx, certificate, true, false); err != nil {
 				return err
@@ -760,6 +772,7 @@ func (s *Server) ensureManagedCertificateIssue(ctx context.Context, inbound mode
 	if err := s.validateCertificateReferences(ctx, *certificate); err != nil {
 		return err
 	}
+	certificate.IssuanceOrigin = model.CertificateOriginInbound
 	if err := s.store.CreateCertificate(ctx, certificate); err != nil {
 		return err
 	}
@@ -775,7 +788,7 @@ func automaticCertificateRequest(settings map[string]string, issuanceDomain stri
 		return certificateRequest{}, err
 	}
 	request := certificateRequest{
-		Name:            "自动证书 " + issuanceDomain,
+		Name:            model.AutomaticCertificateNamePrefix + issuanceDomain,
 		Domains:         []string{issuanceDomain},
 		ChallengeType:   model.CertificateChallengeDNS,
 		DNSCredentialID: &dnsCredentialID,

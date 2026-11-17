@@ -193,6 +193,7 @@ type Server struct {
 	telegramPollerID              string
 	certificateIssueMu            sync.Mutex
 	certificateIssues             map[int64]bool
+	acmeRunMu                     sync.Mutex
 	controllerUpdater             *controllerupdate.Client
 	controllerBackupDir           string
 	controllerDBPath              string

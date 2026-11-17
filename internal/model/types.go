@@ -1229,6 +1229,13 @@ const (
 	CertificateStatusAwaitingDNS = "awaiting_dns"
 	CertificateStatusReady       = "ready"
 	CertificateStatusFailed      = "failed"
+	CertificateStatusArchived    = "archived"
+)
+
+const (
+	CertificateOriginManual        = "manual"
+	CertificateOriginInbound       = "inbound"
+	AutomaticCertificateNamePrefix = "自动证书 "
 )
 
 type DNSProvider string
@@ -1318,6 +1325,7 @@ type Certificate struct {
 	NotBefore             *time.Time  `json:"not_before,omitempty"`
 	NotAfter              *time.Time  `json:"not_after,omitempty"`
 	AutoRenew             bool        `json:"auto_renew"`
+	IssuanceOrigin        string      `json:"issuance_origin,omitempty"`
 	ValidationRecords     []DNSRecord `json:"validation_records,omitempty"`
 	LastError             string      `json:"last_error,omitempty"`
 	LastIssuedAt          *time.Time  `json:"last_issued_at,omitempty"`
