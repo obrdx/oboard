@@ -197,3 +197,56 @@ exit 1
 		t.Fatalf("retries=%q want 3", strings.TrimSpace(string(count)))
 	}
 }
+
+func TestDNSManualResumeDropsPreviousOrderLink(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	domain := "*.example.com"
+	confDir := filepath.Join(home, domain+"_ecc")
+	if err := os.MkdirAll(confDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	confPath := filepath.Join(confDir, domain+".conf")
+	previous := "Le_Domain='*.example.com'\nLe_OrderFinalize='https://ca.test/order/new/finalize'\nLe_LinkOrder='https://ca.test/order/old'\nLe_Keylength='ec-256'\n"
+	if err := os.WriteFile(confPath, []byte(previous), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	seenPath := filepath.Join(dir, "seen")
+	script := filepath.Join(dir, "acme.sh")
+	body := fmt.Sprintf(`#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "--renew" ]; then
+    cat %q > %q
+  fi
+done
+printf 'Signing error: wrong status\n'
+exit 1
+`, confPath, seenPath)
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db := openControllerAutomationTestStore(t)
+	srv := newTestServer(db, "test-secret", "")
+	srv.acmeCommand = script
+	srv.acmeHome = home
+	certificate := &model.Certificate{PrimaryDomain: domain, Domains: []string{domain}, ChallengeType: model.CertificateChallengeDNSManual, ACMECA: "google"}
+	if err := srv.runDNSCertificateIssue(ctx, certificate, true, true); err == nil {
+		t.Fatal("expected failing fake acme.sh")
+	}
+	seen, err := os.ReadFile(seenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Le_Domain='*.example.com'\nLe_OrderFinalize='https://ca.test/order/new/finalize'\nLe_Keylength='ec-256'\n"
+	if string(seen) != want {
+		t.Fatalf("resume saw config:\n%s\nwant:\n%s", seen, want)
+	}
+	info, err := os.Stat(confPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("config mode=%v want 0600", info.Mode().Perm())
+	}
+}
