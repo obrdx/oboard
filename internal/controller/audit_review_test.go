@@ -28,8 +28,10 @@ func TestAuditAIReviewsAreAvailableToManagementRolesAndIdempotent(t *testing.T) 
 
 	request(t, handler, http.MethodGet, "/api/v1/ui/audit/ai-reviews", operatorToken, nil, http.StatusOK)
 	page := request(t, handler, http.MethodGet, "/api/v1/ui/page-data?page=audit", adminToken, nil, http.StatusOK)
-	if _, ok := page["users"]; !ok {
-		t.Fatal("admin audit page omitted selectable users")
+	for _, key := range []string{"users", "servers"} {
+		if value, ok := page[key]; ok && value != nil {
+			t.Fatalf("admin audit page carried %q rows: %#v", key, value)
+		}
 	}
 
 	provider := request(t, handler, http.MethodPost, "/api/v1/ai/providers", adminToken, map[string]any{

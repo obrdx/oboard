@@ -3009,13 +3009,9 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case "audit":
-		// The AI review form scopes a job to selected servers and, for admins, users.
-		if err = require(model.RoleOperator); err == nil {
-			err = addServers()
-		}
-		if err == nil && roleAllows(role, model.RoleAdmin) {
-			err = addUsers()
-		}
+		// Every audit view loads its own paginated data; the page payload
+		// carries no server or user rows.
+		err = require(model.RoleOperator)
 
 	case "account":
 		if user := currentUser(r); user != nil {
