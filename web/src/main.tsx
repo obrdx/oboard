@@ -6214,8 +6214,8 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
             <span>实时速率</span>
             <span className="stat-icon-wrap stat-icon-throughput"><ArrowDownUp size={16} /></span>
           </div>
-          <strong className="stat-cell-rate">{liveUnknown ? '—' : <><ArrowDown size={16} aria-label="下载" />{formatByteRate(live.downloadBps)}</>}</strong>
-          <small className="stat-cell-rate-sub"><ArrowUp size={13} aria-label="上传" />{formatByteRate(live.uploadBps)} · {live.reporting} 台在线</small>
+          <strong>{liveUnknown ? '—' : formatByteRate(live.downloadBps + live.uploadBps)}</strong>
+          <small>{live.reporting ? `↓ ${formatByteRate(live.downloadBps)} · ↑ ${formatByteRate(live.uploadBps)}` : '暂无在线服务器'}</small>
         </div>
       </section>
 
