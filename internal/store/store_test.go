@@ -2081,6 +2081,61 @@ func TestDeleteProxyPathRemovesSubscriptionPlanReference(t *testing.T) {
 	}
 }
 
+func TestDeleteSharedPrefixLeafPathKeepsSibling(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := t.Context()
+	id, _, prefixID, leafID := proxyPathTruncationFixture(t, s)
+	path, err := s.GetProxyPath(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, err := s.ListProxyPathStepsForPath(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf := steps[1]
+	if ok, err := s.HasSiblingForLeaf(ctx, leaf); err != nil || ok {
+		t.Fatalf("single path: sibling=%v err=%v", ok, err)
+	}
+	sibling := &model.ProxyPath{InboundID: path.InboundID, BranchSourceStepID: &prefixID, Enabled: true, Secret: "sibling"}
+	if err := s.CreateProxyPath(ctx, sibling); err != nil {
+		t.Fatal(err)
+	}
+	for i, step := range steps {
+		step.PathID = sibling.ID
+		if i == 1 {
+			step.NodeType = model.ProxyPathStepWARP
+			step.ServerID = nil
+		}
+		if err := s.CreateProxyPathStep(ctx, &step); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := s.ListProxyPathStepsForPath(ctx, sibling.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteSharedPrefixLeafPath(ctx, leaf); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetProxyPath(ctx, id); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("deleted path: %v", err)
+	}
+	for _, removed := range []int64{prefixID, leafID} {
+		if _, err := s.GetProxyPathStep(ctx, removed); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("deleted step %d: %v", removed, err)
+		}
+	}
+	after, err := s.ListProxyPathStepsForPath(ctx, sibling.ID)
+	if err != nil || len(after) != 2 || before[0].ID != after[0].ID || before[1].ID != after[1].ID {
+		t.Fatalf("sibling steps: %v, %v", after, err)
+	}
+}
+
 func TestProxyPathBranchSourceClearsWhenSourceStepIsDeleted(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

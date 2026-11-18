@@ -11396,7 +11396,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       message: cascading
         ? <div className="dialog-detail">
           <p>确认从 {entity.label} 开始断开？该位置及其全部后续节点都会从这条路径移除。</p>
-          <p className="muted">如果这会删除整条链路，相关节点也会从所有订阅套餐自动移除。</p>
+          <p className="muted">删除共享前缀的末端分支时，整条分支及其套餐关联会一并移除，其他分支保留。有入口分流规则的路径会保留。</p>
         </div>
         : <div className="dialog-detail">
           <p>确认删除 {entity.label}？</p>

@@ -11076,44 +11076,12 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 404)
 			return
 		}
-		steps, err := s.store.ListProxyPathStepsForPath(r.Context(), current.PathID)
+		deletedSteps, deletePath, err := s.planProxyPathStepRemoval(r.Context(), *current)
 		if err != nil {
-			fail(w, err, 500)
+			fail(w, err, 400)
 			return
 		}
-		deletedSteps := 0
-		for _, step := range steps {
-			if step.Position >= current.Position {
-				deletedSteps++
-			}
-		}
-		// Verify the projection of the remaining chain before deleting anything.
-		// Deleting first would leave the operator with a 400 response and a path
-		// that has already lost its steps.
-		keepAsDirect := false
-		if deletedSteps == len(steps) {
-			keepAsDirect, err = s.proxyPathHasRootRoutingRules(r.Context(), current.PathID)
-			if err != nil {
-				fail(w, err, 500)
-				return
-			}
-		}
-		if deletedSteps < len(steps) || keepAsDirect {
-			if err := s.validateProxyPathTruncation(r.Context(), current.PathID, current.Position); err != nil {
-				fail(w, err, 400)
-				return
-			}
-		}
-		if err := s.store.DeleteProxyPathStepsFromPosition(r.Context(), current.PathID, current.Position); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		remaining, err := s.store.ListProxyPathStepsForPath(r.Context(), current.PathID)
-		if err != nil {
-			fail(w, err, 500)
-			return
-		}
-		retainedPath, pathDeleted, err := s.finishProxyPathTruncation(r.Context(), current.PathID, len(remaining) == 0)
+		retainedPath, pathDeleted, err := s.applyProxyPathStepRemoval(r.Context(), *current, deletePath)
 		if err != nil {
 			fail(w, err, 500)
 			return

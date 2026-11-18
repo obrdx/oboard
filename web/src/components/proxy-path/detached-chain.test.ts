@@ -40,7 +40,7 @@ describe('detached proxy path chains', () => {
     expect(proxyPathStepDeleteRemovals(1, 11, steps, false)).toEqual({
       proxy_path_steps: [11, 12],
     })
-    expect(proxyPathStepDeleteRemovals(1, 11, steps, true)).toEqual({
+    expect(proxyPathStepDeleteRemovals(1, 12, steps, true)).toEqual({
       proxy_path_steps: [11, 12],
       proxy_paths: [1],
     })

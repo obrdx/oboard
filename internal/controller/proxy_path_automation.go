@@ -83,18 +83,11 @@ func (s *Server) registerProxyPathAutomationOperations() {
 		return s.routingTopologyAutomationRevision(ctx)
 	})
 	s.automation.Register("proxy_path_steps.truncate", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
-		step, deleted, _, err := s.proxyPathStepTruncateAutomationCandidate(ctx, principal, input)
+		step, deleted, deletePath, err := s.proxyPathStepTruncateAutomationCandidate(ctx, principal, input)
 		if err != nil {
 			return nil, err
 		}
-		if err := s.store.DeleteProxyPathStepsFromPosition(ctx, step.PathID, step.Position); err != nil {
-			return nil, err
-		}
-		remaining, err := s.store.ListProxyPathStepsForPath(ctx, step.PathID)
-		if err != nil {
-			return nil, err
-		}
-		retainedPath, pathDeleted, err := s.finishProxyPathTruncation(ctx, step.PathID, len(remaining) == 0)
+		retainedPath, pathDeleted, err := s.applyProxyPathStepRemoval(ctx, step, deletePath)
 		if err != nil {
 			return nil, err
 		}
@@ -349,9 +342,37 @@ func (s *Server) proxyPathStepTruncateAutomationCandidate(ctx context.Context, p
 	if err := s.authorizeProxyPathStepCandidate(ctx, principal, *step); err != nil {
 		return model.ProxyPathStep{}, 0, false, err
 	}
+	deleted, deletePath, err := s.planProxyPathStepRemoval(ctx, *step)
+	return *step, deleted, deletePath, err
+}
+
+func (s *Server) applyProxyPathStepRemoval(ctx context.Context, step model.ProxyPathStep, deletePath bool) (*model.ProxyPath, bool, error) {
+	if deletePath {
+		steps, err := s.store.ListProxyPathStepsForPath(ctx, step.PathID)
+		if err != nil {
+			return nil, false, err
+		}
+		if len(steps) > 0 && steps[0].Position < step.Position {
+			if err := s.store.DeleteSharedPrefixLeafPath(ctx, step); err != nil {
+				return nil, false, err
+			}
+			return nil, true, s.reconcileProxyPathNameTemplates(ctx)
+		}
+	}
+	if err := s.store.DeleteProxyPathStepsFromPosition(ctx, step.PathID, step.Position); err != nil {
+		return nil, false, err
+	}
+	remaining, err := s.store.ListProxyPathStepsForPath(ctx, step.PathID)
+	if err != nil {
+		return nil, false, err
+	}
+	return s.finishProxyPathTruncation(ctx, step.PathID, len(remaining) == 0)
+}
+
+func (s *Server) planProxyPathStepRemoval(ctx context.Context, step model.ProxyPathStep) (int, bool, error) {
 	steps, err := s.store.ListProxyPathStepsForPath(ctx, step.PathID)
 	if err != nil {
-		return model.ProxyPathStep{}, 0, false, err
+		return 0, false, err
 	}
 	deleted := 0
 	for _, item := range steps {
@@ -360,24 +381,33 @@ func (s *Server) proxyPathStepTruncateAutomationCandidate(ctx context.Context, p
 		}
 	}
 	pathDeleted := deleted == len(steps)
+	if deleted == 1 && !pathDeleted {
+		pathDeleted, err = s.store.HasSiblingForLeaf(ctx, step)
+		if err != nil {
+			return 0, false, err
+		}
+	}
 	if pathDeleted {
 		retained, err := s.proxyPathHasRootRoutingRules(ctx, step.PathID)
 		if err != nil {
-			return model.ProxyPathStep{}, 0, false, err
+			return 0, false, err
 		}
 		pathDeleted = !retained
 	}
 	if !pathDeleted {
 		if err := s.validateProxyPathTruncation(ctx, step.PathID, step.Position); err != nil {
-			return model.ProxyPathStep{}, 0, false, err
+			return 0, false, err
 		}
 	}
 	if pathDeleted {
 		if _, err := s.guardAssignableNodeDelete(ctx, model.AssignableNodeProxyPath, step.PathID); err != nil {
-			return model.ProxyPathStep{}, 0, false, err
+			return 0, false, err
 		}
 	}
-	return *step, deleted, pathDeleted, nil
+	if pathDeleted {
+		deleted = len(steps)
+	}
+	return deleted, pathDeleted, nil
 }
 
 func (s *Server) directProxyPathAutomationCandidate(ctx context.Context, principal application.Principal, input json.RawMessage) (model.ProxyPath, []model.ProxyPathStep, error) {

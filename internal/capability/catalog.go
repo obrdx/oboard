@@ -500,8 +500,12 @@ func defaultDescriptors() []Descriptor {
 	})
 	for _, name := range []string{"inbounds.delete", "proxy_paths.delete", "proxy_path_steps.truncate"} {
 		input, output, evaluator := executableSchemas(name)
+		description := "删除代理拓扑资源，并自动从所有订阅套餐移除已删除节点"
+		if name == "proxy_path_steps.truncate" {
+			description = "删除所选步骤及后续步骤；删除同入口、同前缀分支的末端时移除整条选中链路及套餐关联，保留其他分支。有入口分流规则的路径保留。"
+		}
 		descriptors = append(descriptors, Descriptor{
-			Name: name, Description: "删除代理拓扑资源，并自动从所有订阅套餐移除已删除节点", InputSchema: input, OutputSchema: output,
+			Name: name, Description: description, InputSchema: input, OutputSchema: output,
 			RequiredScopes: []string{"topology:write"}, ResourceEvaluator: evaluator, RiskClass: 3,
 			ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal,
 			Destructive: true, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate,

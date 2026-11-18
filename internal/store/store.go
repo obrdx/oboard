@@ -5605,6 +5605,53 @@ func (s *Store) PruneOrphanedProxyPathSteps(ctx context.Context) error {
 	return tx.Commit()
 }
 
+// A sibling must share the entire prefix and continue through a different
+// next hop. Each branch stores its own step IDs.
+const sharedBranchPrefixSQL = `select exists(
+	select 1 from proxy_path_steps leaf
+	join proxy_paths parent on parent.id=leaf.path_id
+	join proxy_paths sibling on sibling.inbound_id=parent.inbound_id and sibling.id!=parent.id
+	join proxy_path_steps next on next.path_id=sibling.id and next.position=leaf.position
+	where leaf.id=? and leaf.path_id=? and leaf.position=?
+	and exists(select 1 from proxy_path_steps where path_id=parent.id and position<leaf.position)
+	and not exists(select 1 from proxy_path_steps where path_id=parent.id and position>leaf.position)
+	and not (next.node_type=leaf.node_type and next.server_id is leaf.server_id
+		and next.inbound_id is leaf.inbound_id and next.external_outbound_id is leaf.external_outbound_id)
+	and (select count(*) from proxy_path_steps where path_id=sibling.id and position<leaf.position)
+		=(select count(*) from proxy_path_steps where path_id=parent.id and position<leaf.position)
+	and not exists(select 1 from proxy_path_steps p where p.path_id=parent.id and p.position<leaf.position
+		and not exists(select 1 from proxy_path_steps q where q.path_id=sibling.id and q.position=p.position
+			and q.node_type=p.node_type and q.server_id is p.server_id and q.inbound_id is p.inbound_id
+			and q.external_outbound_id is p.external_outbound_id and q.transport_mode is p.transport_mode))
+)`
+
+func (s *Store) HasSiblingForLeaf(ctx context.Context, step model.ProxyPathStep) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, sharedBranchPrefixSQL, step.ID, step.PathID, step.Position).Scan(&exists)
+	return exists, err
+}
+
+func (s *Store) DeleteSharedPrefixLeafPath(ctx context.Context, step model.ProxyPathStep) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var exists bool
+	if err := tx.QueryRowContext(ctx, sharedBranchPrefixSQL, step.ID, step.PathID, step.Position).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return errors.New("branch topology changed; retry deletion")
+	}
+	// Cascade only from the removed leaf. Prefix branches own their copied
+	// steps and their source references are cleared by ON DELETE SET NULL.
+	if err := cascadeDeleteProxyPathBranchesTx(ctx, tx, []int64{step.ID}, []int64{step.PathID}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // DeleteProxyPathStepsFromPosition removes one path edge and everything that
 // depends on it. Proxy path steps are an ordered chain, so retaining later
 // steps after removing an earlier edge would silently reconnect a different

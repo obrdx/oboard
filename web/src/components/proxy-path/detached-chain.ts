@@ -68,9 +68,9 @@ export function proxyPathStepDeleteRemovals(
   steps: readonly ProxyPathStep[],
   pathDeleted: boolean,
 ) {
-  const suffix = detachedPathSuffix(pathID, fromStepID, steps)
+  const removed = pathDeleted ? steps.filter(step => step.path_id === pathID) : detachedPathSuffix(pathID, fromStepID, steps)
   return {
-    proxy_path_steps: suffix.map(step => step.id),
+    proxy_path_steps: removed.map(step => step.id),
     ...(pathDeleted ? { proxy_paths: [pathID] } : {}),
   }
 }
