@@ -3,9 +3,22 @@ package store
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
 )
+
+func TestFailStalePreparingPlanChangeWithoutMatch(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	revision, failed, err := s.FailStalePreparingPlanChange(t.Context(), 1, time.Now(), "")
+	if err != nil || failed || revision != 0 {
+		t.Fatalf("stale check returned (%d, %t, %v)", revision, failed, err)
+	}
+}
 
 func TestPlanReconcileCandidatesSkipIdlePlans(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "test.sqlite"))

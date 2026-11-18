@@ -161,7 +161,7 @@ func (s *Store) FailStalePreparingPlanChange(ctx context.Context, planID int64, 
 	}
 	now := now()
 	var revisionID int64
-	err := s.db.QueryRowContext(ctx, `update access_changes set status='failed', error=?, failed_at=?, updated_at=?
+	err := s.db.WriteQueryRowContext(ctx, `update access_changes set status='failed', error=?, failed_at=?, updated_at=?
 		where id=(select id from access_changes where source_plan_id=? and status='preparing' and activated_at is null and updated_at < ? order by id desc limit 1)
 		returning candidate_revision_id`, reason, now, now, planID, olderThan.UTC().Format(time.RFC3339Nano)).Scan(&revisionID)
 	if errors.Is(err, sql.ErrNoRows) {
