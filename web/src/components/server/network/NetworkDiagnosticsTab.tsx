@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import type { Server } from '../../proxy-path/types'
+import { summarizeNetworkDiagnostics, type DiagnosticState } from './networkDiagnosticsSummary'
 
 export function NetworkDiagnosticsTab({ server, client, notify, disabled, disabledReason }: { server: Server; client:any; notify?:(m:string,t?:string)=>void; disabled?:boolean; disabledReason?:string }) {
   const [running, setRunning]=useState(false)
@@ -40,29 +41,12 @@ export function NetworkDiagnosticsTab({ server, client, notify, disabled, disabl
     } finally{ setRunning(false) }
   }
 
-  const items: Array<{key:string; label:string}> = [
-    { key:'controller', label:'Controller 连接' },
-    { key:'ipv4', label:'IPv4' },
-    { key:'ipv6', label:'IPv6' },
-    { key:'default_route', label:'默认路由' },
-    { key:'listeners', label:'入口监听' },
-    { key:'dns', label:'DNS' },
-    { key:'firewall', label:'防火墙' },
-    { key:'entry_probe', label:'入口公网探测' },
-  ]
-
-  const getStatus=(key:string)=>{
+  const checks = summarizeNetworkDiagnostics(result)
+  const statusText=(state:DiagnosticState)=>{
     if(!result) return running ? '检查中' : '—'
-    // result may have fields like checks, results, etc.
-    const checks = result.checks || result.results || result.items || {}
-    if(checks[key]?.available !== undefined) return checks[key].available ? '✓' : '✗'
-    if(checks[key]?.status) return checks[key].status
-    // generic fallback: try to find in raw
-    const raw = JSON.stringify(result).toLowerCase()
-    if(raw.includes(key) && raw.includes('fail')) return '✗'
-    if(raw.includes(key)) return '✓'
-    return result[key]?.available ? '✓' : result[key] ? '✓' : '—'
+    return state==='ok' ? '✓' : state==='fail' ? '✗' : state==='warn' ? '!' : '—'
   }
+  const entryTargets: any[] = Array.isArray(result?.entry_targets) ? result.entry_targets : []
 
   return (
     <div className="server-diagnostics-tab">
@@ -80,10 +64,11 @@ export function NetworkDiagnosticsTab({ server, client, notify, disabled, disabl
       <section className="server-detail-section">
         <h3>诊断项目</h3>
         <div className="server-diagnostics-grid">
-          {items.map(item=> (
-            <div key={item.key} className="server-diagnostics-card">
+          {checks.map(item=> (
+            <div key={item.key} className="server-diagnostics-card" title={result ? item.detail : undefined}>
               <span>{item.label}</span>
-              <span className={`server-diagnostics-status ${getStatus(item.key)==='✓' ? 'ok' : getStatus(item.key)==='✗' ? 'fail' : ''}`}>{getStatus(item.key)}</span>
+              <span className={`server-diagnostics-status ${result ? item.state : ''}`}>{statusText(item.state)}</span>
+              {result && item.detail ? <small className="muted">{item.detail}</small> : null}
             </div>
           ))}
         </div>
@@ -91,25 +76,19 @@ export function NetworkDiagnosticsTab({ server, client, notify, disabled, disabl
           <details className="task-details" style={{marginTop:12}} open>
             <summary>详细输出</summary>
             <pre style={{whiteSpace:'pre-wrap', wordBreak:'break-all', maxHeight:420, overflow:'auto', background:'var(--surface-2)', padding:12, borderRadius:'var(--radius-sm)'}}>{JSON.stringify(result, null, 2)}</pre>
-            {result?.ip_addr || result?.ip_route ? (
-              <div style={{marginTop:10}}>
-                {result.ip_addr && <><strong>ip addr</strong><pre>{typeof result.ip_addr==='string'? result.ip_addr : JSON.stringify(result.ip_addr,null,2)}</pre></>}
-                {result.ip_route && <><strong>ip route</strong><pre>{typeof result.ip_route==='string'? result.ip_route : JSON.stringify(result.ip_route,null,2)}</pre></>}
-              </div>
-            ) : null}
           </details>
         ) : <small className="muted">点击“开始完整诊断”后，这里会显示各项检查的详细输出</small>}
       </section>
 
-      {result && result.entry_probes && (
+      {entryTargets.length > 0 && (
         <section className="server-detail-section">
-          <h3>入口监听</h3>
+          <h3>入口探测</h3>
           <div className="server-entry-probe-list">
-            {(Array.isArray(result.entry_probes) ? result.entry_probes : Object.entries(result.entry_probes)).map((entry:any, idx:number)=>{
-              const label = Array.isArray(result.entry_probes) ? `监听 ${idx+1}` : entry[0]
-              const val = Array.isArray(result.entry_probes) ? entry : entry[1]
-              const available = val?.available ?? val?.status==='ok'
-              return <div key={idx} className="server-entry-probe-row"><span>{label}</span><span className={available? 'ok':'fail'}>{available? '正常':'异常'}</span><small>{val?.latency_ms ? `${val.latency_ms} ms` : ''}</small></div>
+            {entryTargets.map((target:any, idx:number)=>{
+              const probe = target?.tcp_self_probe || {}
+              const available = !target?.error && probe.ok === true
+              const label = target?.name || `${target?.host || ''}:${target?.port || ''}`
+              return <div key={idx} className="server-entry-probe-row"><span>{label}</span><span className={available? 'ok':'fail'}>{available? '正常':'异常'}</span><small>{available && probe.duration_ms !== undefined ? `${probe.duration_ms} ms` : (target?.error || probe.error || '')}</small></div>
             })}
           </div>
         </section>

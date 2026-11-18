@@ -24578,6 +24578,8 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 .server-diagnostics-status { font-size:16px; font-weight:800; }
 .server-diagnostics-status.ok { color: var(--success); }
 .server-diagnostics-status.fail { color: var(--danger); }
+.server-diagnostics-status.warn { color: var(--warning); }
+.server-diagnostics-card small { font-size:12px; line-height:1.4; overflow-wrap:anywhere; }
 .server-entry-probe-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); background: var(--surface-2); }
 .server-entry-probe-row .ok { color: var(--success); font-weight:650; }
 .server-entry-probe-row .fail { color: var(--danger); font-weight:650; }
