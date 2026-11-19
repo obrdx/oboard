@@ -76,6 +76,15 @@ func TestUserEffectiveNodesUsesCurrentCatalog(t *testing.T) {
 	if len(response["nodes"].([]any)) != 2 {
 		t.Fatalf("disabled path remains visible: %#v", response)
 	}
+	catalog := request(t, h, http.MethodGet, "/api/v1/ui/assignable-nodes?status=disabled&plan_id="+itoa(plan.ID), token, nil, http.StatusOK)
+	rows := catalog["nodes"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("expected one disabled node in the saved plan, got %d", len(rows))
+	}
+	row := rows[0].(map[string]any)
+	if row["key"] != core.NodeKeyOf(model.AssignableNodeProxyPath, ids["p1"]) || row["effective_users"] != float64(0) {
+		t.Fatalf("disabled catalog row key=%v effective_users=%v", row["key"], row["effective_users"])
+	}
 	exception := model.UserNodeException{UserID: userID, NodeType: model.AssignableNodeInbound, NodeID: ids["i2"], Effect: model.UserNodeExceptionAllow, Status: model.UserNodeExceptionActive, Reason: "单独授权"}
 	if err := srv.store.CreateUserNodeException(t.Context(), &exception); err != nil {
 		t.Fatal(err)

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -22,7 +23,11 @@ func TestBuildEffectiveAccessSnapshotPriority(t *testing.T) {
 	now := time.Now()
 	alice := model.User{ID: 1, Username: "alice", Status: "active"}
 	plan := snapshotTestPlan(1, "premium")
+	inbounds := []model.Inbound{{ID: 5, Enabled: true}}
+	paths := []model.ProxyPath{{ID: 10, InboundID: 5, Enabled: true}, {ID: 11, InboundID: 5, Enabled: true}, {ID: 12, InboundID: 5, Enabled: true}}
 	snap := BuildEffectiveAccessSnapshot(EffectiveAccessInput{
+		Inbounds:  inbounds,
+		Paths:     paths,
 		Users:     []model.User{alice},
 		Bindings:  []model.UserPlanBinding{{UserID: 1, PlanID: 1, Enabled: true}},
 		Plans:     []model.SubscriptionPlan{plan},
@@ -36,6 +41,8 @@ func TestBuildEffectiveAccessSnapshotPriority(t *testing.T) {
 
 	// Deny beats plan.
 	snap = BuildEffectiveAccessSnapshot(EffectiveAccessInput{
+		Inbounds:   inbounds,
+		Paths:      paths,
 		Users:      []model.User{alice},
 		Bindings:   []model.UserPlanBinding{{UserID: 1, PlanID: 1, Enabled: true}},
 		Plans:      []model.SubscriptionPlan{plan},
@@ -51,6 +58,8 @@ func TestBuildEffectiveAccessSnapshotPriority(t *testing.T) {
 	// Allow adds a node outside the plan; deny still wins over an allow on the
 	// same node.
 	snap = BuildEffectiveAccessSnapshot(EffectiveAccessInput{
+		Inbounds: inbounds,
+		Paths:    paths,
 		Users:    []model.User{alice},
 		Bindings: []model.UserPlanBinding{{UserID: 1, PlanID: 1, Enabled: true}},
 		Plans:    []model.SubscriptionPlan{plan},
@@ -74,6 +83,8 @@ func TestBuildEffectiveAccessSnapshotPriority(t *testing.T) {
 
 	// Expired exceptions are ignored.
 	snap = BuildEffectiveAccessSnapshot(EffectiveAccessInput{
+		Inbounds: inbounds,
+		Paths:    paths,
 		Users:    []model.User{alice},
 		Bindings: []model.UserPlanBinding{{UserID: 1, PlanID: 1, Enabled: true}},
 		Plans:    []model.SubscriptionPlan{plan},
@@ -92,6 +103,8 @@ func TestBuildEffectiveAccessSnapshotPriority(t *testing.T) {
 
 	// Disabled plan and inactive users grant nothing.
 	snap = BuildEffectiveAccessSnapshot(EffectiveAccessInput{
+		Inbounds:  inbounds,
+		Paths:     paths,
 		Users:     []model.User{alice, {ID: 2, Username: "bob", Status: "disabled"}},
 		Bindings:  []model.UserPlanBinding{{UserID: 1, PlanID: 1, Enabled: true}, {UserID: 2, PlanID: 1, Enabled: true}},
 		Plans:     []model.SubscriptionPlan{{ID: 1, Name: "off", Enabled: false}},
@@ -109,9 +122,13 @@ func TestBuildEffectiveAccessSnapshotTimeWindows(t *testing.T) {
 	plan := snapshotTestPlan(1, "premium")
 	future := now.Add(24 * time.Hour)
 	past := now.Add(-24 * time.Hour)
+	inbounds := []model.Inbound{{ID: 5, Enabled: true}}
+	paths := []model.ProxyPath{{ID: 10, InboundID: 5, Enabled: true}}
 
 	// Future start and expired bindings are not effective.
 	snap := BuildEffectiveAccessSnapshot(EffectiveAccessInput{
+		Inbounds:  inbounds,
+		Paths:     paths,
 		Users:     []model.User{alice},
 		Bindings:  []model.UserPlanBinding{{UserID: 1, PlanID: 1, Enabled: true, StartsAt: &future}},
 		Plans:     []model.SubscriptionPlan{plan},
@@ -122,6 +139,8 @@ func TestBuildEffectiveAccessSnapshotTimeWindows(t *testing.T) {
 		t.Fatalf("future binding must not be effective: %#v", snap.UserNodes)
 	}
 	snap = BuildEffectiveAccessSnapshot(EffectiveAccessInput{
+		Inbounds:  inbounds,
+		Paths:     paths,
 		Users:     []model.User{alice},
 		Bindings:  []model.UserPlanBinding{{UserID: 1, PlanID: 1, Enabled: true, ExpiresAt: &past}},
 		Plans:     []model.SubscriptionPlan{plan},
@@ -135,6 +154,8 @@ func TestBuildEffectiveAccessSnapshotTimeWindows(t *testing.T) {
 	// A window containing now is effective.
 	start := now.Add(-time.Hour)
 	snap = BuildEffectiveAccessSnapshot(EffectiveAccessInput{
+		Inbounds:  inbounds,
+		Paths:     paths,
 		Users:     []model.User{alice},
 		Bindings:  []model.UserPlanBinding{{UserID: 1, PlanID: 1, Enabled: true, StartsAt: &start, ExpiresAt: &future}},
 		Plans:     []model.SubscriptionPlan{plan},
@@ -180,6 +201,40 @@ func TestBuildEffectiveAccessSnapshotProjections(t *testing.T) {
 	pathBindings := snap.ProxyPathUserBindings()
 	if len(pathBindings) != 1 || pathBindings[0].ProxyPathID != 7 {
 		t.Fatalf("path bindings = %#v", pathBindings)
+	}
+}
+
+func TestEffectiveAccessDisabledPathOnSharedInbound(t *testing.T) {
+	input := EffectiveAccessInput{
+		Users:      []model.User{{ID: 1, Status: "active"}, {ID: 2, Status: "active"}},
+		Bindings:   []model.UserPlanBinding{{UserID: 1, PlanID: 1, Enabled: true}},
+		Plans:      []model.SubscriptionPlan{snapshotTestPlan(1, "admin")},
+		PlanNodes:  []model.SubscriptionPlanNode{snapshotTestNode(model.AssignableNodeProxyPath, 10)},
+		Exceptions: []model.UserNodeException{{UserID: 2, NodeType: model.AssignableNodeProxyPath, NodeID: 11, Effect: model.UserNodeExceptionAllow}},
+		Inbounds:   []model.Inbound{{ID: 8, Enabled: true}},
+		Paths:      []model.ProxyPath{{ID: 10, InboundID: 8, Enabled: false}, {ID: 11, InboundID: 8, Enabled: true}},
+	}
+	disabled := NodeKeyOf(model.AssignableNodeProxyPath, 10)
+	enabled := NodeKeyOf(model.AssignableNodeProxyPath, 11)
+	snap := BuildEffectiveAccessSnapshot(input)
+	if len(snap.NodeUsers[disabled]) != 0 || len(snap.ProxyPathUsers[10]) != 0 || snap.EffectiveNodeKeys(1)[disabled] {
+		t.Fatal("disabled plan path granted access")
+	}
+	if !slices.Equal(snap.InboundUsers[8], []int64{2}) || !slices.Equal(snap.ProxyPathUsers[11], []int64{2}) ||
+		!slices.Equal(snap.NodeUsers[enabled], []int64{2}) || snap.UserNodes[2][enabled].Source != "exception_allow" {
+		t.Fatal("only the individually authorized user should have access to the shared inbound")
+	}
+
+	input.Paths[0].Enabled = true
+	snap = BuildEffectiveAccessSnapshot(input)
+	if !slices.Equal(snap.NodeUsers[disabled], []int64{1}) || !slices.Equal(snap.InboundUsers[8], []int64{1, 2}) {
+		t.Fatal("enabling the path should restore access through the saved plan")
+	}
+
+	input.Inbounds[0].Enabled = false
+	snap = BuildEffectiveAccessSnapshot(input)
+	if len(snap.NodeUsers) != 0 || len(snap.ProxyPathUsers) != 0 || len(snap.InboundUsers) != 0 || len(snap.UserNodes) != 0 {
+		t.Fatal("a disabled inbound must exclude both its plan and exception paths")
 	}
 }
 

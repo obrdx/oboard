@@ -17,6 +17,28 @@ describe('NodeAssignmentsPage reading context', () => {
   })
   afterEach(() => { act(() => root.unmount()); container.remove() })
 
+  it('warns on both layouts only when a plan contains a disabled node', async () => {
+    const plans = [{ plan_id: 1, name: '基础套餐' }]
+    const nodes = [
+      { ...node('香港'), key: 'proxy_path:10', type: 'proxy_path', id: 10, status: 'disabled', plans },
+      { ...node('香港 | 东京'), key: 'proxy_path:11', type: 'proxy_path', id: 11, effective_users: 1, allow_exceptions: 1 },
+      { ...node('停用入口'), key: 'inbound:2', id: 2, status: 'disabled' },
+      { ...node('离线入口'), key: 'inbound:3', id: 3, status: 'offline', plans },
+    ]
+    const request = vi.fn(async () => ({ nodes, total: nodes.length, page: 1, page_size: 50 }))
+    await act(async () => root.render(<NodeAssignmentsPage data={{}} client={{ request }} load={vi.fn()} />))
+    await flush()
+    for (const selector of ['.nw-catalog-table tbody tr', '.nw-card-list article']) {
+      const rows = container.querySelectorAll(selector)
+      expect(rows).toHaveLength(4)
+      expect(rows[0].textContent).toContain('基础套餐')
+      expect(rows[0].textContent).toContain('套餐仍含此禁用节点')
+      expect(rows[1].textContent).toContain('未加入套餐')
+      expect(rows[1].textContent).toContain('1 人+1')
+      for (const row of Array.from(rows).slice(1)) expect(row.textContent).not.toContain('套餐仍含此禁用节点')
+    }
+  })
+
   it('requests the selected page rather than silently showing page one', async () => {
     const request = vi.fn(async (path: string) => {
       const page = new URL(path, 'http://localhost').searchParams.get('page')

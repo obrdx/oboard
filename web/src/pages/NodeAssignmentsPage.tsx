@@ -34,13 +34,15 @@ const emptyFilters: Filters = { entryServerID: 0, entryRegion: '', exitRegion: '
 const groupByLabels: Record<string, string> = { entry_server: '按入口服务器', exit_region: '按出口地区' }
 const sortLabels: Record<string, string> = { name: '名称', entry_server: '入口服务器', exit_region: '出口地区', users: '用户数', status: '状态' }
 
-function PlanChips({ plans }: { plans: Array<{ plan_id: number; name: string }> }) {
+function PlanChips({ node }: { node: CatalogNode }) {
+  const plans = node.plans
   if (!plans || plans.length === 0) return <span className="nw-unassigned">未加入套餐</span>
   const visible = plans.slice(0, 2)
   const rest = plans.slice(2)
   return <div className="nw-chips">
     {visible.map(plan => <span key={plan.plan_id} className="nw-chip">{plan.name}</span>)}
     {rest.length > 0 && <span className="nw-chip nw-chip-more" tabIndex={0} title={rest.map(plan => plan.name).join('、')} aria-label={`其余 ${rest.length} 个套餐：${rest.map(plan => plan.name).join('、')}`}>+{rest.length}</span>}
+    {node.status === 'disabled' && <Badge variant="warning">套餐仍含此禁用节点</Badge>}
   </div>
 }
 
@@ -309,7 +311,7 @@ export function NodeAssignmentsPage({ data, client, load, notify }: {
               <td><NodeIdentity node={node} showGroup={!grouped} /></td>
               <td><span className="nw-cell-title nw-cell-plain">{node.entry_server_name || '—'}</span><span className="nw-cell-sub nw-mono">{node.entry_protocol || '—'}{node.entry_port ? `:${node.entry_port}` : ''}</span></td>
               <td><Badge variant={nodeStatusVariant(node.status)}>{nodeStatusLabels[node.status] || node.status}</Badge></td>
-              <td><PlanChips plans={node.plans} /></td>
+              <td><PlanChips node={node} /></td>
               <td><UserCount node={node} /></td>
               <td>{rowActions(node)}</td>
             </tr>
@@ -332,7 +334,7 @@ export function NodeAssignmentsPage({ data, client, load, notify }: {
           <dl className="nw-facts">
             <div><dt>入口</dt><dd>{node.entry_server_name || '—'} <span className="nw-mono">{node.entry_protocol || ''}{node.entry_port ? `:${node.entry_port}` : ''}</span></dd></div>
             <div><dt>授权用户</dt><dd><UserCount node={node} /></dd></div>
-            <div><dt>所属套餐</dt><dd><PlanChips plans={node.plans} /></dd></div>
+            <div><dt>所属套餐</dt><dd><PlanChips node={node} /></dd></div>
           </dl>
           {rowActions(node, true)}
         </article>

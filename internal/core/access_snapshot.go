@@ -133,9 +133,11 @@ func BuildEffectiveAccessSnapshot(input EffectiveAccessInput) *EffectiveAccessSn
 	for _, inbound := range input.Inbounds {
 		inboundByID[inbound.ID] = inbound
 	}
-	pathByID := map[int64]model.ProxyPath{}
+	enabledPathInbounds := map[int64]int64{}
 	for _, path := range input.Paths {
-		pathByID[path.ID] = path
+		if path.Enabled && inboundByID[path.InboundID].Enabled {
+			enabledPathInbounds[path.ID] = path.InboundID
+		}
 		snap.PathInboundIDs[path.ID] = path.InboundID
 	}
 
@@ -188,20 +190,17 @@ func BuildEffectiveAccessSnapshot(input EffectiveAccessInput) *EffectiveAccessSn
 				Exception: &exception,
 			}
 		}
-		if len(grantByKey) > 0 {
-			snap.UserNodes[userID] = grantByKey
-		}
 		snap.UserPolicies[userID] = effectiveUserPolicy(user, plan, binding)
 		for key, grant := range grantByKey {
-			snap.NodeUsers[key] = append(snap.NodeUsers[key], userID)
 			switch grant.NodeType {
 			case model.AssignableNodeProxyPath:
-				if path, found := pathByID[grant.NodeID]; found {
-					if inbound, ok := inboundByID[path.InboundID]; ok && inbound.Enabled {
-						snap.ProxyPathUsers[grant.NodeID] = append(snap.ProxyPathUsers[grant.NodeID], userID)
-						snap.InboundUsers[path.InboundID] = append(snap.InboundUsers[path.InboundID], userID)
-					}
+				inboundID, enabled := enabledPathInbounds[grant.NodeID]
+				if !enabled {
+					delete(grantByKey, key)
+					continue
 				}
+				snap.ProxyPathUsers[grant.NodeID] = append(snap.ProxyPathUsers[grant.NodeID], userID)
+				snap.InboundUsers[inboundID] = append(snap.InboundUsers[inboundID], userID)
 			case model.AssignableNodeInbound:
 				if inbound, ok := inboundByID[grant.NodeID]; ok && inbound.Enabled {
 					snap.InboundUsers[grant.NodeID] = append(snap.InboundUsers[grant.NodeID], userID)
@@ -209,6 +208,10 @@ func BuildEffectiveAccessSnapshot(input EffectiveAccessInput) *EffectiveAccessSn
 			case model.AssignableNodeExternalOutbound:
 				snap.ExternalOutboundUsers[grant.NodeID] = append(snap.ExternalOutboundUsers[grant.NodeID], userID)
 			}
+			snap.NodeUsers[key] = append(snap.NodeUsers[key], userID)
+		}
+		if len(grantByKey) > 0 {
+			snap.UserNodes[userID] = grantByKey
 		}
 	}
 	// A user can reach the same inbound both as a standalone inbound node and
