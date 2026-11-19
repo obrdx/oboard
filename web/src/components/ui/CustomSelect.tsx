@@ -82,7 +82,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         : String(opt.value ?? '')
       return Math.max(max, raw.length)
     }, 0)
-    const estimatedMinWidth = Math.min(240, Math.max(120, longestLabelLen * 9 + 40))
+    const estimatedMinWidth = Math.min(360, Math.max(120, longestLabelLen * 9 + 40))
     const width = Math.min(Math.max(rect.width, estimatedMinWidth, menuMinWidth), window.innerWidth - viewportPadding * 2)
     const left = Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - viewportPadding - width)
     const top = placement === 'bottom'

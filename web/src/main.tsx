@@ -13967,8 +13967,9 @@ function AnyTLSPaddingSection({ mode, draft, update, data, client, onUpdated }: 
           </div>
         </FormField>
       </div>
-      {snapshot.metadata?.mode !== 'custom' && !!snapshot.scheme.length && <div className="dialog-actions inline-actions">
-        <button type="button" className="ghost" disabled={busy} onClick={() => void runOperation({ operation: 'regenerate' }, '重新生成')}>重新生成</button>
+      {snapshot.metadata?.mode !== 'custom' && !!snapshot.scheme.length && <div className="inbound-padding-regenerate">
+        <span className="field-hint">按当前预设重新生成一份长度区间，结构不变，保存后立即部署。</span>
+        <button type="button" className="ghost" disabled={busy} onClick={() => void runOperation({ operation: 'regenerate' }, '重新生成')}><RefreshCw size={15} aria-hidden="true" />重新生成</button>
       </div>}
       <EntryFormDisclosure icon={<Edit3 size={15} aria-hidden="true" />} title="改为自定义">
         <FormField label="自定义 padding_scheme" required hint="每行一条规则；保存后模式切换为 custom。"><textarea rows={8} value={customText} onChange={event => setCustomText(event.target.value)} spellCheck={false} /></FormField>
