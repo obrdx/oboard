@@ -57,12 +57,18 @@ func TestDashboardPageDataUsesLightTaskProjection(t *testing.T) {
 	if _, exists := audit["elevated_risk_count"]; !exists {
 		t.Fatalf("dashboard connection_audit missing elevated_risk_count: %#v", audit)
 	}
-	routeMap, ok := page["route_map"].(map[string]any)
+	traffic, ok := page["traffic"].(map[string]any)
 	if !ok {
-		t.Fatalf("dashboard route_map missing: %#v", page["route_map"])
+		t.Fatalf("dashboard traffic missing: %#v", page["traffic"])
 	}
-	if _, ok := routeMap["links"].([]any); !ok {
-		t.Fatalf("dashboard route_map links = %#v", routeMap["links"])
+	if days, ok := traffic["days"].([]any); !ok || len(days) != dashboardTrafficDays {
+		t.Fatalf("dashboard traffic days = %#v", traffic["days"])
+	}
+	if _, ok := traffic["users"].([]any); !ok {
+		t.Fatalf("dashboard traffic users = %#v", traffic["users"])
+	}
+	if _, exists := page["route_map"]; exists {
+		t.Fatal("dashboard still returns the retired route_map")
 	}
 
 	tasksPage := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=tasks", token, nil, http.StatusOK)

@@ -288,6 +288,7 @@ const ProviderEditor = lazySurface(() => import('./components/ai-provider/Provid
 import { capabilityOutputModeLabel } from './components/ai-provider/CapabilityBadge'
 import { auditHealthScoreTone, normalizeAuditHealthScore } from './ai-audit-score'
 import { dashboardLiveTotals, dashboardServerTrafficBytes } from './dashboard-traffic'
+import { DailyTrafficChart, LiveRateChart, UserTrafficRank, type DashboardTrafficData } from './components/dashboard/DashboardTraffic'
 import {
   deploymentStatusFromSummary,
   groupTasksForTimeline,
@@ -321,7 +322,6 @@ const NodeWorkspacePage = lazySurface(() => import('./pages/NodeWorkspacePage').
 const SubscriptionPlansPage = lazySurface(() => import('./pages/SubscriptionPlansPage').then(module => ({ default: module.SubscriptionPlansPage })))
 const UserPlanDialog = lazyDialog(() => import('./pages/UserPlanDialog').then(module => ({ default: module.UserPlanDialog })), '用户套餐')
 import type { UserDashboardOverview } from './pages/UserDashboardPage'
-const DashboardGlobe = lazySurface(() => import('./components/dashboard-globe/DashboardGlobe').then(module => ({ default: module.DashboardGlobe })))
 const UserDashboardPage = lazySurface(() => import('./pages/UserDashboardPage').then(module => ({ default: module.UserDashboardPage })))
 const AccountPage = lazySurface(() => import('./pages/AccountPage').then(module => ({ default: module.AccountPage })))
 const PluginsWorkspace = lazySurface(() => import('./features/plugins/PluginsWorkspace').then(module => ({ default: module.PluginsWorkspace })))
@@ -6122,6 +6122,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
   const auditWindowHours = Number(auditOverview.window_hours || 24)
   const totalTraffic = formatBytes(dashboardServerTrafficBytes(servers))
   const live = dashboardLiveTotals(servers)
+  const trafficOverview: DashboardTrafficData = data.traffic || {}
   const liveUnknown = loading && !servers.length
 
   const pct = (used: unknown, total: unknown) => {
@@ -6149,13 +6150,6 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
     if (reasons.length) attention.push({ id: server.id, name: server.name, region: server.region_code || server.detected_region_code, reasons })
   }
   attention.sort((x, y) => Number(y.reasons.some(r => r.tone === 'danger')) - Number(x.reasons.some(r => r.tone === 'danger')))
-  const trafficRank = (servers as Server[])
-    .map(server => ({ id: server.id, name: server.name, region: server.region_code || server.detected_region_code, bytes: dashboardServerTrafficBytes([server]), limit: Number(server.traffic_limit_bytes) || 0 }))
-    .filter(item => item.bytes > 0)
-    .sort((x, y) => y.bytes - x.bytes)
-    .slice(0, 6)
-  const rankMax = trafficRank[0]?.bytes || 1
-
   return (
     <div className="dashboard-page">
       <OnboardingDashboardCard />
@@ -6205,13 +6199,10 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
         </div>
       </section>
 
-      <DashboardGlobe
-        routeMap={data.route_map}
-        stats={[
-          { label: '实时连接', value: liveUnknown ? '—' : live.connections.toLocaleString('zh-CN'), detail: live.reporting ? `TCP ${live.tcp.toLocaleString('zh-CN')} · UDP ${live.udp.toLocaleString('zh-CN')}` : '暂无在线服务器' },
-          { label: '实时速率', value: liveUnknown ? '—' : formatByteRate(live.downloadBps + live.uploadBps), detail: live.reporting ? `↓ ${formatByteRate(live.downloadBps)} · ↑ ${formatByteRate(live.uploadBps)}` : '暂无在线服务器' },
-        ]}
-      />
+      <section className="dash-traffic-row">
+        <DailyTrafficChart days={trafficOverview.days || []} loading={loading && !data.traffic} />
+        <LiveRateChart live={live} unknown={liveUnknown} />
+      </section>
 
       <OfflineIsolationPrompt isolation={data.offline_isolation} client={client} onChanged={() => onCleaned?.()} />
       <ConfigHealthCard summary={configHealth} onOpen={() => setConfigHealthOpen(true)} />
@@ -6256,31 +6247,13 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
         <OfflineIsolationCard isolation={data.offline_isolation} client={client} onChanged={() => onCleaned?.()} />
         </div>
 
-        <div className="dash-panel">
-          <div className="dash-section-head">
-            <div>
-              <h2>流量排行</h2>
-              <p>当前账期累计流量最高的服务器</p>
-            </div>
-            <span className="dash-total">{totalTraffic}</span>
-          </div>
-          {trafficRank.length === 0 ? (
-            <div className="dash-empty">{loading && !servers.length ? '正在加载…' : '暂无流量数据'}</div>
-          ) : (
-            <ul className="dash-list">
-              {trafficRank.map(item => (
-                <li key={item.id}>
-                  <button type="button" className="dash-list-row dash-rank-row" onClick={() => goTab('servers')}>
-                    <RegionFlag code={item.region} size={18} />
-                    <strong>{item.name}</strong>
-                    <span className="dash-rank-value">{formatBytes(item.bytes)}{item.limit > 0 ? <small> / {formatBytes(item.limit)}</small> : null}</span>
-                    <span className="dash-rank-bar"><i style={{ width: `${Math.max(2, (item.bytes / rankMax) * 100)}%` }} /></span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        <UserTrafficRank
+          users={trafficOverview.users || []}
+          userCount={Number(trafficOverview.user_count) || 0}
+          totalBytes={(Number(summary.traffic_upload_bytes) || 0) + (Number(summary.traffic_download_bytes) || 0)}
+          loading={loading && !data.traffic}
+          onOpen={() => goTab('users')}
+        />
       </section>
     </div>
   )

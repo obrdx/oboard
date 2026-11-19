@@ -88,6 +88,7 @@ type trustedProxyStateContextKey struct{}
 
 type Server struct {
 	vpngate                    vpngateRuntime
+	dashboardTrafficCache      dashboardTrafficCache
 	ipData                     ipDataRuntime
 	runtimeSecurityReports     sync.Map
 	externalCheckMu            sync.Mutex
@@ -2662,17 +2663,15 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 				return nil
 			})
 		}
-		var dashboardInbounds []model.Inbound
 		if err == nil {
 			err = timing.run("inbounds", func() error {
-				dashboardInbounds, err = s.store.ListInbounds(ctx)
-				out["inbounds"] = dashboardInbounds
+				out["inbounds"], err = s.store.ListInbounds(ctx)
 				return err
 			})
 		}
 		if err == nil {
-			err = timing.run("route_map", func() error {
-				out["route_map"], err = s.dashboardRouteMap(ctx, serverSnapshot, dashboardInbounds)
+			err = timing.run("traffic", func() error {
+				out["traffic"], err = s.dashboardTraffic(ctx)
 				return err
 			})
 		}

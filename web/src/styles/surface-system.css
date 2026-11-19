@@ -636,7 +636,7 @@ textarea:focus-visible,
 .panel-body { padding: clamp(14px, 2vw, 20px) clamp(14px, 2.4vw, 24px); }
 .server-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); }
 
-/* ---------- Dashboard: three stats in one row, stacked on phones; live connections and rate sit on the globe ---------- */
+/* ---------- Dashboard: three stats in one row, stacked on phones ---------- */
 
 .stat-row { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--border); margin-bottom: 16px; }
 .stat-cell { padding: clamp(14px, 2vw, 20px) clamp(14px, 2.2vw, 24px); border: 0; background: var(--surface-solid); }
@@ -646,7 +646,6 @@ textarea:focus-visible,
 @media (max-width: 560px) {
   .stat-row { grid-template-columns: minmax(0, 1fr); }
 }
-.dash-globe { margin-bottom: 16px; }
 
 /* ---------- Dashboard panels: attention list and traffic ranking ---------- */
 
