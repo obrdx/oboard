@@ -21,6 +21,7 @@ import {
   resourcePercent,
   serverAttention,
   serverDisplayName,
+  serverProxyTraffic,
   serverTraffic,
   usageTone,
   type ServerAttention,
@@ -149,7 +150,7 @@ function serverMetrics(server: Server) {
   const memory = resourcePercent(server.memory_used_bytes, server.memory_total_bytes)
   const disk = resourcePercent(server.disk_bytes, server.disk_total_bytes)
   const monitoring = serverMonitoring(server.monitoring_display, online)
-  return { online, cpu, memory, disk, monitoring, traffic: serverTraffic(server) }
+  return { online, cpu, memory, disk, monitoring, traffic: serverTraffic(server), proxy: serverProxyTraffic(server) }
 }
 
 function lossLabel(loss: number | null, online: boolean) {
@@ -162,7 +163,7 @@ function TargetButton({ server, name, onAction }: { server: Server; name: string
 
 export function ServerTile({ server, role, expectedBuild, uninstalling, sortControls, latencyChart = 'sparkline', onAction }: ServerItemProps) {
   const name = serverDisplayName(server)
-  const { online, cpu, memory, disk, monitoring, traffic } = serverMetrics(server)
+  const { online, cpu, memory, disk, monitoring, traffic, proxy } = serverMetrics(server)
   const attention = serverAttention(server, expectedBuild)
   const expiry = cardExpiryStatus(server)
   const age = enrolledDaysLabel(server)
@@ -193,15 +194,16 @@ export function ServerTile({ server, role, expectedBuild, uninstalling, sortCont
       </div>
       <div className="fleet-tile-network">
         <div className="fleet-rates">
-          <span className="fleet-rate is-down" title={`下载 · 本期累计 ${formatBytes(server.traffic_download_bytes || 0)}`}><ArrowDown size={13} aria-hidden="true" /><strong>{na ? '—' : formatByteRate(server.network_download_bps || 0)}</strong></span>
-          <span className="fleet-rate is-up" title={`上传 · 本期累计 ${formatBytes(server.traffic_upload_bytes || 0)}`}><ArrowUp size={13} aria-hidden="true" /><strong>{na ? '—' : formatByteRate(server.network_upload_bps || 0)}</strong></span>
+          <span className="fleet-rate is-down" title={`代理下载 · 主机网卡 ${formatByteRate(server.network_download_bps || 0)}`}><ArrowDown size={13} aria-hidden="true" /><strong>{na ? '—' : formatByteRate(proxy.downloadBps)}</strong></span>
+          <span className="fleet-rate is-up" title={`代理上传 · 主机网卡 ${formatByteRate(server.network_upload_bps || 0)}`}><ArrowUp size={13} aria-hidden="true" /><strong>{na ? '—' : formatByteRate(proxy.uploadBps)}</strong></span>
         </div>
         <Meter
-          label="本期流量"
-          value={traffic.limit > 0 ? `${formatBytes(traffic.used)} / ${formatBytes(traffic.limit)}` : formatBytes(traffic.used)}
+          label="本期代理流量"
+          value={formatBytes(proxy.total)}
           percent={traffic.percent}
           tone={traffic.tone}
-          title={`↓ ${formatBytes(server.traffic_download_bytes || 0)} · ↑ ${formatBytes(server.traffic_upload_bytes || 0)}`}
+          sub={traffic.limit > 0 ? `主机 ${formatBytes(traffic.used)} / ${formatBytes(traffic.limit)}` : `主机总计 ${formatBytes(traffic.used)}`}
+          title={`代理 ↓ ${formatBytes(proxy.download)} · ↑ ${formatBytes(proxy.upload)}\n主机网卡 ↓ ${formatBytes(server.traffic_download_bytes || 0)} · ↑ ${formatBytes(server.traffic_upload_bytes || 0)}（含测速、主控同步等）`}
         />
       </div>
       <div className="fleet-tile-quality">
@@ -259,7 +261,7 @@ function CompactMeter({ percent, value, sub, tone = '', muted = false, label }: 
 
 export function ServerRow({ server, role, expectedBuild, uninstalling, sortControls, latencyChart = 'sparkline', onAction }: ServerItemProps) {
   const name = serverDisplayName(server)
-  const { online, cpu, memory, disk, monitoring, traffic } = serverMetrics(server)
+  const { online, cpu, memory, disk, monitoring, traffic, proxy } = serverMetrics(server)
   const attention = serverAttention(server, expectedBuild)
   const expiry = cardExpiryStatus(server)
   const na = !online
@@ -280,10 +282,10 @@ export function ServerRow({ server, role, expectedBuild, uninstalling, sortContr
       <div className="fleet-cell fleet-cell-memory" role="cell"><CompactMeter label="内存" percent={na ? 0 : memory} value={na || !server.memory_total_bytes ? '—' : formatPercent(memory)} sub={server.memory_total_bytes ? formatBytes(server.memory_total_bytes) : undefined} muted={na} /></div>
       <div className="fleet-cell fleet-cell-disk" role="cell"><CompactMeter label="磁盘" percent={na ? 0 : disk} value={na || !server.disk_total_bytes ? '—' : formatPercent(disk)} sub={server.disk_total_bytes ? formatBytes(server.disk_total_bytes) : undefined} muted={na} /></div>
       <div className="fleet-cell fleet-cell-rate" role="cell">
-        <span className="fleet-rate is-down"><ArrowDown size={12} aria-hidden="true" /><strong>{na ? '—' : formatByteRate(server.network_download_bps || 0)}</strong></span>
-        <span className="fleet-rate is-up"><ArrowUp size={12} aria-hidden="true" /><strong>{na ? '—' : formatByteRate(server.network_upload_bps || 0)}</strong></span>
+        <span className="fleet-rate is-down" title={`代理下载 · 主机网卡 ${formatByteRate(server.network_download_bps || 0)}`}><ArrowDown size={12} aria-hidden="true" /><strong>{na ? '—' : formatByteRate(proxy.downloadBps)}</strong></span>
+        <span className="fleet-rate is-up" title={`代理上传 · 主机网卡 ${formatByteRate(server.network_upload_bps || 0)}`}><ArrowUp size={12} aria-hidden="true" /><strong>{na ? '—' : formatByteRate(proxy.uploadBps)}</strong></span>
       </div>
-      <div className="fleet-cell fleet-cell-traffic" role="cell"><CompactMeter label="流量" percent={traffic.percent} tone={traffic.tone} value={formatBytes(traffic.used)} sub={traffic.limit > 0 ? `/ ${formatBytes(traffic.limit)}` : '不限'} /></div>
+      <div className="fleet-cell fleet-cell-traffic" role="cell"><CompactMeter label="代理" percent={traffic.percent} tone={traffic.tone} value={formatBytes(proxy.total)} sub={traffic.limit > 0 ? `主机 ${formatBytes(traffic.used)} / ${formatBytes(traffic.limit)}` : `主机 ${formatBytes(traffic.used)}`} /></div>
       <div className="fleet-cell fleet-cell-quality" role="cell">
         {monitoring.series.slice(0, 2).map((item, index) => (
           <span key={item.key} className="fleet-quality-inline" title={seriesTitle(item, monitoring.name)}>

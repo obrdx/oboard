@@ -1078,6 +1078,10 @@ type Server struct {
 	NetworkDownloadBPS          uint64             `json:"network_download_bps"`
 	TrafficUploadBytes          uint64             `json:"traffic_upload_bytes"`
 	TrafficDownloadBytes        uint64             `json:"traffic_download_bytes"`
+	ProxyTrafficUploadBytes     uint64             `json:"proxy_traffic_upload_bytes"`
+	ProxyTrafficDownloadBytes   uint64             `json:"proxy_traffic_download_bytes"`
+	ProxyUploadBPS              uint64             `json:"proxy_upload_bps"`
+	ProxyDownloadBPS            uint64             `json:"proxy_download_bps"`
 	TrafficPeriodStart          string             `json:"traffic_period_start"`
 	TrafficPeriodEnd            string             `json:"traffic_period_end"`
 	ConnectivityProbeEnabled    bool               `json:"-"`

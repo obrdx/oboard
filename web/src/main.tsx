@@ -287,7 +287,7 @@ import {
 const ProviderEditor = lazySurface(() => import('./components/ai-provider/ProviderEditor').then(module => ({ default: module.ProviderEditor })))
 import { capabilityOutputModeLabel } from './components/ai-provider/CapabilityBadge'
 import { auditHealthScoreTone, normalizeAuditHealthScore } from './ai-audit-score'
-import { dashboardLiveTotals, dashboardServerTrafficBytes } from './dashboard-traffic'
+import { dashboardLiveTotals, dashboardServerProxyBytes, dashboardServerTrafficBytes } from './dashboard-traffic'
 import { DailyTrafficChart, LiveRateChart, UserTrafficRank, type DashboardTrafficData } from './components/dashboard/DashboardTraffic'
 import {
   deploymentStatusFromSummary,
@@ -6120,7 +6120,8 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
   const auditCalculating = auditOverview.ready === false
   const elevatedRiskCount = Number(auditOverview.elevated_risk_count || 0)
   const auditWindowHours = Number(auditOverview.window_hours || 24)
-  const totalTraffic = formatBytes(dashboardServerTrafficBytes(servers))
+  const proxyTraffic = formatBytes(dashboardServerProxyBytes(servers))
+  const hostTraffic = formatBytes(dashboardServerTrafficBytes(servers))
   const live = dashboardLiveTotals(servers)
   const trafficOverview: DashboardTrafficData = data.traffic || {}
   const liveUnknown = loading && !servers.length
@@ -6191,11 +6192,11 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
         </div>
         <div className="stat-cell">
           <div className="stat-cell-head">
-            <span>活跃流量</span>
+            <span>代理流量</span>
             <span className="stat-icon-wrap stat-icon-zap"><Zap size={16} /></span>
           </div>
-          <strong>{loading && !servers.length ? '—' : totalTraffic}</strong>
-          <small>{totalServers} 台服务器 · 当前账期累计</small>
+          <strong>{loading && !servers.length ? '—' : proxyTraffic}</strong>
+          <small title="主机网卡流量包含测速、主控同步等非代理流量">当前周期 · 主机网卡共 {hostTraffic}</small>
         </div>
       </section>
 
@@ -9099,9 +9100,12 @@ function ServerDetailDialog({ server, role = 'viewer', onResetTraffic, onClose }
           <dl className="server-detail-grid">
             <ServerDetailItem label="统计周期" value={serverTrafficPeriodLabel(server)} />
             <ServerDetailItem label="周期范围" value={serverTrafficPeriodRange(server)} />
-            <ServerDetailItem label="上传流量" value={formatBytes(server.traffic_upload_bytes || 0)} />
-            <ServerDetailItem label="下载流量" value={formatBytes(server.traffic_download_bytes || 0)} />
-            <ServerDetailItem label="周期总流量" value={(() => {
+            <ServerDetailItem label="代理上传" value={formatBytes(server.proxy_traffic_upload_bytes || 0)} />
+            <ServerDetailItem label="代理下载" value={formatBytes(server.proxy_traffic_download_bytes || 0)} />
+            <ServerDetailItem label="代理总流量" value={formatBytes((Number(server.proxy_traffic_upload_bytes) || 0) + (Number(server.proxy_traffic_download_bytes) || 0))} />
+            <ServerDetailItem label="主机网卡上传" value={formatBytes(server.traffic_upload_bytes || 0)} />
+            <ServerDetailItem label="主机网卡下载" value={formatBytes(server.traffic_download_bytes || 0)} />
+            <ServerDetailItem label="主机总流量" value={(() => {
               const total = (Number(server.traffic_upload_bytes) || 0) + (Number(server.traffic_download_bytes) || 0)
               const limit = Number(server.traffic_limit_bytes || 0)
               if (limit > 0) {
@@ -9111,7 +9115,7 @@ function ServerDetailDialog({ server, role = 'viewer', onResetTraffic, onClose }
               return formatBytes(total)
             })()} />
             <ServerDetailItem label="周期限额" value={server.traffic_limit_bytes ? formatBytes(Number(server.traffic_limit_bytes)) : '不限量'} />
-            <ServerDetailItem label="统计说明" value="未配置周期与日期时默认自然月" />
+            <ServerDetailItem label="统计说明" value="代理流量只计用户代理连接；主机流量是整块网卡，含测速、主控同步等，限额按主机流量计算" wide />
           </dl>
           {Number(server.traffic_limit_bytes || 0) > 0 && (() => {
             const total = (Number(server.traffic_upload_bytes) || 0) + (Number(server.traffic_download_bytes) || 0)
@@ -9126,7 +9130,7 @@ function ServerDetailDialog({ server, role = 'viewer', onResetTraffic, onClose }
               <button type="button" className="ghost" onClick={onResetTraffic}>
                 <RotateCcw size={14} /> 清零已用流量
               </button>
-              <span>只清当前周期面板统计，不影响限额和用户流量。</span>
+              <span>清零当前周期的主机与代理统计，不影响限额和用户流量。</span>
             </div>
           )}
         </section>
@@ -9138,8 +9142,9 @@ function ServerDetailDialog({ server, role = 'viewer', onResetTraffic, onClose }
             <ServerDetailItem label="内存使用" value={serverMemoryLabel(server)} />
             <ServerDetailItem label="Agent 内存" value={server.agent_memory_bytes ? formatBytes(server.agent_memory_bytes) : '—'} />
             <ServerDetailItem label="监控模式" value={server.monitoring_mode === 'standard' ? '标准' : '轻量'} />
-            <ServerDetailItem label="下载速率" value={formatByteRate(server.network_download_bps || 0)} />
-            <ServerDetailItem label="上传速率" value={formatByteRate(server.network_upload_bps || 0)} />
+            <ServerDetailItem label="代理下载速率" value={formatByteRate(server.proxy_download_bps || 0)} />
+            <ServerDetailItem label="代理上传速率" value={formatByteRate(server.proxy_upload_bps || 0)} />
+            <ServerDetailItem label="主机网卡速率" value={`↓ ${formatByteRate(server.network_download_bps || 0)} · ↑ ${formatByteRate(server.network_upload_bps || 0)}`} />
             <ServerDetailItem label="时间校准" value={timeCorrectionModeLabel(server.time_correction_mode)} />
             <ServerDetailItem label="时间状态" value={timeCheckStatusLabel(server)} />
             <ServerDetailItem label="检测偏差" value={hasServerTimeMeasurement(server) ? formatTimeOffset(server.time_offset_ms) : '—'} />

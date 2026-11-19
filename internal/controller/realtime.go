@@ -58,6 +58,10 @@ type realtimeServerSnapshot struct {
 	NetworkDownloadBPS    uint64             `json:"network_download_bps"`
 	TrafficUploadBytes    uint64             `json:"traffic_upload_bytes"`
 	TrafficDownloadBytes  uint64             `json:"traffic_download_bytes"`
+	ProxyTrafficUpload    uint64             `json:"proxy_traffic_upload_bytes"`
+	ProxyTrafficDownload  uint64             `json:"proxy_traffic_download_bytes"`
+	ProxyUploadBPS        uint64             `json:"proxy_upload_bps"`
+	ProxyDownloadBPS      uint64             `json:"proxy_download_bps"`
 	ConnectivityStatus    string             `json:"connectivity_status"`
 	ConnectivityLatencyMS int64              `json:"connectivity_latency_ms"`
 	ConnectivityCheckedAt *time.Time         `json:"connectivity_checked_at,omitempty"`
@@ -657,6 +661,10 @@ func (s *Server) realtimeServerSnapshots(ctx context.Context) ([]realtimeServerS
 			NetworkDownloadBPS:    server.NetworkDownloadBPS,
 			TrafficUploadBytes:    server.TrafficUploadBytes,
 			TrafficDownloadBytes:  server.TrafficDownloadBytes,
+			ProxyTrafficUpload:    server.ProxyTrafficUploadBytes,
+			ProxyTrafficDownload:  server.ProxyTrafficDownloadBytes,
+			ProxyUploadBPS:        server.ProxyUploadBPS,
+			ProxyDownloadBPS:      server.ProxyDownloadBPS,
 			ConnectivityStatus:    server.ConnectivityStatus,
 			ConnectivityLatencyMS: server.ConnectivityLatencyMS,
 			ConnectivityCheckedAt: server.ConnectivityCheckedAt,

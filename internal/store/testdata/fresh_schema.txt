@@ -1968,6 +1968,12 @@ table server_telemetry
     period_end TEXT notnull=1 default='' pk=0
     traffic_upload_bytes INTEGER notnull=1 default=0 pk=0
     traffic_download_bytes INTEGER notnull=1 default=0 pk=0
+    proxy_period_key TEXT notnull=1 default='' pk=0
+    proxy_upload_bytes INTEGER notnull=1 default=0 pk=0
+    proxy_download_bytes INTEGER notnull=1 default=0 pk=0
+    proxy_upload_bps INTEGER notnull=1 default=0 pk=0
+    proxy_download_bps INTEGER notnull=1 default=0 pk=0
+    proxy_reported_at TEXT notnull=0 default=- pk=0
     raw_upload_bytes INTEGER notnull=1 default=0 pk=0
     raw_download_bytes INTEGER notnull=1 default=0 pk=0
     network_upload_bps INTEGER notnull=1 default=0 pk=0

@@ -40,6 +40,9 @@ type TrafficLedgerCommit struct {
 type TrafficLedgerResult struct {
 	StreamCheckpoints []model.TrafficStreamCheckpoint
 	AcceptedReports   []model.TrafficAcceptedReport
+	// ProxyTraffic is the server's proxy counter after this commit; nil when
+	// the commit accepted no bytes.
+	ProxyTraffic *ServerProxyTraffic
 }
 
 // TrafficLedgerPeriodKey identifies one user billing window inside a ledger batch.
@@ -308,6 +311,8 @@ func (s *Store) CommitTrafficLedger(ctx context.Context, commit TrafficLedgerCom
 	phase = time.Now()
 	touchedPeriods := map[string]bool{}
 	touchedUsers := map[int64]string{}
+	var proxyUpload, proxyDownload int64
+	var proxySpan time.Duration
 	for _, report := range commit.Reports {
 		accepted, checkpoint, err := commitTrafficReportTx(tx, ctx, commit.ServerID, commit.AgentInstanceID, report, commit.periodFor(report.UserID, report.PeriodKey), ts)
 		if err != nil {
@@ -327,6 +332,11 @@ func (s *Store) CommitTrafficLedger(ctx context.Context, commit TrafficLedgerCom
 		key := trafficStreamKey(report.CounterSource, report.StreamID, report.CounterEpoch, report.PeriodKey)
 		seen[key] = checkpoint
 		if accepted.Status == trafficAcceptAccepted {
+			proxyUpload += report.ToUploadBytes - report.FromUploadBytes
+			proxyDownload += report.ToDownloadBytes - report.FromDownloadBytes
+			if !report.StartedAt.IsZero() && report.EndedAt.After(report.StartedAt) {
+				proxySpan = max(proxySpan, report.EndedAt.Sub(report.StartedAt))
+			}
 			touchedUsers[report.UserID] = report.PeriodKey
 			touchedPeriods[TrafficLedgerPeriodKey(report.UserID, report.PeriodKey)] = true
 			sample.users = int64(len(touchedUsers))
@@ -358,6 +368,9 @@ func (s *Store) CommitTrafficLedger(ctx context.Context, commit TrafficLedgerCom
 		if err := bumpTrafficPolicyRevisionTx(tx, ctx); err != nil {
 			return result, err
 		}
+	}
+	if result.ProxyTraffic, err = recordServerProxyTrafficTx(tx, ctx, commit.ServerID, proxyUpload, proxyDownload, proxySpan, parseTime(ts)); err != nil {
+		return result, err
 	}
 	sample.durations[stage] = time.Since(phase)
 	stage = ledgerCommit

@@ -162,6 +162,7 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 		fail(w, err, 500)
 		return
 	}
+	s.publishProxyTraffic(result.ProxyTraffic, time.Now())
 	// Traffic reports are accounting + runtime policy reconciliation only.
 	// They must never call NextConfigVersion, MarkConfigurationSyncPending,
 	// markConfigurationRevision, apply_deployment, or apply_core_config.

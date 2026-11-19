@@ -38,6 +38,10 @@ export type ServerTelemetrySnapshot = {
   network_download_bps: number
   traffic_upload_bytes: number
   traffic_download_bytes: number
+  proxy_traffic_upload_bytes?: number
+  proxy_traffic_download_bytes?: number
+  proxy_upload_bps?: number
+  proxy_download_bps?: number
   connectivity_status: string
   connectivity_latency_ms: number
   connectivity_checked_at?: string

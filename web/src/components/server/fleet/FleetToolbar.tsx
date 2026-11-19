@@ -17,9 +17,13 @@ export type FleetStats = {
   unenrolled: number
   attention: number
   attentionHint: string
+  /** Proxy rate and traffic; the host fields are the whole NIC. */
   downloadBps: number
   uploadBps: number
+  hostDownloadBps: number
+  hostUploadBps: number
   trafficBytes: number
+  hostTrafficBytes: number
 }
 
 const attentionNames: Record<string, string> = {
@@ -54,9 +58,12 @@ export function fleetStats(servers: Server[], expectedBuild?: string): FleetStat
     unenrolled: servers.length - enrolled.length,
     attention,
     attentionHint: top ? `${attentionNames[top[0]]} ${top[1]} 台${reasons.size > 1 ? ' 等' : ''}` : '一切正常',
-    downloadBps: sumBy(online, server => server.network_download_bps),
-    uploadBps: sumBy(online, server => server.network_upload_bps),
-    trafficBytes: sumBy(servers, server => (Number(server.traffic_upload_bytes) || 0) + (Number(server.traffic_download_bytes) || 0)),
+    downloadBps: sumBy(online, server => server.proxy_download_bps || 0),
+    uploadBps: sumBy(online, server => server.proxy_upload_bps || 0),
+    hostDownloadBps: sumBy(online, server => server.network_download_bps),
+    hostUploadBps: sumBy(online, server => server.network_upload_bps),
+    trafficBytes: sumBy(servers, server => (Number(server.proxy_traffic_upload_bytes) || 0) + (Number(server.proxy_traffic_download_bytes) || 0)),
+    hostTrafficBytes: sumBy(servers, server => (Number(server.traffic_upload_bytes) || 0) + (Number(server.traffic_download_bytes) || 0)),
   }
 }
 
@@ -88,17 +95,17 @@ export function FleetSummary({ stats, statusFilter, onStatusFilter }: { stats: F
         <small className="fleet-stat-sub">{stats.attentionHint}</small>
       </button>
       <div className="fleet-stat is-rate">
-        <span className="fleet-stat-label">实时速率</span>
+        <span className="fleet-stat-label">代理速率</span>
         <span className="fleet-stat-rates">
           <span className="fleet-rate is-down"><ArrowDown size={13} aria-hidden="true" /><strong>{formatByteRate(stats.downloadBps)}</strong></span>
           <span className="fleet-rate is-up"><ArrowUp size={13} aria-hidden="true" /><strong>{formatByteRate(stats.uploadBps)}</strong></span>
         </span>
-        <small className="fleet-stat-sub">在线服务器合计</small>
+        <small className="fleet-stat-sub" title="主机网卡速率包含测速、主控同步等非代理流量">主机 ↓ {formatByteRate(stats.hostDownloadBps)} · ↑ {formatByteRate(stats.hostUploadBps)}</small>
       </div>
       <div className="fleet-stat is-traffic">
-        <span className="fleet-stat-label">本期流量</span>
+        <span className="fleet-stat-label">本期代理流量</span>
         <strong className="fleet-stat-value is-text">{formatBytes(stats.trafficBytes)}</strong>
-        <small className="fleet-stat-sub">各服务器当前周期合计</small>
+        <small className="fleet-stat-sub" title="主机网卡流量包含测速、主控同步等非代理流量">主机总计 {formatBytes(stats.hostTrafficBytes)}</small>
       </div>
     </section>
   )

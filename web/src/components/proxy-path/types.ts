@@ -114,6 +114,10 @@ export type Server = {
   network_download_bps: number
   traffic_upload_bytes: number
   traffic_download_bytes: number
+  proxy_traffic_upload_bytes?: number
+  proxy_traffic_download_bytes?: number
+  proxy_upload_bps?: number
+  proxy_download_bps?: number
   traffic_period_start?: string
   traffic_period_end?: string
   monitoring_target_task_id?: number

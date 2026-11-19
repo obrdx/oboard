@@ -162,6 +162,10 @@
 .dash-live-line { fill: none; stroke-width: 1.75; }
 .dash-live-line.is-download { stroke: var(--dash-download); }
 .dash-live-line.is-upload { stroke: var(--dash-upload); }
+.dash-live-line.is-host { stroke: var(--muted); stroke-width: 1.25; stroke-dasharray: 4 3; opacity: 0.7; }
+.dash-live-host { grid-column: 1 / -1; }
+.dash-live-host > span { color: var(--text-secondary); font-size: 12px; }
+.dash-live-stats em.is-host { height: 0; border-top: 2px dashed var(--muted); border-radius: 0; }
 .dash-live-waiting { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; }
 
 .dash-user-row {

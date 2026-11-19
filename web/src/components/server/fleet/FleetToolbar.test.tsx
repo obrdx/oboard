@@ -22,15 +22,15 @@ afterEach(async () => {
 })
 
 const servers = [
-  { id: 1, status: 'online', agent_id: 'a', agent_build: '1', network_download_bps: 100, network_upload_bps: 50, traffic_upload_bytes: 10, traffic_download_bytes: 20 },
-  { id: 2, status: 'offline', agent_id: 'b', agent_build: '2', network_download_bps: 999 },
+  { id: 1, status: 'online', agent_id: 'a', agent_build: '1', network_download_bps: 100, network_upload_bps: 50, traffic_upload_bytes: 10, traffic_download_bytes: 20, proxy_download_bps: 60, proxy_upload_bps: 5, proxy_traffic_upload_bytes: 2, proxy_traffic_download_bytes: 12 },
+  { id: 2, status: 'offline', agent_id: 'b', agent_build: '2', network_download_bps: 999, proxy_download_bps: 999 },
   { id: 3, status: 'offline' },
   { id: 4, status: 'online', agent_id: 'd', agent_build: '2', authorization_confirmed: false },
 ] as Server[]
 
 it('summarises the fleet without counting offline traffic or offline servers as attention', () => {
   const stats = fleetStats(servers, '2')
-  expect(stats).toMatchObject({ total: 4, online: 2, offline: 1, unenrolled: 1, attention: 2, downloadBps: 100, uploadBps: 50, trafficBytes: 30 })
+  expect(stats).toMatchObject({ total: 4, online: 2, offline: 1, unenrolled: 1, attention: 2, downloadBps: 60, uploadBps: 5, hostDownloadBps: 100, hostUploadBps: 50, trafficBytes: 14, hostTrafficBytes: 30 })
   expect(serverNeedsAttention(servers[0], '2')).toBe(true)
   expect(serverNeedsAttention(servers[1], '2')).toBe(false)
   expect(serverNeedsAttention(servers[2], '2')).toBe(false)

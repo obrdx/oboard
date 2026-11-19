@@ -121,7 +121,7 @@ export function DailyTrafficChart({ days, loading }: { days: DashboardTrafficDay
   )
 }
 
-type LiveSample = { up: number; down: number }
+type LiveSample = { up: number; down: number; host: number }
 
 export function LiveRateChart({ live, unknown }: { live: DashboardLiveTotals; unknown: boolean }) {
   const liveRef = useRef(live)
@@ -134,14 +134,14 @@ export function LiveRateChart({ live, unknown }: { live: DashboardLiveTotals; un
     const record = () => {
       if (unknownRef.current) return
       const current = liveRef.current
-      setSamples(previous => [...previous.slice(-(LIVE_MAX_SAMPLES - 1)), { up: current.uploadBps, down: current.downloadBps }])
+      setSamples(previous => [...previous.slice(-(LIVE_MAX_SAMPLES - 1)), { up: current.uploadBps, down: current.downloadBps, host: current.hostUploadBps + current.hostDownloadBps }])
     }
     record()
     const timer = window.setInterval(record, LIVE_SAMPLE_MS)
     return () => window.clearInterval(timer)
   }, [])
 
-  const max = niceByteAxisMax(Math.max(0, ...samples.map(sample => Math.max(sample.up, sample.down))))
+  const max = niceByteAxisMax(Math.max(0, ...samples.map(sample => Math.max(sample.up, sample.down, sample.host))))
   const paths = useMemo(() => {
     if (samples.length < 2) return null
     const span = LIVE_MAX_SAMPLES - 1
@@ -149,7 +149,7 @@ export function LiveRateChart({ live, unknown }: { live: DashboardLiveTotals; un
     const toPoints = (key: keyof LiveSample) => samples.map((sample, index) => ({ x: ((offset + index) / span) * 100, y: 100 - (sample[key] / max) * 100 }))
     const down = toPoints('down')
     const up = toPoints('up')
-    return { downLine: buildLinePath(down, true), downArea: buildAreaPath(down, 100, true), upLine: buildLinePath(up, true), upArea: buildAreaPath(up, 100, true) }
+    return { downLine: buildLinePath(down, true), downArea: buildAreaPath(down, 100, true), upLine: buildLinePath(up, true), upArea: buildAreaPath(up, 100, true), hostLine: buildLinePath(toPoints('host'), true) }
   }, [samples, max])
   const minutes = Math.round((LIVE_MAX_SAMPLES * LIVE_SAMPLE_MS) / 60000)
 
@@ -157,8 +157,8 @@ export function LiveRateChart({ live, unknown }: { live: DashboardLiveTotals; un
     <div className="dash-panel dash-chart-panel">
       <div className="dash-section-head">
         <div>
-          <h2>实时速率</h2>
-          <p>所有在线服务器汇总，打开页面后开始记录</p>
+          <h2>代理速率</h2>
+          <p>在线服务器的用户代理流量，约 30 秒更新；虚线为主机网卡总速率</p>
         </div>
       </div>
       <div className="dash-live-stats">
@@ -168,12 +168,16 @@ export function LiveRateChart({ live, unknown }: { live: DashboardLiveTotals; un
           <span>{live.reporting ? `TCP ${live.tcp.toLocaleString('zh-CN')} · UDP ${live.udp.toLocaleString('zh-CN')}` : '暂无在线服务器'}</span>
         </div>
         <div>
-          <small><em className="is-download" />下载</small>
+          <small><em className="is-download" />代理下载</small>
           <strong>{unknown ? '—' : formatRate(live.downloadBps)}</strong>
         </div>
         <div>
-          <small><em className="is-upload" />上传</small>
+          <small><em className="is-upload" />代理上传</small>
           <strong>{unknown ? '—' : formatRate(live.uploadBps)}</strong>
+        </div>
+        <div className="dash-live-host" title="整块网卡的速率，含测速、主控同步等非代理流量">
+          <small><em className="is-host" />主机网卡</small>
+          <span>{unknown ? '—' : `↓ ${formatRate(live.hostDownloadBps)} · ↑ ${formatRate(live.hostUploadBps)}`}</span>
         </div>
       </div>
       <div className="dash-chart dash-chart-live">
@@ -183,9 +187,10 @@ export function LiveRateChart({ live, unknown }: { live: DashboardLiveTotals; un
         <div className="dash-chart-plot">
           <div className="dash-chart-grid" aria-hidden="true">{axisTicks(max).map(tick => <i key={tick} />)}</div>
           {paths ? (
-            <svg className="dash-chart-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label={`最近 ${minutes} 分钟实时速率`}>
+            <svg className="dash-chart-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label={`最近 ${minutes} 分钟代理速率`}>
               <path d={paths.downArea} className="dash-live-area is-download" />
               <path d={paths.upArea} className="dash-live-area is-upload" />
+              <path d={paths.hostLine} className="dash-live-line is-host" vectorEffect="non-scaling-stroke" />
               <path d={paths.downLine} className="dash-live-line is-download" vectorEffect="non-scaling-stroke" />
               <path d={paths.upLine} className="dash-live-line is-upload" vectorEffect="non-scaling-stroke" />
             </svg>

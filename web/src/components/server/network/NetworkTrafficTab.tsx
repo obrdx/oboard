@@ -11,17 +11,20 @@ function formatTableTime(v:string){
 }
 
 export function NetworkTrafficTab({ server, onResetTraffic, disabled, disabledReason }: { server: Server; onResetTraffic: ()=>void; disabled?: boolean; disabledReason?: string }) {
-  const upload = Number(server.traffic_upload_bytes||0)
-  const download = Number(server.traffic_download_bytes||0)
+  const upload = Number(server.proxy_traffic_upload_bytes||0)
+  const download = Number(server.proxy_traffic_download_bytes||0)
   const total = upload+download
+  const hostUpload = Number(server.traffic_upload_bytes||0)
+  const hostDownload = Number(server.traffic_download_bytes||0)
+  const hostTotal = hostUpload+hostDownload
   const limit = Number(server.traffic_limit_bytes||0)
-  const pct = limit>0 ? Math.min(100, total/limit*100) : 0
+  const pct = limit>0 ? Math.min(100, hostTotal/limit*100) : 0
   const tone = pct>=90 ? 'danger' : pct>=75 ? 'warning' : ''
   const [confirm, setConfirm]=useState(false)
   return (
     <div className="server-traffic-tab">
       <section className="server-detail-section">
-        <h3>累计流量</h3>
+        <h3>代理流量</h3>
         <div className="server-traffic-cards">
           <div className="server-traffic-card down">
             <span className="server-traffic-label">↓ 下载</span>
@@ -33,11 +36,33 @@ export function NetworkTrafficTab({ server, onResetTraffic, disabled, disabledRe
           </div>
           <div className="server-traffic-card total">
             <span className="server-traffic-label">总计</span>
-            <strong className="server-traffic-value">{formatBytes(total)}{limit>0 ? <small> / {formatBytes(limit)} · {pct.toFixed(pct>=10?0:1)}%</small> : null}</strong>
+            <strong className="server-traffic-value">{formatBytes(total)}</strong>
+          </div>
+        </div>
+        <div className="server-traffic-meta">
+          <span>只统计用户经由代理产生的流量</span>
+        </div>
+      </section>
+
+      <section className="server-detail-section">
+        <h3>主机网卡流量</h3>
+        <div className="server-traffic-cards">
+          <div className="server-traffic-card down">
+            <span className="server-traffic-label">↓ 下载</span>
+            <strong className="server-traffic-value">{formatBytes(hostDownload)}</strong>
+          </div>
+          <div className="server-traffic-card up">
+            <span className="server-traffic-label">↑ 上传</span>
+            <strong className="server-traffic-value">{formatBytes(hostUpload)}</strong>
+          </div>
+          <div className="server-traffic-card total">
+            <span className="server-traffic-label">总计</span>
+            <strong className="server-traffic-value">{formatBytes(hostTotal)}{limit>0 ? <small> / {formatBytes(limit)} · {pct.toFixed(pct>=10?0:1)}%</small> : null}</strong>
           </div>
         </div>
         {limit>0 && <div className="server-traffic-quota-track" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}><div className={`server-traffic-quota-fill ${tone}`} style={{ width:`${pct}%` }}/></div>}
         <div className="server-traffic-meta">
+          <span>整块网卡的流量，含测速、主控同步等非代理流量；流量限额按此计算</span>
           <span>统计周期：{(server as any).traffic_reset_mode==='month_day' ? `每月 ${(server as any).traffic_reset_day||1} 日` : '自然月'}</span>
           {server.traffic_period_start && server.traffic_period_end ? <span>周期范围：{formatTableTime(server.traffic_period_start)} 至 {formatTableTime(server.traffic_period_end)}</span> : null}
         </div>
@@ -48,7 +73,7 @@ export function NetworkTrafficTab({ server, onResetTraffic, disabled, disabledRe
         <div className="server-operation-card">
           <div>
             <strong>清零已用流量</strong>
-            <small className="muted">仅清零当前周期的面板统计，不影响限额与重置日</small>
+            <small className="muted">清零当前周期的主机与代理统计，不影响限额、重置日与用户流量</small>
           </div>
           {!confirm ? (
             <button type="button" className="ghost danger-text" disabled={disabled} title={disabled? disabledReason: '清零已用流量'} onClick={()=>setConfirm(true)}>清零已用流量</button>

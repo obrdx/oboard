@@ -860,7 +860,8 @@ func (s *Server) telegramBotServerDetail(ctx context.Context, arg string) string
 	if server.MemoryTotalBytes > 0 {
 		fmt.Fprintf(&builder, "内存：%s / %s\n", formatNotificationBytesUnsigned(server.MemoryUsedBytes), formatNotificationBytesUnsigned(server.MemoryTotalBytes))
 	}
-	fmt.Fprintf(&builder, "周期流量：↑ %s / ↓ %s\n", formatNotificationBytesUnsigned(server.TrafficUploadBytes), formatNotificationBytesUnsigned(server.TrafficDownloadBytes))
+	fmt.Fprintf(&builder, "代理流量：↑ %s / ↓ %s\n", formatNotificationBytesUnsigned(server.ProxyTrafficUploadBytes), formatNotificationBytesUnsigned(server.ProxyTrafficDownloadBytes))
+	fmt.Fprintf(&builder, "主机总流量：↑ %s / ↓ %s\n", formatNotificationBytesUnsigned(server.TrafficUploadBytes), formatNotificationBytesUnsigned(server.TrafficDownloadBytes))
 	fmt.Fprintf(&builder, "离线提醒：%s", map[bool]string{true: "开启", false: "已关闭"}[server.OfflineNotifyEnabled])
 	if server.OfflineAfterSeconds > 0 {
 		fmt.Fprintf(&builder, " · 判断时间 %d 秒", server.OfflineAfterSeconds)
@@ -873,20 +874,22 @@ func (s *Server) telegramBotTraffic(ctx context.Context) string {
 	if err != nil {
 		return "流量查询失败，请稍后重试。"
 	}
-	var upload, download uint64
+	var upload, download, hostUpload, hostDownload uint64
 	for _, server := range servers {
-		upload += server.TrafficUploadBytes
-		download += server.TrafficDownloadBytes
+		upload += server.ProxyTrafficUploadBytes
+		download += server.ProxyTrafficDownloadBytes
+		hostUpload += server.TrafficUploadBytes
+		hostDownload += server.TrafficDownloadBytes
 	}
 	var builder strings.Builder
-	fmt.Fprintf(&builder, "周期流量\n总计：↑ %s / ↓ %s\n", formatNotificationBytesUnsigned(upload), formatNotificationBytesUnsigned(download))
+	fmt.Fprintf(&builder, "周期流量\n代理：↑ %s / ↓ %s\n主机总计：↑ %s / ↓ %s\n", formatNotificationBytesUnsigned(upload), formatNotificationBytesUnsigned(download), formatNotificationBytesUnsigned(hostUpload), formatNotificationBytesUnsigned(hostDownload))
 	if len(servers) == 0 {
 		builder.WriteString("当前无服务器。")
 		return builder.String()
 	}
-	builder.WriteString("服务器明细：\n")
+	builder.WriteString("服务器明细（代理 / 主机）：\n")
 	for _, server := range servers {
-		fmt.Fprintf(&builder, "%s：↑ %s / ↓ %s\n", server.Name, formatNotificationBytesUnsigned(server.TrafficUploadBytes), formatNotificationBytesUnsigned(server.TrafficDownloadBytes))
+		fmt.Fprintf(&builder, "%s：%s / %s\n", server.Name, formatNotificationBytesUnsigned(server.ProxyTrafficUploadBytes+server.ProxyTrafficDownloadBytes), formatNotificationBytesUnsigned(server.TrafficUploadBytes+server.TrafficDownloadBytes))
 	}
 	return builder.String()
 }

@@ -127,6 +127,15 @@ export function agentOutdated(server: Pick<Server, 'agent_build'>, expectedBuild
   return Boolean(expectedBuild && server.agent_build && expectedBuild !== server.agent_build)
 }
 
+/** Proxy traffic is what users moved through the server; the host counters
+ * below also carry speed tests, Controller sync and other host traffic. */
+export function serverProxyTraffic(server: Pick<Server, 'proxy_traffic_upload_bytes' | 'proxy_traffic_download_bytes' | 'proxy_upload_bps' | 'proxy_download_bps'>) {
+  const upload = Number(server.proxy_traffic_upload_bytes) || 0
+  const download = Number(server.proxy_traffic_download_bytes) || 0
+  return { upload, download, total: upload + download, uploadBps: Number(server.proxy_upload_bps) || 0, downloadBps: Number(server.proxy_download_bps) || 0 }
+}
+
+/** Host NIC usage for the period; the server's traffic limit applies to this. */
 export function serverTraffic(server: Pick<Server, 'traffic_upload_bytes' | 'traffic_download_bytes' | 'traffic_limit_bytes'>) {
   const used = (Number(server.traffic_upload_bytes) || 0) + (Number(server.traffic_download_bytes) || 0)
   const limit = Number(server.traffic_limit_bytes || 0)

@@ -240,6 +240,7 @@ func (s *Server) checkOffline(ctx context.Context) {
 }
 
 func (s *Server) checkOfflineAt(ctx context.Context, now time.Time) {
+	s.expireProxyRates(now)
 	settings := s.runtimeSettings(ctx)
 	defaultAfter := time.Duration(settingInt(settings, settingNotificationServerOfflineAfter, defaultNotificationOfflineAfterSeconds, 30, 86400)) * time.Second
 	merge := settingBool(settings, settingNotificationServerMergeOffline, true)
