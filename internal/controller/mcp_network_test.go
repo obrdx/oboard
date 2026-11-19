@@ -139,6 +139,21 @@ func TestPortForwardAndTunnelCapabilities(t *testing.T) {
 	if _, err := db.GetTunnel(ctx, tunnel.ID); err == nil {
 		t.Fatal("deleted tunnel still exists")
 	}
+	autoTunnel := json.RawMessage(`{"tunnel":{"name":"managed","source_server_id":1,"target_server_id":2,"type":"wireguard","local_address":"10.0.0.1/30","peer_address":"10.0.0.2/30","target_port":12001,"generate_keys":true}}`)
+	applyAutomationChangeset(t, server, principal, "tunnel-auto-create", automation.OperationRequest{Capability: "tunnels.create", Input: autoTunnel})
+	tunnels, err = db.ListTunnels(ctx)
+	if err != nil || len(tunnels) != 1 {
+		t.Fatalf("expected one managed tunnel, got %d (error: %v)", len(tunnels), err)
+	}
+	var pair map[string]any
+	if err := json.Unmarshal([]byte(tunnels[0].ConfigJSON), &pair); err != nil || pair["managed_pair"] != true {
+		t.Fatal("automation did not save a managed key pair configuration")
+	}
+	for _, key := range []string{"source_private_key", "target_private_key"} {
+		if value, ok := pair[key].(string); !ok || len(value) != 44 {
+			t.Fatalf("automation did not generate %s", key)
+		}
+	}
 	deleteForward, _ := json.Marshal(map[string]any{"port_forward_id": forward.ID, "confirm": true})
 	applyAutomationChangeset(t, server, principal, "pf-delete", automation.OperationRequest{Capability: "port_forwards.delete", Input: deleteForward})
 	if _, err := db.GetPortForward(ctx, forward.ID); err == nil {

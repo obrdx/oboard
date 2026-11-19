@@ -2,6 +2,9 @@ package core
 
 import (
 	"bytes"
+	"crypto/ecdh"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -83,25 +86,28 @@ func ValidateTunnelConfig(t model.Tunnel) error {
 	}
 }
 
+type wireGuardPairConfig struct {
+	ManagedPair         bool   `json:"managed_pair"`
+	SourceAddress       string `json:"source_address,omitempty"`
+	TargetAddress       string `json:"target_address,omitempty"`
+	SourcePrivateKey    string `json:"source_private_key"`
+	SourcePublicKey     string `json:"source_public_key"`
+	TargetPrivateKey    string `json:"target_private_key"`
+	TargetPublicKey     string `json:"target_public_key"`
+	PersistentKeepalive int    `json:"persistent_keepalive"`
+	ChainMethod         string `json:"chain_method,omitempty"`
+	ManagedBy           string `json:"managed_by,omitempty"`
+	PathID              int64  `json:"path_id,omitempty"`
+	StepID              int64  `json:"step_id,omitempty"`
+}
+
+func (pair wireGuardPairConfig) usesTunnelAddresses() bool {
+	return pair.SourceAddress == "" && pair.TargetAddress == ""
+}
+
 func validateWireGuardTunnelConfig(t model.Tunnel) error {
-	var marker struct {
-		ManagedPair bool `json:"managed_pair"`
-	}
-	if err := json.Unmarshal([]byte(firstNonEmpty(t.ConfigJSON, "{}")), &marker); err == nil && marker.ManagedPair {
-		var pair struct {
-			ManagedPair         bool   `json:"managed_pair"`
-			SourceAddress       string `json:"source_address"`
-			TargetAddress       string `json:"target_address"`
-			SourcePrivateKey    string `json:"source_private_key"`
-			SourcePublicKey     string `json:"source_public_key"`
-			TargetPrivateKey    string `json:"target_private_key"`
-			TargetPublicKey     string `json:"target_public_key"`
-			PersistentKeepalive int    `json:"persistent_keepalive"`
-			ChainMethod         string `json:"chain_method"`
-			ManagedBy           string `json:"managed_by"`
-			PathID              int64  `json:"path_id"`
-			StepID              int64  `json:"step_id"`
-		}
+	var pair wireGuardPairConfig
+	if err := json.Unmarshal([]byte(firstNonEmpty(t.ConfigJSON, "{}")), &pair); err == nil && pair.ManagedPair {
 		if err := strictJSON(t.ConfigJSON, &pair); err != nil {
 			return fmt.Errorf("wireguard managed pair config_json: %w", err)
 		}
@@ -110,7 +116,11 @@ func validateWireGuardTunnelConfig(t model.Tunnel) error {
 				return errors.New("wireguard managed pair keys must be non-empty safe strings")
 			}
 		}
-		if err := validateIPPrefixList([]string{pair.SourceAddress, pair.TargetAddress}); err != nil {
+		if pair.usesTunnelAddresses() {
+			if err := validateWireGuardPairEndpoints(t); err != nil {
+				return err
+			}
+		} else if err := validateIPPrefixList([]string{pair.SourceAddress, pair.TargetAddress}); err != nil {
 			return fmt.Errorf("wireguard managed pair addresses: %w", err)
 		}
 		if pair.PersistentKeepalive < 0 || pair.PersistentKeepalive > 65535 {
@@ -154,6 +164,76 @@ func validateWireGuardTunnelConfig(t model.Tunnel) error {
 			return fmt.Errorf("allowed_ips: %w", err)
 		}
 	}
+	return nil
+}
+
+func validateWireGuardPairEndpoints(t model.Tunnel) error {
+	local, err := netip.ParsePrefix(t.LocalAddress)
+	if err != nil {
+		return errors.New("本端地址必须是有效的 CIDR")
+	}
+	peer, err := netip.ParsePrefix(t.PeerAddress)
+	if err != nil {
+		return errors.New("对端地址必须是有效的 CIDR")
+	}
+	if local.Addr().BitLen() != peer.Addr().BitLen() || local.Addr() == peer.Addr() {
+		return errors.New("隧道两端必须使用同一 IP 版本的不同地址")
+	}
+	if t.TargetPort == 0 {
+		return errors.New("请填写目标服务器的 WireGuard UDP 端口")
+	}
+	return nil
+}
+
+func wireGuardKeyGenerationSettings(t model.Tunnel) (int, error) {
+	if t.Type != model.TunnelTypeWireGuard {
+		return 0, errors.New("generate_keys requires a WireGuard tunnel")
+	}
+	if err := validateWireGuardPairEndpoints(t); err != nil {
+		return 0, err
+	}
+	cfg := struct {
+		PersistentKeepalive int `json:"persistent_keepalive"`
+	}{PersistentKeepalive: 25}
+	if err := strictJSON(t.ConfigJSON, &cfg); err != nil {
+		return 0, fmt.Errorf("generate_keys accepts only persistent_keepalive in config_json: %w", err)
+	}
+	if cfg.PersistentKeepalive < 0 || cfg.PersistentKeepalive > 65535 {
+		return 0, errors.New("wireguard persistent_keepalive must be between 0 and 65535")
+	}
+	return cfg.PersistentKeepalive, nil
+}
+
+func ValidateWireGuardKeyGeneration(t model.Tunnel) error {
+	_, err := wireGuardKeyGenerationSettings(t)
+	return err
+}
+
+func GenerateWireGuardTunnelKeys(t *model.Tunnel) error {
+	keepalive, err := wireGuardKeyGenerationSettings(*t)
+	if err != nil {
+		return err
+	}
+	source, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return err
+	}
+	target, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return err
+	}
+	config, err := json.Marshal(wireGuardPairConfig{
+		ManagedPair:         true,
+		SourcePrivateKey:    base64.StdEncoding.EncodeToString(source.Bytes()),
+		SourcePublicKey:     base64.StdEncoding.EncodeToString(source.PublicKey().Bytes()),
+		TargetPrivateKey:    base64.StdEncoding.EncodeToString(target.Bytes()),
+		TargetPublicKey:     base64.StdEncoding.EncodeToString(target.PublicKey().Bytes()),
+		PersistentKeepalive: keepalive,
+	})
+	if err != nil {
+		return err
+	}
+	t.ConfigJSON = string(config)
 	return nil
 }
 
@@ -362,8 +442,11 @@ func BuildTunnelPlan(version int64, server model.Server, servers []model.Server,
 				if err := ValidateTunnelConfig(projected); err != nil {
 					return model.TunnelPlan{}, err
 				}
-				out = append(out, projected)
-				continue
+				if server.ID == t.TargetServerID {
+					out = append(out, projected)
+					continue
+				}
+				t = projected
 			}
 		}
 		if t.Type == model.TunnelTypeSSH {
@@ -462,16 +545,7 @@ func projectManagedSSHPair(t model.Tunnel, serverID int64) (model.Tunnel, bool, 
 }
 
 func projectManagedWireGuardPair(t model.Tunnel, serverID int64) (model.Tunnel, bool, error) {
-	var pair struct {
-		ManagedPair         bool   `json:"managed_pair"`
-		SourceAddress       string `json:"source_address"`
-		TargetAddress       string `json:"target_address"`
-		SourcePrivateKey    string `json:"source_private_key"`
-		SourcePublicKey     string `json:"source_public_key"`
-		TargetPrivateKey    string `json:"target_private_key"`
-		TargetPublicKey     string `json:"target_public_key"`
-		PersistentKeepalive int    `json:"persistent_keepalive"`
-	}
+	var pair wireGuardPairConfig
 	if err := json.Unmarshal([]byte(firstNonEmpty(t.ConfigJSON, "{}")), &pair); err != nil || !pair.ManagedPair {
 		return model.Tunnel{}, false, nil
 	}
@@ -479,19 +553,32 @@ func projectManagedWireGuardPair(t model.Tunnel, serverID int64) (model.Tunnel, 
 		return model.Tunnel{}, false, nil
 	}
 	projected := t
+	sourceAddress, targetAddress := pair.SourceAddress, pair.TargetAddress
+	sourcePeer, targetPeer := prefixHost(targetAddress)+"/32", prefixHost(sourceAddress)+"/32"
+	if pair.usesTunnelAddresses() {
+		if err := validateWireGuardPairEndpoints(t); err != nil {
+			return model.Tunnel{}, false, err
+		}
+		sourceAddress, targetAddress = t.LocalAddress, t.PeerAddress
+		source, _ := netip.ParsePrefix(sourceAddress)
+		target, _ := netip.ParsePrefix(targetAddress)
+		sourcePeer = netip.PrefixFrom(target.Addr(), target.Addr().BitLen()).String()
+		targetPeer = netip.PrefixFrom(source.Addr(), source.Addr().BitLen()).String()
+	} else {
+		projected.ListenPort = 0
+	}
 	cfg := map[string]any{"persistent_keepalive": pair.PersistentKeepalive}
 	if serverID == t.SourceServerID {
-		projected.LocalAddress = pair.SourceAddress
-		projected.PeerAddress = prefixHost(pair.TargetAddress) + "/32"
-		projected.ListenPort = 0
+		projected.LocalAddress = sourceAddress
+		projected.PeerAddress = sourcePeer
 		cfg["private_key"] = pair.SourcePrivateKey
 		cfg["peer_public_key"] = pair.TargetPublicKey
 		cfg["allowed_ips"] = []string{projected.PeerAddress}
 	} else {
 		projected.SourceServerID = serverID
 		projected.TargetServerID = t.SourceServerID
-		projected.LocalAddress = pair.TargetAddress
-		projected.PeerAddress = prefixHost(pair.SourceAddress) + "/32"
+		projected.LocalAddress = targetAddress
+		projected.PeerAddress = targetPeer
 		projected.ListenPort = t.TargetPort
 		projected.TargetEndpoint = ""
 		projected.TargetPort = 0

@@ -1165,7 +1165,7 @@ type tunnelOperationInput struct {
 func (s *Server) registerTunnelOperations() {
 	for _, name := range []string{"tunnels.create", "tunnels.update", "tunnels.delete"} {
 		s.automation.RegisterValidator(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
-			tunnel, changed, err := s.tunnelAutomationCandidate(ctx, principal, input, name)
+			tunnel, changed, err := s.tunnelAutomationCandidate(ctx, principal, input, name, false)
 			if err != nil {
 				return nil, err
 			}
@@ -1180,7 +1180,7 @@ func (s *Server) registerTunnelOperations() {
 	}
 }
 
-func (s *Server) tunnelAutomationCandidate(ctx context.Context, principal application.Principal, input json.RawMessage, name string) (model.Tunnel, []string, error) {
+func (s *Server) tunnelAutomationCandidate(ctx context.Context, principal application.Principal, input json.RawMessage, name string, applying bool) (model.Tunnel, []string, error) {
 	var request tunnelOperationInput
 	if err := strictAutomationInput(input, &request); err != nil {
 		return model.Tunnel{}, nil, err
@@ -1190,14 +1190,22 @@ func (s *Server) tunnelAutomationCandidate(ctx context.Context, principal applic
 		if len(request.Tunnel) == 0 {
 			return model.Tunnel{}, nil, errors.New("tunnel object is required")
 		}
-		var tunnel model.Tunnel
-		if err := json.Unmarshal(request.Tunnel, &tunnel); err != nil {
+		var creation tunnelCreateInput
+		if err := json.Unmarshal(request.Tunnel, &creation); err != nil {
 			return model.Tunnel{}, nil, err
 		}
-		tunnel.Enabled = true
-		normalizeTunnel(&tunnel)
-		if err := s.validateTunnelAutomationCandidate(ctx, principal, tunnel); err != nil {
+		creation.normalize()
+		tunnel := creation.Tunnel
+		if err := s.validateTunnelAutomationServers(ctx, principal, tunnel); err != nil {
 			return model.Tunnel{}, nil, err
+		}
+		if err := creation.validate(); err != nil {
+			return model.Tunnel{}, nil, err
+		}
+		if applying && creation.GenerateKeys {
+			if err := core.GenerateWireGuardTunnelKeys(&tunnel); err != nil {
+				return model.Tunnel{}, nil, err
+			}
 		}
 		return tunnel, nil, nil
 	case "tunnels.update":
@@ -1226,7 +1234,10 @@ func (s *Server) tunnelAutomationCandidate(ctx context.Context, principal applic
 		merged.ID = current.ID
 		merged.ConfigJSON = restoreRedactedTunnelSecrets(current.ConfigJSON, merged.ConfigJSON)
 		changed := automationChangedFields(fields)
-		if err := s.validateTunnelAutomationCandidate(ctx, principal, merged); err != nil {
+		if err := s.validateTunnelAutomationServers(ctx, principal, merged); err != nil {
+			return model.Tunnel{}, nil, err
+		}
+		if err := validateTunnel(merged); err != nil {
 			return model.Tunnel{}, nil, err
 		}
 		return merged, changed, nil
@@ -1247,12 +1258,9 @@ func (s *Server) tunnelAutomationCandidate(ctx context.Context, principal applic
 	}
 }
 
-func (s *Server) validateTunnelAutomationCandidate(ctx context.Context, principal application.Principal, tunnel model.Tunnel) error {
+func (s *Server) validateTunnelAutomationServers(ctx context.Context, principal application.Principal, tunnel model.Tunnel) error {
 	if !principal.AllowsInt64("server_ids", tunnel.SourceServerID) || !principal.AllowsInt64("server_ids", tunnel.TargetServerID) {
 		return errors.New("tunnel server is outside the authorized server boundary")
-	}
-	if err := validateTunnel(tunnel); err != nil {
-		return err
 	}
 	return s.store.ValidateServerExists(ctx, tunnel.SourceServerID, tunnel.TargetServerID)
 }
@@ -1299,7 +1307,7 @@ func mergeTunnelPatch(current model.Tunnel, patch model.Tunnel, fields map[strin
 }
 
 func (s *Server) tunnelAutomationRevisions(ctx context.Context, principal application.Principal, input json.RawMessage, name string) (map[string]string, error) {
-	tunnel, _, err := s.tunnelAutomationCandidate(ctx, principal, input, name)
+	tunnel, _, err := s.tunnelAutomationCandidate(ctx, principal, input, name, false)
 	if err != nil {
 		return nil, err
 	}
@@ -1318,7 +1326,7 @@ func (s *Server) tunnelAutomationRevisions(ctx context.Context, principal applic
 }
 
 func (s *Server) applyTunnelOperation(ctx context.Context, principal application.Principal, input json.RawMessage, name string) (any, error) {
-	tunnel, changed, err := s.tunnelAutomationCandidate(ctx, principal, input, name)
+	tunnel, changed, err := s.tunnelAutomationCandidate(ctx, principal, input, name, true)
 	if err != nil {
 		return nil, err
 	}

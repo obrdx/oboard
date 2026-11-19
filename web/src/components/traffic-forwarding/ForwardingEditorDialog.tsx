@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useId, useState } from 'react'
 import { ArrowLeftRight, ArrowRight, Cable, CircleAlert, Network, X } from 'lucide-react'
 
 import type { Server } from '../proxy-path/types'
@@ -18,6 +18,8 @@ import {
   suggestedTunnelName,
   trafficForwardFieldErrors,
   tunnelFieldErrors,
+  tunnelHasManagedKeys,
+  tunnelRequiresPairEndpoints,
   type ForwardProtocol,
   type ForwardingKind,
   type ProbeMode,
@@ -39,9 +41,9 @@ function serverOptionLabel(server: Server) {
   return `${code ? `${regionFlagEmoji(code)} ` : ''}${server.name}${server.status === 'online' ? '' : '（离线）'}`
 }
 
-function FieldError({ message }: { message?: string }) {
+function FieldError({ message, id }: { message?: string; id?: string }) {
   if (!message) return null
-  return <small className="tf-field-error" role="alert">{message}</small>
+  return <small id={id} className="tf-field-error" role="alert">{message}</small>
 }
 
 function numberInput(value: number, onChange: (value: number) => void, props: React.InputHTMLAttributes<HTMLInputElement> & { invalid?: boolean }) {
@@ -271,11 +273,37 @@ function SecretInput({ label, value, editing, invalid, onChange }: { label: stri
 }
 
 function TunnelFields({ servers, draft, editing, errors, onChange }: { servers: Server[]; draft: TunnelDraft; editing: boolean; errors: Partial<Record<string, string>>; onChange: (draft: TunnelDraft) => void }) {
+  const errorId = useId()
   const update = (patch: Partial<TunnelDraft>) => onChange({ ...draft, ...patch })
   const source = servers.find(server => server.id === draft.source_server_id)
   const target = servers.find(server => server.id === draft.target_server_id)
   const wireguard = draft.type === 'wireguard'
+  const managedKeys = tunnelHasManagedKeys(draft)
+  const pairedEndpoints = tunnelRequiresPairEndpoints(draft)
   const swap = () => update({ source_server_id: draft.target_server_id, target_server_id: draft.source_server_id })
+  const addresses = (
+    <>
+      <FormField label="本端地址" required={pairedEndpoints} hint="源服务器的隧道 CIDR，例如 10.10.0.1/30。">
+        <input aria-label="本端地址" aria-required={pairedEndpoints || undefined} aria-invalid={Boolean(errors.local_address) || undefined} aria-describedby={errors.local_address ? `${errorId}-local` : undefined} value={draft.local_address} onChange={event => update({ local_address: event.target.value })} placeholder="10.10.0.1/30" />
+        <FieldError id={`${errorId}-local`} message={errors.local_address} />
+      </FormField>
+      <FormField label="对端地址" required={pairedEndpoints} hint="目标服务器的隧道 CIDR，例如 10.10.0.2/30。">
+        <input aria-label="对端地址" aria-required={pairedEndpoints || undefined} aria-invalid={Boolean(errors.peer_address) || undefined} aria-describedby={errors.peer_address ? `${errorId}-peer` : undefined} value={draft.peer_address} onChange={event => update({ peer_address: event.target.value })} placeholder="10.10.0.2/30" />
+        <FieldError id={`${errorId}-peer`} message={errors.peer_address} />
+      </FormField>
+    </>
+  )
+  const targetPort = (
+    <FormField label={pairedEndpoints ? '目标 UDP 端口' : '目标端口'} required={pairedEndpoints} hint={pairedEndpoints ? '填写目标服务器上可用的 UDP 监听端口。' : '留空自动选择。'}>
+      {numberInput(draft.target_port, target_port => update({ target_port }), {
+        min: pairedEndpoints ? 1 : 0, max: 65535, placeholder: pairedEndpoints ? '例如 51820' : '自动',
+        'aria-label': pairedEndpoints ? '目标 UDP 端口' : '隧道目标端口',
+        'aria-required': pairedEndpoints || undefined, 'aria-describedby': errors.target_port ? `${errorId}-port` : undefined,
+        invalid: Boolean(errors.target_port),
+      })}
+      <FieldError id={`${errorId}-port`} message={errors.target_port} />
+    </FormField>
+  )
 
   return (
     <>
@@ -310,13 +338,21 @@ function TunnelFields({ servers, draft, editing, errors, onChange }: { servers: 
 
       {wireguard && <section className="tf-form-section">
         <h3>密钥</h3>
+        {!editing && <Select variant="segmented" aria-label="WireGuard 密钥方式" value={draft.generate_keys ? 'automatic' : 'manual'} onChange={event => update({ generate_keys: event.target.value === 'automatic' })}>
+          <option value="automatic">自动生成</option>
+          <option value="manual">手动填写</option>
+        </Select>}
+        {(draft.generate_keys || managedKeys) && <p className="tf-key-note">{managedKeys ? '两端密钥由 Controller 管理。' : '创建时生成两端密钥，并随隧道配置下发。'}</p>}
         <div className="tf-form-grid">
-          <FormField label="本机私钥" required hint="保存后不会再显示。">
-            <><SecretInput label="本机私钥" value={draft.private_key} editing={editing} invalid={Boolean(errors.private_key)} onChange={private_key => update({ private_key })} /><FieldError message={errors.private_key} /></>
-          </FormField>
-          <FormField label="对端公钥" required>
-            <><SecretInput label="对端公钥" value={draft.peer_public_key} editing={editing} invalid={Boolean(errors.peer_public_key)} onChange={peer_public_key => update({ peer_public_key })} /><FieldError message={errors.peer_public_key} /></>
-          </FormField>
+          {!draft.generate_keys && !managedKeys && <>
+            <FormField label="本机私钥" required hint="保存后不会再显示。">
+              <><SecretInput label="本机私钥" value={draft.private_key} editing={editing} invalid={Boolean(errors.private_key)} onChange={private_key => update({ private_key })} /><FieldError message={errors.private_key} /></>
+            </FormField>
+            <FormField label="对端公钥" required>
+              <><SecretInput label="对端公钥" value={draft.peer_public_key} editing={editing} invalid={Boolean(errors.peer_public_key)} onChange={peer_public_key => update({ peer_public_key })} /><FieldError message={errors.peer_public_key} /></>
+            </FormField>
+          </>}
+          {pairedEndpoints && <>{addresses}{targetPort}</>}
           <FormField label="名称" full hint="留空时按两端服务器自动命名。">
             <><input aria-label="名称" maxLength={128} value={draft.name} onChange={event => update({ name: event.target.value })} placeholder={suggestedTunnelName(draft, servers)} /><FieldError message={errors.name} /></>
           </FormField>
@@ -331,27 +367,20 @@ function TunnelFields({ servers, draft, editing, errors, onChange }: { servers: 
         </div>
       </section>}
 
-      <details className="tf-advanced" open={Boolean(errors.listen_port || errors.target_port || errors.priority || errors.persistent_keepalive) || undefined}>
+      <details className="tf-advanced" open={Boolean(errors.listen_port || (!pairedEndpoints && errors.target_port) || errors.priority || errors.persistent_keepalive) || undefined}>
         <summary>高级设置<small>地址、端口、保活、优先级</small></summary>
         <div className="tf-form-grid">
-          {wireguard && <FormField label="允许 IP" full hint="多个 CIDR 用逗号分隔。">
+          {wireguard && !draft.generate_keys && !managedKeys && <FormField label="允许 IP" full hint="多个 CIDR 用逗号分隔。">
             <input aria-label="允许 IP" value={draft.allowed_ips} onChange={event => update({ allowed_ips: event.target.value })} placeholder="例如 10.10.0.0/30" />
           </FormField>}
-          <FormField label="本端地址" hint="可选 CIDR，例如 10.10.0.1/30。">
-            <input aria-label="本端地址" value={draft.local_address} onChange={event => update({ local_address: event.target.value })} />
-          </FormField>
-          <FormField label="对端地址" hint="可选 CIDR，例如 10.10.0.2/30。">
-            <input aria-label="对端地址" value={draft.peer_address} onChange={event => update({ peer_address: event.target.value })} />
-          </FormField>
+          {!pairedEndpoints && addresses}
           <FormField label="监听端口" hint="留空自动选择。">
             <>{numberInput(draft.listen_port, listen_port => update({ listen_port }), { min: 0, max: 65535, placeholder: '自动', 'aria-label': '隧道监听端口', invalid: Boolean(errors.listen_port) })}<FieldError message={errors.listen_port} /></>
           </FormField>
           <FormField label="目标端点" hint="可选主机或 IP，留空使用目标服务器地址。">
             <input aria-label="目标端点" value={draft.target_endpoint} onChange={event => update({ target_endpoint: event.target.value })} placeholder="自动" />
           </FormField>
-          <FormField label="目标端口" hint="留空自动选择。">
-            <>{numberInput(draft.target_port, target_port => update({ target_port }), { min: 0, max: 65535, placeholder: '自动', 'aria-label': '隧道目标端口', invalid: Boolean(errors.target_port) })}<FieldError message={errors.target_port} /></>
-          </FormField>
+          {!pairedEndpoints && targetPort}
           {wireguard && <FormField label="保活间隔（秒）" hint="0 表示关闭。">
             <><input type="number" min={0} max={65535} aria-label="保活间隔" value={draft.persistent_keepalive} onChange={event => update({ persistent_keepalive: Number(event.target.value) })} /><FieldError message={errors.persistent_keepalive} /></>
           </FormField>}

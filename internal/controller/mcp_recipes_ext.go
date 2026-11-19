@@ -537,6 +537,9 @@ func (s *Server) prepareTunnelRecipe(ctx context.Context, principal application.
 	if fields["name"] == nil {
 		return recipeNeedInput("tunnel.manage", "tunnel", "需要指定隧道名称"), nil
 	}
+	if value, ok := input.Params["generate_keys"]; ok {
+		fields["generate_keys"] = value
+	}
 	operation := mcpOperationRef{Capability: "tunnels.create", Input: map[string]any{"tunnel": fields}}
 	return &mcpPreparedRecipe{Status: "ready", Intent: "tunnel.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "create_tunnel", "name": fields["name"]}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
 }

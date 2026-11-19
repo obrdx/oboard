@@ -310,6 +310,7 @@ button.tf-summary-tile:hover { border-color: color-mix(in srgb, var(--primary) 3
 
 .tf-form-section { display: grid; gap: 10px; }
 .tf-form-section h3 { margin: 0; color: var(--text-strong); font-size: 12.5px; }
+.tf-key-note { margin: 0; color: var(--muted); font-size: 12.5px; }
 
 .tf-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
 .tf-form-grid .form-field-full { grid-column: 1 / -1; }

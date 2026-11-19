@@ -2,12 +2,16 @@ package controller
 
 import (
 	"context"
+	"crypto/ecdh"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/OboardProject/oboard/internal/core"
+	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
 )
 
@@ -71,5 +75,103 @@ func TestTunnelUpdateRestoresRedactedSecrets(t *testing.T) {
 	}
 	if stored.Enabled || !strings.Contains(stored.ConfigJSON, privateKey) || !strings.Contains(stored.ConfigJSON, peerKey) || strings.Contains(stored.ConfigJSON, "<redacted>") {
 		t.Fatalf("redacted update did not keep stored secrets: enabled=%v config=%s", stored.Enabled, stored.ConfigJSON)
+	}
+}
+
+func TestCreateTunnelGeneratesWireGuardKeysForBothAgents(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	ctx := context.Background()
+	servers := []model.Server{
+		{Name: "source", PublicIPv4: "203.0.113.10", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010},
+		{Name: "target", PublicIPv4: "203.0.113.20", ListenIP: "0.0.0.0", PortRangeStart: 20000, PortRangeEnd: 20010},
+	}
+	for i := range servers {
+		if err := db.CreateServer(ctx, &servers[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := newTestServer(db, "test-secret", "").Handler()
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+	body := map[string]any{
+		"name": "managed", "type": "wireguard", "source_server_id": servers[0].ID, "target_server_id": servers[1].ID,
+		"local_address": "fd00:1234::1/64", "peer_address": "fd00:1234::2/64", "generate_keys": true,
+	}
+	request(t, h, http.MethodPost, "/api/v1/ui/tunnels", token, body, http.StatusBadRequest)
+	body["target_port"] = 20001
+	body["config_json"] = `{"private_key":"manual"}`
+	request(t, h, http.MethodPost, "/api/v1/ui/tunnels", token, body, http.StatusBadRequest)
+	delete(body, "config_json")
+	created := request(t, h, http.MethodPost, "/api/v1/ui/tunnels", token, body, http.StatusCreated)
+	public := created["tunnel"].(map[string]any)
+	var config map[string]any
+	if err := json.Unmarshal([]byte(public["config_json"].(string)), &config); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"source_private_key", "source_public_key", "target_private_key", "target_public_key"} {
+		if config[key] != "<redacted>" {
+			t.Fatalf("%s was not redacted", key)
+		}
+	}
+	id := int64(public["id"].(float64))
+	stored, err := db.GetTunnel(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourcePlan, err := core.BuildTunnelPlan(1, servers[0], servers, []model.Tunnel{*stored})
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetPlan, err := core.BuildTunnelPlan(1, servers[1], servers, []model.Tunnel{*stored})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sourcePlan.Tunnels) != 1 || len(targetPlan.Tunnels) != 1 {
+		t.Fatal("expected a projected tunnel for each server")
+	}
+	source, target := sourcePlan.Tunnels[0], targetPlan.Tunnels[0]
+	if source.TargetEndpoint != servers[1].PublicIPv4 || source.TargetPort != 20001 || source.PeerAddress != "fd00:1234::2/128" ||
+		target.ListenPort != 20001 || target.TargetEndpoint != "" || target.TargetPort != 0 || target.PeerAddress != "fd00:1234::1/128" {
+		t.Fatal("the two projected endpoints do not match")
+	}
+	type agentKeys struct {
+		Private string `json:"private_key"`
+		Peer    string `json:"peer_public_key"`
+	}
+	decodeKeys := func(tunnel model.Tunnel) (key agentKeys, public string) {
+		t.Helper()
+		if err := json.Unmarshal([]byte(tunnel.ConfigJSON), &key); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := base64.StdEncoding.DecodeString(key.Private)
+		if err != nil {
+			t.Fatal("invalid private key encoding")
+		}
+		private, err := ecdh.X25519().NewPrivateKey(raw)
+		if err != nil {
+			t.Fatal("invalid X25519 private key")
+		}
+		return key, base64.StdEncoding.EncodeToString(private.PublicKey().Bytes())
+	}
+	sourceKeys, sourcePublic := decodeKeys(source)
+	targetKeys, targetPublic := decodeKeys(target)
+	if sourceKeys.Private == targetKeys.Private || sourceKeys.Peer != targetPublic || targetKeys.Peer != sourcePublic {
+		t.Fatal("Agent plans must send distinct private keys and the opposite public key")
+	}
+	public["name"] = "renamed"
+	request(t, h, http.MethodPatch, "/api/v1/ui/tunnels/"+itoa(id), token, public, http.StatusOK)
+	updated, err := db.GetTunnel(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var beforeKeys, afterKeys map[string]any
+	if json.Unmarshal([]byte(stored.ConfigJSON), &beforeKeys) != nil || json.Unmarshal([]byte(updated.ConfigJSON), &afterKeys) != nil {
+		t.Fatal("invalid stored managed configuration")
+	}
+	for _, key := range []string{"source_private_key", "source_public_key", "target_private_key", "target_public_key"} {
+		if beforeKeys[key] != afterKeys[key] {
+			t.Fatalf("updating the tunnel changed %s", key)
+		}
 	}
 }

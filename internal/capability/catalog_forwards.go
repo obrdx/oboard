@@ -3,6 +3,7 @@ package capability
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"strconv"
 
 	"github.com/OboardProject/oboard/internal/mcpauth"
@@ -46,7 +47,7 @@ func forwardsDescriptors(positiveID map[string]any, stringValue, boolValue map[s
 		"target_port": map[string]any{"type": "integer"}, "priority": map[string]any{"type": "integer"},
 		"enabled": boolValue, "created_at": stringValue, "updated_at": stringValue,
 	})
-	tunnelFields := closedObject(map[string]any{
+	tunnelProperties := map[string]any{
 		"name":             map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
 		"source_server_id": positiveID,
 		"target_server_id": positiveID,
@@ -59,7 +60,12 @@ func forwardsDescriptors(positiveID map[string]any, stringValue, boolValue map[s
 		"priority":         map[string]any{"type": "integer", "minimum": 0},
 		"config_json":      map[string]any{"type": "string", "maxLength": 65536},
 		"enabled":          boolValue,
-	})
+	}
+	tunnelCreateProperties := maps.Clone(tunnelProperties)
+	tunnelCreateProperties["generate_keys"] = map[string]any{
+		"type":        "boolean",
+		"description": "For WireGuard between managed servers, generate both key pairs on create. Supply local_address and peer_address as CIDRs and target_port as a UDP port. config_json may set persistent_keepalive only.",
+	}
 	reads := []Descriptor{
 		{Name: "port_forwards.list", Description: "列出全部端口转发规则", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(portForward)), RequiredScopes: []string{"port_forwards:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
 		{Name: "tunnels.list", Description: "列出全部 WireGuard / SSH 服务器间隧道", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(tunnel)), RequiredScopes: []string{"tunnels:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
@@ -73,8 +79,8 @@ func forwardsDescriptors(positiveID map[string]any, stringValue, boolValue map[s
 		{"port_forwards.create", "创建端口转发规则", schemaObject(map[string]any{"port_forward": portForwardFields}, "port_forward"), schemaObject(map[string]any{"port_forward": portForward}, "port_forward"), 3, false},
 		{"port_forwards.update", "修改端口转发规则", schemaObject(map[string]any{"port_forward_id": positiveID, "changes": portForwardFields}, "port_forward_id", "changes"), schemaObject(map[string]any{"port_forward": portForward, "changed_fields": stringArray(1, 32)}, "port_forward"), 3, false},
 		{"port_forwards.delete", "删除端口转发规则", schemaObject(map[string]any{"port_forward_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "port_forward_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "port_forward_id": positiveID}, "deleted"), 3, true},
-		{"tunnels.create", "创建 WireGuard / SSH 服务器间隧道", schemaObject(map[string]any{"tunnel": tunnelFields}, "tunnel"), schemaObject(map[string]any{"tunnel": tunnel}, "tunnel"), 3, false},
-		{"tunnels.update", "修改服务器间隧道", schemaObject(map[string]any{"tunnel_id": positiveID, "changes": tunnelFields}, "tunnel_id", "changes"), schemaObject(map[string]any{"tunnel": tunnel, "changed_fields": stringArray(1, 32)}, "tunnel"), 3, false},
+		{"tunnels.create", "创建 WireGuard / SSH 服务器间隧道，WireGuard 支持自动生成两端密钥", schemaObject(map[string]any{"tunnel": closedObject(tunnelCreateProperties)}, "tunnel"), schemaObject(map[string]any{"tunnel": tunnel}, "tunnel"), 3, false},
+		{"tunnels.update", "修改服务器间隧道", schemaObject(map[string]any{"tunnel_id": positiveID, "changes": closedObject(tunnelProperties)}, "tunnel_id", "changes"), schemaObject(map[string]any{"tunnel": tunnel, "changed_fields": stringArray(1, 32)}, "tunnel"), 3, false},
 		{"tunnels.delete", "删除服务器间隧道", schemaObject(map[string]any{"tunnel_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "tunnel_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "tunnel_id": positiveID}, "deleted"), 3, true},
 	}
 	for _, write := range writes {

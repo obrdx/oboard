@@ -101,10 +101,11 @@ describe('TrafficForwardingPage', () => {
     expect(load).toHaveBeenCalled()
   })
 
-  it('switches the create dialog to a tunnel and blocks saving without keys', async () => {
+  it('requires keys when the operator chooses manual entry', async () => {
     render()
     act(() => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent?.includes('新建转发'))?.click())
     act(() => container.querySelector<HTMLButtonElement>('.tf-kind-option[aria-checked="false"]')?.click())
+    act(() => Array.from(container.querySelectorAll<HTMLButtonElement>('button[role="radio"]')).find(button => button.textContent === '手动填写')?.click())
     expect(container.textContent).toContain('本机私钥')
     await act(async () => {
       container.querySelector<HTMLButtonElement>('button[type="submit"]')?.click()
@@ -112,6 +113,29 @@ describe('TrafficForwardingPage', () => {
     })
     expect(client.request).not.toHaveBeenCalled()
     expect(container.textContent).toContain('请填写本机私钥')
+  })
+
+  it('creates a tunnel with automatic keys and the selected endpoints', async () => {
+    render()
+    act(() => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent?.includes('新建转发'))?.click())
+    act(() => container.querySelector<HTMLButtonElement>('.tf-kind-option[aria-checked="false"]')?.click())
+    expect(container.querySelector('[aria-label="WireGuard 密钥方式"] [aria-checked="true"]')?.textContent).toBe('自动生成')
+    expect(container.querySelector('[aria-label="本机私钥"]')).toBeNull()
+    act(() => container.querySelector<HTMLButtonElement>('button[type="submit"]')?.click())
+    expect(client.request).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('请填写目标服务器的 UDP 端口')
+    act(() => {
+      setInput(container.querySelector('[aria-label="本端地址"]'), '10.10.0.1/30')
+      setInput(container.querySelector('[aria-label="对端地址"]'), '10.10.0.2/30')
+      setInput(container.querySelector('[aria-label="目标 UDP 端口"]'), '20003')
+    })
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[type="submit"]')?.click()
+    })
+    expect(client.request).toHaveBeenCalledWith('/tunnels', expect.objectContaining({ method: 'POST' }))
+    const body = JSON.parse(client.request.mock.calls[0][1].body)
+    expect(body).toMatchObject({ generate_keys: true, local_address: '10.10.0.1/30', peer_address: '10.10.0.2/30', target_port: 20003 })
+    expect(JSON.parse(body.config_json)).toEqual({ persistent_keepalive: 25 })
   })
 
   it('toggles a tunnel by sending its redacted keys back unchanged', async () => {

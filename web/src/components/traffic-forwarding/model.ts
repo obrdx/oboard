@@ -59,6 +59,7 @@ export type TrafficTunnel = {
 export type TrafficForwardDraft = Omit<TrafficForward, 'id' | 'target_server_id' | 'created_at' | 'updated_at'> & { target_server_id: number }
 
 export type TunnelDraft = Omit<TrafficTunnel, 'id' | 'created_at' | 'updated_at' | 'config_json'> & {
+  generate_keys: boolean
   private_key: string
   peer_public_key: string
   allowed_ips: string
@@ -282,6 +283,7 @@ export function emptyTunnelDraft(servers: Server[], sourceServerID?: number): Tu
     target_port: 0,
     priority: 100,
     enabled: true,
+    generate_keys: true,
     private_key: '',
     peer_public_key: '',
     allowed_ips: '',
@@ -304,6 +306,7 @@ export function tunnelDraftFromTunnel(tunnel: TrafficTunnel): TunnelDraft {
     target_port: Number(tunnel.target_port || 0),
     priority: Number(tunnel.priority || 100),
     enabled: tunnel.enabled,
+    generate_keys: false,
     private_key: String(private_key ?? ''),
     peer_public_key: String(peer_public_key ?? ''),
     allowed_ips: Array.isArray(allowed_ips) ? allowed_ips.join(', ') : '',
@@ -319,16 +322,20 @@ export function suggestedTunnelName(draft: TunnelDraft, servers: Server[]) {
 }
 
 export function tunnelPayload(draft: TunnelDraft, servers: Server[] = []) {
-  const { private_key, peer_public_key, allowed_ips, persistent_keepalive, extra_config, ...rest } = draft
+  const { generate_keys, private_key, peer_public_key, allowed_ips, persistent_keepalive, extra_config, ...rest } = draft
+  const generateKeys = draft.type === 'wireguard' && generate_keys
   const config: Record<string, unknown> = { ...extra_config }
   if (draft.type === 'wireguard') {
-    config.private_key = private_key.trim()
-    config.peer_public_key = peer_public_key.trim()
-    config.allowed_ips = allowed_ips.split(/[\n,]/).map(value => value.trim()).filter(Boolean)
+    if (!generateKeys && !tunnelHasManagedKeys(draft)) {
+      config.private_key = private_key.trim()
+      config.peer_public_key = peer_public_key.trim()
+      config.allowed_ips = allowed_ips.split(/[\n,]/).map(value => value.trim()).filter(Boolean)
+    }
     config.persistent_keepalive = persistent_keepalive
   }
   return {
     ...rest,
+    ...(generateKeys ? { generate_keys: true } : {}),
     name: draft.name.trim() || suggestedTunnelName(draft, servers),
     local_address: draft.local_address.trim(),
     peer_address: draft.peer_address.trim(),
@@ -337,7 +344,17 @@ export function tunnelPayload(draft: TunnelDraft, servers: Server[] = []) {
   }
 }
 
-export type TunnelField = 'name' | 'source_server_id' | 'target_server_id' | 'private_key' | 'peer_public_key' | 'persistent_keepalive' | 'listen_port' | 'target_port' | 'priority'
+export function tunnelHasManagedKeys(draft: TunnelDraft) {
+  return draft.extra_config.managed_pair === true
+}
+
+export function tunnelRequiresPairEndpoints(draft: TunnelDraft) {
+  return draft.type === 'wireguard' && (draft.generate_keys || (
+    tunnelHasManagedKeys(draft) && !draft.extra_config.source_address && !draft.extra_config.target_address
+  ))
+}
+
+export type TunnelField = 'name' | 'source_server_id' | 'target_server_id' | 'private_key' | 'peer_public_key' | 'local_address' | 'peer_address' | 'persistent_keepalive' | 'listen_port' | 'target_port' | 'priority'
 
 export function tunnelFieldErrors(draft: TunnelDraft): Partial<Record<TunnelField, string>> {
   const errors: Partial<Record<TunnelField, string>> = {}
@@ -346,12 +363,20 @@ export function tunnelFieldErrors(draft: TunnelDraft): Partial<Record<TunnelFiel
   if (!draft.target_server_id) errors.target_server_id = '请选择目标服务器。'
   else if (draft.source_server_id === draft.target_server_id) errors.target_server_id = '源和目标不能是同一台服务器。'
   if (draft.type === 'wireguard') {
-    if (!draft.private_key.trim()) errors.private_key = '请填写本机私钥。'
-    if (!draft.peer_public_key.trim()) errors.peer_public_key = '请填写对端公钥。'
+    if (!draft.generate_keys && !tunnelHasManagedKeys(draft)) {
+      if (!draft.private_key.trim()) errors.private_key = '请填写本机私钥。'
+      if (!draft.peer_public_key.trim()) errors.peer_public_key = '请填写对端公钥。'
+    }
+    if (tunnelRequiresPairEndpoints(draft)) {
+      if (!draft.local_address.trim()) errors.local_address = '请填写本端 CIDR。'
+      if (!draft.peer_address.trim()) errors.peer_address = '请填写对端 CIDR。'
+    }
     if (!Number.isInteger(draft.persistent_keepalive) || draft.persistent_keepalive < 0 || draft.persistent_keepalive > 65535) errors.persistent_keepalive = '保活间隔必须是 0–65535 秒。'
   }
   if (!validOptionalPort(draft.listen_port)) errors.listen_port = '监听端口必须是 0（自动）或 1–65535。'
-  if (!validOptionalPort(draft.target_port)) errors.target_port = '目标端口必须是 0（自动）或 1–65535。'
+  if (tunnelRequiresPairEndpoints(draft)) {
+    if (!validPort(draft.target_port)) errors.target_port = '请填写目标服务器的 UDP 端口（1–65535）。'
+  } else if (!validOptionalPort(draft.target_port)) errors.target_port = '目标端口必须是 0（自动）或 1–65535。'
   if (!Number.isInteger(draft.priority) || draft.priority < 1) errors.priority = '优先级必须是大于 0 的整数。'
   return errors
 }

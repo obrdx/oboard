@@ -13201,19 +13201,25 @@ func (s *Server) tunnels(w http.ResponseWriter, r *http.Request) {
 		}
 		write(w, 200, map[string]any{"tunnels": publicTunnels(items)})
 	case http.MethodPost:
-		var v model.Tunnel
-		if !decode(w, r, &v) {
+		var input tunnelCreateInput
+		if !decode(w, r, &input) {
 			return
 		}
-		v.Enabled = true
-		normalizeTunnel(&v)
-		if err := validateTunnel(v); err != nil {
+		input.normalize()
+		v := input.Tunnel
+		if err := input.validate(); err != nil {
 			fail(w, err, 400)
 			return
 		}
 		if err := s.store.ValidateServerExists(r.Context(), v.SourceServerID, v.TargetServerID); err != nil {
 			fail(w, err, 400)
 			return
+		}
+		if input.GenerateKeys {
+			if err := core.GenerateWireGuardTunnelKeys(&v); err != nil {
+				fail(w, err, 500)
+				return
+			}
 		}
 		if err := s.store.CreateTunnel(r.Context(), &v); err != nil {
 			fail(w, err, 500)
@@ -13231,10 +13237,15 @@ func (s *Server) tunnels(w http.ResponseWriter, r *http.Request) {
 			fail(w, errors.New("missing id"), 400)
 			return
 		}
-		var v model.Tunnel
-		if !decode(w, r, &v) {
+		var input tunnelCreateInput
+		if !decode(w, r, &input) {
 			return
 		}
+		if input.GenerateKeys {
+			fail(w, errors.New("generate_keys is only supported when creating a tunnel"), 400)
+			return
+		}
+		v := input.Tunnel
 		v.ID = id
 		previous, err := s.store.GetTunnel(r.Context(), id)
 		if err != nil {
@@ -13278,6 +13289,26 @@ func (s *Server) tunnels(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type tunnelCreateInput struct {
+	model.Tunnel
+	GenerateKeys bool `json:"generate_keys"`
+}
+
+func (input *tunnelCreateInput) normalize() {
+	input.Enabled = true
+	normalizeTunnel(&input.Tunnel)
+}
+
+func (input tunnelCreateInput) validate() error {
+	if !input.GenerateKeys {
+		return validateTunnel(input.Tunnel)
+	}
+	if err := validateTunnelFields(input.Tunnel); err != nil {
+		return err
+	}
+	return core.ValidateWireGuardKeyGeneration(input.Tunnel)
+}
+
 func normalizeTunnel(v *model.Tunnel) {
 	v.Name = strings.TrimSpace(v.Name)
 	v.LocalAddress = strings.TrimSpace(v.LocalAddress)
@@ -13295,6 +13326,13 @@ func normalizeTunnel(v *model.Tunnel) {
 }
 
 func validateTunnel(v model.Tunnel) error {
+	if err := validateTunnelFields(v); err != nil {
+		return err
+	}
+	return core.ValidateTunnelConfig(v)
+}
+
+func validateTunnelFields(v model.Tunnel) error {
 	if v.Name == "" {
 		return errors.New("name required")
 	}
@@ -13305,9 +13343,6 @@ func validateTunnel(v model.Tunnel) error {
 		return errors.New("tunnel source and target must be different")
 	}
 	if err := core.ValidateTunnelType(v.Type); err != nil {
-		return err
-	}
-	if err := core.ValidateTunnelConfig(v); err != nil {
 		return err
 	}
 	if strings.TrimSpace(v.TargetEndpoint) != "" {
