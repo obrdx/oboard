@@ -3,6 +3,8 @@ import { ChevronDown, Loader2, Search } from 'lucide-react'
 import { FormField } from '../ui/form-field'
 import { Select } from '../ui/select'
 import { Switch } from '../ui/switch'
+import { RegionFlag, regionLabel, serverRegionCode } from '../ui/RegionFlag'
+import { orderServerRegions } from '../../region-order'
 import type { LatencyProbeFamily, LatencyProbePreset, LatencyProbeTask, NetworkProbeMethod, Server } from '../proxy-path/types'
 
 const INTERVAL_PRESETS = [60, 300, 900, 1800, 3600]
@@ -70,6 +72,7 @@ export function ReturnLatencyTaskForm({ task, presets = [], servers, loading, er
   const [enabled, setEnabled] = useState(task?.enabled !== false)
   const [serverIDs, setServerIDs] = useState<number[]>(task?.server_ids || [])
   const [serverQuery, setServerQuery] = useState('')
+  const [serverRegion, setServerRegion] = useState('all')
   const [saving, setSaving] = useState(false)
   const [submitError, setSubmitError] = useState('')
   const addressInputRef = useRef<HTMLInputElement>(null)
@@ -95,11 +98,29 @@ export function ReturnLatencyTaskForm({ task, presets = [], servers, loading, er
   const effectiveName = nameTouched && name.trim() ? name.trim() : Array.from(address.trim() || (presetMode ? presetLabel || presetID : '')).slice(0, 60).join('')
   const online = (server: Server) => Boolean(server.agent_id) && server.status === 'online'
   const suggested = useMemo(() => servers.filter(server => online(server) && server.latency_probe_enabled && familyApplicable(server, family)), [servers, family])
+  const regions = useMemo(() => orderServerRegions(servers, regionLabel), [servers])
   const visibleServers = useMemo(() => {
-    const q = serverQuery.trim().toLowerCase()
-    if (!q) return servers
-    return servers.filter(server => `${server.name} ${server.id} ${server.public_ipv4 || ''} ${server.public_ipv6 || ''}`.toLowerCase().includes(q))
-  }, [servers, serverQuery])
+    const q = serverQuery.trim().toLocaleLowerCase('zh-CN')
+    const rank = new Map(regions.map((item, index) => [item.code, index]))
+    return servers
+      .map(server => ({ server, code: serverRegionCode(server) }))
+      .filter(({ server, code }) => (serverRegion === 'all' || code === serverRegion)
+        && (!q || `${server.name} ${server.id} ${server.public_ipv4 || ''} ${server.public_ipv6 || ''} ${code} ${code ? regionLabel(code) : ''}`.toLocaleLowerCase('zh-CN').includes(q)))
+      .sort((a, b) => (rank.get(a.code) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.code) ?? Number.MAX_SAFE_INTEGER)
+        || a.server.name.localeCompare(b.server.name, 'zh-CN', { numeric: true }))
+  }, [servers, serverQuery, serverRegion, regions])
+  const serverGroups = useMemo(() => {
+    const groups: Array<{ code: string; servers: Server[] }> = []
+    for (const { server, code } of visibleServers) {
+      const last = groups[groups.length - 1]
+      if (last && last.code === code) last.servers.push(server)
+      else groups.push({ code, servers: [server] })
+    }
+    return groups
+  }, [visibleServers])
+  const toggleGroup = (ids: number[]) => setServerIDs(current => ids.every(id => current.includes(id))
+    ? current.filter(id => !ids.includes(id))
+    : [...current, ...ids.filter(id => !current.includes(id))])
 
   const toggleServer = (id: number) => setServerIDs(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id])
   const intervalInvalid = interval === '' || !Number.isInteger(Number(interval)) || Number(interval) < 30 || Number(interval) > 86400
@@ -232,7 +253,7 @@ export function ReturnLatencyTaskForm({ task, presets = [], servers, loading, er
                 <h3>执行服务器</h3>
                 <span className="muted">已选 {serverIDs.length} 台</span>
               </header>
-              <p className="muted">选择执行节点；未选择时任务不会执行。快捷选择应用于全部节点，不受搜索影响。</p>
+              <p className="muted">选择执行节点；未选择时任务不会执行。快捷选择应用于全部节点，不受搜索和地区筛选影响。</p>
               <div className="probe-task-server-tools">
                 <div className="return-latency-search">
                   <Search size={15} aria-hidden="true" />
@@ -244,8 +265,37 @@ export function ReturnLatencyTaskForm({ task, presets = [], servers, loading, er
                   <button type="button" className="latency-pill-btn" disabled={!serverIDs.length} onClick={() => setServerIDs([])}>清空</button>
                 </div>
               </div>
+              {regions.length > 1 && <div className="server-picker-regions probe-task-server-regions" role="group" aria-label="按地区筛选执行服务器">
+                <button type="button" className={serverRegion === 'all' ? 'selected' : ''} aria-pressed={serverRegion === 'all'} onClick={() => setServerRegion('all')}>
+                  <span>全部</span>
+                  <span className="server-picker-region-count">{servers.length}</span>
+                </button>
+                {regions.map(({ code, count }) => <button
+                  key={code || 'pending'}
+                  type="button"
+                  className={serverRegion === code ? 'selected' : ''}
+                  aria-pressed={serverRegion === code}
+                  title={`${code ? regionLabel(code) : '待检测'}，${count} 台服务器`}
+                  onClick={() => setServerRegion(serverRegion === code ? 'all' : code)}
+                >
+                  <RegionFlag code={code} size={14} />
+                  <span>{code || '待检测'}</span>
+                  <span className="server-picker-region-count">{count}</span>
+                </button>)}
+              </div>}
               <div className="probe-task-server-list">
-                {!servers.length ? <p className="muted">暂无服务器，请先在服务器管理中添加。</p> : !visibleServers.length ? <p className="muted">没有匹配的服务器。</p> : visibleServers.map(server => (
+                {!servers.length ? <p className="muted">暂无服务器，请先在服务器管理中添加。</p> : !visibleServers.length ? <p className="muted">没有匹配的服务器。</p> : serverGroups.map(group => {
+                  const ids = group.servers.map(server => server.id)
+                  const picked = ids.filter(id => serverIDs.includes(id)).length
+                  const name = group.code ? regionLabel(group.code) : '待检测'
+                  return <div key={group.code || 'pending'} className="probe-task-server-group" role="group" aria-label={name}>
+                    <div className="probe-task-server-group-head">
+                      <RegionFlag code={group.code} size={16} />
+                      <strong>{name}</strong>
+                      <span className="muted">{picked}/{ids.length}</span>
+                      <button type="button" className="ghost probe-task-server-group-toggle" onClick={() => toggleGroup(ids)}>{picked === ids.length ? '取消本地区' : '选择本地区'}</button>
+                    </div>
+                    {group.servers.map(server => (
                   <label key={server.id} className={`probe-task-server${serverIDs.includes(server.id) ? ' is-selected' : ''}`}>
                     <input type="checkbox" aria-label={`选择 ${server.name}`} checked={serverIDs.includes(server.id)} onChange={() => toggleServer(server.id)} />
                     <span className="probe-task-server-main">
@@ -254,7 +304,9 @@ export function ReturnLatencyTaskForm({ task, presets = [], servers, loading, er
                     </span>
                     <span className="probe-task-server-state muted">{!familyApplicable(server, family) ? `不适用（无 ${familyName(family)}）` : online(server) ? (server.latency_probe_enabled ? '推荐' : '未启用探测') : server.agent_id ? '离线' : '未接入'}</span>
                   </label>
-                ))}
+                    ))}
+                  </div>
+                })}
               </div>
             </section>
           </div>

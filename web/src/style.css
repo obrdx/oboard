@@ -24973,6 +24973,13 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 .probe-task-server-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .probe-task-server-main strong { font-size: 13px; overflow-wrap: anywhere; }
 .probe-task-server-state { font-size: 12px; flex-shrink: 0; }
+.probe-task-server-regions { padding: 0; border-top: 0; }
+.probe-task-server-group { display: flex; flex-direction: column; gap: 6px; }
+.probe-task-server-group + .probe-task-server-group { margin-top: 6px; }
+.probe-task-server-group-head { position: sticky; top: -2px; z-index: 1; display: flex; align-items: center; gap: 6px; padding: 4px 2px; background: var(--surface-solid); font-size: 12px; }
+.probe-task-server-group-head strong { font-size: 12px; }
+.probe-task-server-group-head .muted { font-variant-numeric: tabular-nums; }
+.probe-task-server-group-toggle { margin-left: auto; min-height: 26px; height: 26px; padding: 0 8px; font-size: 12px; }
 
 @media (max-width: 860px) {
   .return-latency-page .panel-body { gap: 20px; }
