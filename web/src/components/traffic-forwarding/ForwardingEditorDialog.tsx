@@ -4,7 +4,7 @@ import { ArrowLeftRight, ArrowRight, Cable, CircleAlert, Network, X } from 'luci
 import type { Server } from '../proxy-path/types'
 import { FormField } from '../ui/form-field'
 import { MotionDialogPanel } from '../ui/motion'
-import { regionFlagEmoji, serverRegionCode } from '../ui/RegionFlag'
+import { ServerPickerSelect } from '../server/ServerPickerSelect'
 import { Select } from '../ui/select'
 import {
   REDACTED,
@@ -35,11 +35,6 @@ const kindChoices: Array<{ kind: ForwardingKind; title: string; description: str
   { kind: 'forward', title: '端口转发', description: '入口服务器监听端口，把流量转到服务器或任意地址', icon: <Network size={18} aria-hidden="true" /> },
   { kind: 'tunnel', title: '服务器隧道', description: '在两台服务器之间建立 WireGuard 加密链路', icon: <Cable size={18} aria-hidden="true" /> },
 ]
-
-function serverOptionLabel(server: Server) {
-  const code = serverRegionCode(server)
-  return `${code ? `${regionFlagEmoji(code)} ` : ''}${server.name}${server.status === 'online' ? '' : '（离线）'}`
-}
 
 function FieldError({ message, id }: { message?: string; id?: string }) {
   if (!message) return null
@@ -186,12 +181,9 @@ function ForwardFields({ servers, draft, errors, onChange }: { servers: Server[]
         <h3>从哪里进</h3>
         <div className="tf-form-grid">
           <FormField label="入口服务器" required>
-            <><Select required value={draft.source_server_id} aria-label="入口服务器" onChange={event => {
-              const sourceID = Number(event.target.value)
+            <><ServerPickerSelect required ariaLabel="入口服务器" servers={servers} value={draft.source_server_id} onChange={sourceID => {
               update({ source_server_id: sourceID, target_server_id: sourceID === draft.target_server_id ? 0 : draft.target_server_id })
-            }}>
-              {servers.map(server => <option key={server.id} value={server.id}>{serverOptionLabel(server)}</option>)}
-            </Select><FieldError message={errors.source_server_id} /></>
+            }} /><FieldError message={errors.source_server_id} /></>
           </FormField>
           <FormField label="监听端口" required hint={source ? `推荐范围 ${source.port_range_start || 1}–${source.port_range_end || 65535}` : undefined}>
             <>{numberInput(draft.listen_port, listen_port => update({ listen_port }), { min: 1, max: 65535, required: true, 'aria-label': '监听端口', invalid: Boolean(errors.listen_port) })}<FieldError message={errors.listen_port} /></>
@@ -208,10 +200,7 @@ function ForwardFields({ servers, draft, errors, onChange }: { servers: Server[]
         <div className="tf-form-grid">
           {targetMode === 'server'
             ? <FormField label="目标服务器" required hint="目标地址按服务器地址和入口 IP 栈自动解析。">
-              <><Select required value={draft.target_server_id} aria-label="目标服务器" onChange={event => update({ target_server_id: Number(event.target.value) })}>
-                <option value={0}>选择服务器</option>
-                {servers.filter(server => server.id !== draft.source_server_id).map(server => <option key={server.id} value={server.id}>{serverOptionLabel(server)}</option>)}
-              </Select><FieldError message={errors.target_server_id || errors.target_address} /></>
+              <><ServerPickerSelect required ariaLabel="目标服务器" servers={servers.filter(server => server.id !== draft.source_server_id)} value={draft.target_server_id} onChange={target_server_id => update({ target_server_id })} /><FieldError message={errors.target_server_id || errors.target_address} /></>
             </FormField>
             : <FormField label="目标地址" required hint="IPv4、IPv6 或域名。">
               <><input required aria-label="目标地址" aria-invalid={Boolean(errors.target_address) || undefined} value={draft.target_address} onChange={event => update({ target_address: event.target.value })} placeholder="例如 203.0.113.10" /><FieldError message={errors.target_address} /></>
@@ -320,18 +309,13 @@ function TunnelFields({ servers, draft, editing, errors, onChange }: { servers: 
         <h3>连接哪两台服务器</h3>
         <div className="tf-form-grid tf-pair-grid">
           <FormField label="源服务器" required>
-            <><Select required value={draft.source_server_id} aria-label="源服务器" onChange={event => {
-              const sourceID = Number(event.target.value)
+            <><ServerPickerSelect required ariaLabel="源服务器" servers={servers} value={draft.source_server_id} onChange={sourceID => {
               update({ source_server_id: sourceID, target_server_id: sourceID === draft.target_server_id ? (servers.find(server => server.id !== sourceID)?.id || 0) : draft.target_server_id })
-            }}>
-              {servers.map(server => <option key={server.id} value={server.id}>{serverOptionLabel(server)}</option>)}
-            </Select><FieldError message={errors.source_server_id} /></>
+            }} /><FieldError message={errors.source_server_id} /></>
           </FormField>
           <button type="button" className="ghost icon-button tf-swap" onClick={swap} aria-label="交换源和目标" title="交换源和目标"><ArrowLeftRight size={15} /></button>
           <FormField label="目标服务器" required>
-            <><Select required value={draft.target_server_id} aria-label="目标服务器" onChange={event => update({ target_server_id: Number(event.target.value) })}>
-              {servers.filter(server => server.id !== draft.source_server_id).map(server => <option key={server.id} value={server.id}>{serverOptionLabel(server)}</option>)}
-            </Select><FieldError message={errors.target_server_id} /></>
+            <><ServerPickerSelect required ariaLabel="目标服务器" servers={servers.filter(server => server.id !== draft.source_server_id)} value={draft.target_server_id} onChange={target_server_id => update({ target_server_id })} /><FieldError message={errors.target_server_id} /></>
           </FormField>
         </div>
       </section>
