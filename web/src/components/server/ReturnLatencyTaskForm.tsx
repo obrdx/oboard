@@ -188,7 +188,6 @@ export function ReturnLatencyTaskForm({ task, presets = [], servers, loading, er
                     <Select variant="segmented" className="full-width" aria-label="地址族" value={family} onChange={event => { setFamily(event.target.value as LatencyProbeFamily) }}>
                       <option value="ipv4">IPv4</option><option value="ipv6">IPv6</option><option value="auto">自动</option>
                     </Select>
-                    <p className="muted probe-method-hint">{family === 'auto' ? '不限定地址族，预设的 IPv4 和 IPv6 目标都会测量。' : `只通过 ${familyName(family)} 测量；没有 ${familyName(family)} 出口的服务器不执行。对比两种地址族请分别建任务。`}</p>
                   </FormField>
                   <FormField label={method === 'http' ? '目标 URL' : '目标地址'} required full={method !== 'tcp'}>
                     {presetMode ? <>
