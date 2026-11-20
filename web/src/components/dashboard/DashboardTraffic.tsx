@@ -59,7 +59,6 @@ export function DailyTrafficChart({ days, loading }: { days: DashboardTrafficDay
       <div className="dash-section-head">
         <div>
           <h2>近 30 天流量</h2>
-          <p>每日用户流量，虚线为 7 日均值</p>
         </div>
         <span className="dash-total">{hasData ? `合计 ${formatBytes(sum)}` : ''}</span>
       </div>
@@ -158,7 +157,6 @@ export function LiveRateChart({ live, unknown }: { live: DashboardLiveTotals; un
       <div className="dash-section-head">
         <div>
           <h2>代理速率</h2>
-          <p>在线服务器的用户代理流量，约 30 秒更新；虚线为主机网卡总速率</p>
         </div>
       </div>
       <div className="dash-live-stats">
@@ -218,7 +216,6 @@ export function UserTrafficRank({ users, userCount, totalBytes, loading, onOpen 
       <div className="dash-section-head">
         <div>
           <h2>用户用量排行</h2>
-          <p>各用户当前账期的累计流量</p>
         </div>
         {userCount > 0 && <span className="dash-count">{userCount}</span>}
       </div>

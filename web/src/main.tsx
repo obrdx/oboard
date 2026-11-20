@@ -6162,7 +6162,6 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
             <span className="dash-kicker-date">{formatDashDate()}</span>
           </div>
           <h1>欢迎回来，{displayName}</h1>
-          <p>这里汇总服务器状态、需要关注的事项和流量使用情况。</p>
         </div>
         <div className="dash-welcome-actions">
           <button type="button" className="dash-manage-btn" onClick={() => goTab('servers')}>
@@ -6222,7 +6221,6 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
           <div className="dash-section-head">
             <div>
               <h2>需要关注</h2>
-              <p>离线、即将到期以及资源或流量吃紧的服务器</p>
             </div>
             {attention.length > 0 && <span className="dash-count">{attention.length}</span>}
           </div>
