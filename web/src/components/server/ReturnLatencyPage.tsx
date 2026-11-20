@@ -7,7 +7,7 @@ import { ProbeDDNS } from './ProbeDDNS'
 import { Select } from '../ui/select'
 import type { LatencyProbePreset, LatencyProbeTask, Server } from '../proxy-path/types'
 import { ReturnLatencySettings, type LatencyProbeTaskAssignmentChange } from './ReturnLatencySettings'
-import { ReturnLatencyTaskForm, targetLabel } from './ReturnLatencyTaskForm'
+import { ReturnLatencyTaskForm, familyApplicable, familyName, targetLabel } from './ReturnLatencyTaskForm'
 import { RegionFlag, serverRegionCode } from '../ui/RegionFlag'
 import { useRegisterPageRefresh } from '../../page-refresh-context'
 
@@ -218,12 +218,13 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
           <thead><tr><th scope="col">名称 / 目标地址</th><th scope="col">方式</th><th scope="col">间隔</th><th scope="col">执行节点</th><th scope="col">任务状态</th><th scope="col" className="network-probe-actions-heading">操作</th></tr></thead>
           <tbody>{visibleTasks.map(task => {
             const assigned = task.server_ids.map(id => serverByID.get(id)).filter(Boolean) as Server[]
-            const live = assigned.filter(server => online(server) && server.latency_probe_enabled).length
+            const inapplicable = assigned.filter(server => !familyApplicable(server, task.family)).length
+            const live = assigned.filter(server => online(server) && server.latency_probe_enabled && familyApplicable(server, task.family)).length
             return <tr key={task.id} className="probe-task-card">
               <td><strong>{task.name}</strong><span className="probe-task-target">{task.address ? `${task.address}${task.method === 'tcp' ? `:${task.port}` : ''}` : task.preset_id ? targetLabel(task.province, task.carrier) : '预设已下线，请编辑后重新选择'}</span></td>
-              <td data-label="方式"><span className="probe-task-badge">{task.method === 'http' ? 'HTTP' : task.method === 'icmp' ? 'Ping' : 'TCP'}</span></td>
+              <td data-label="方式"><span className="probe-task-badge">{task.method === 'http' ? 'HTTP' : task.method === 'icmp' ? 'Ping' : 'TCP'}</span><span className="probe-task-badge">{familyName(task.family)}</span></td>
               <td data-label="间隔">{formatInterval(task.interval_seconds)}</td>
-              <td data-label="执行节点" title={assigned.map(server => server.name).join('、')}>{assigned.length} 台<small className="muted">{live} 台可执行</small></td>
+              <td data-label="执行节点" title={assigned.map(server => server.name).join('、')}>{assigned.length} 台<small className="muted">{live} 台可执行{inapplicable ? ` · ${inapplicable} 台不适用` : ''}</small></td>
               <td data-label="任务状态"><span className={`probe-task-badge${task.enabled ? ' is-on' : ''}`}>{task.enabled ? assigned.length ? '已启用' : '待分配' : '已停用'}</span></td>
               <td><div className="probe-task-card-actions">
                 <button type="button" className="ghost" aria-label={`编辑 ${task.name}`} disabled={!canManage || busy} onClick={() => setEditing({ open: true, task })}><Pencil size={14} aria-hidden="true" />编辑</button>

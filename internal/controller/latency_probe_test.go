@@ -434,3 +434,55 @@ func TestLatencyProbeShippedResourceParses(t *testing.T) {
 		}
 	}
 }
+
+func TestLatencyProbeTargetsFollowTaskFamily(t *testing.T) {
+	resource := probeResource(t, "gd-cu|广东|中国联通|gd-cu-1-v4=192.0.2.1;gd-cu-1-v6=gd-cu-v6.example.com")
+	tasks := []model.LatencyProbeTask{
+		{ID: 1, Name: "广东 · 中国联通", Family: model.NetworkFamilyIPv4, PresetID: "gd-cu", Province: "广东", Carrier: "中国联通", Method: model.LatencyProbeModeTCP, Port: 80, IntervalSeconds: 60, Enabled: true},
+		{ID: 2, Name: "广东 · 中国联通 IPv6", Family: model.NetworkFamilyIPv6, PresetID: "gd-cu", Province: "广东", Carrier: "中国联通", Method: model.LatencyProbeModeTCP, Port: 80, IntervalSeconds: 60, Enabled: true},
+		{ID: 3, Name: "自定义", Family: model.NetworkFamilyIPv6, Address: "example.com", Method: model.LatencyProbeModeTCP, Port: 443, IntervalSeconds: 60, Enabled: true},
+	}
+	dual := model.Server{LatencyProbeMaxTargets: 8, PublicIPv4: "198.51.100.1", PublicIPv6: "2001:db8::1", KernelCapabilities: []string{model.AgentCapabilityLatencyProbeFamily}}
+	targets := latencyProbeTargets(resource, dual, tasks)
+	families := map[string]string{}
+	for _, target := range targets {
+		families[target.ProbeID] = target.Family
+	}
+	want := map[string]string{"public-cloudflare": "ipv4", "t1-gd-cu-1-v4": "ipv4", "t2-gd-cu-1-v6": "ipv6", "t3-0": "ipv6"}
+	if len(targets) != len(want) {
+		t.Fatalf("targets = %#v", targets)
+	}
+	for id, family := range want {
+		if got, ok := families[id]; !ok || got != family {
+			t.Fatalf("probe %s family = %q (present %v), targets %#v", id, got, ok, targets)
+		}
+	}
+
+	v4Only := dual
+	v4Only.PublicIPv6 = ""
+	for _, target := range latencyProbeTargets(resource, v4Only, tasks) {
+		if target.TaskID == 2 || target.TaskID == 3 {
+			t.Fatalf("IPv6 task ran on an IPv4-only server: %#v", target)
+		}
+	}
+	v6Only := dual
+	v6Only.PublicIPv4 = ""
+	for _, target := range latencyProbeTargets(resource, v6Only, tasks) {
+		if target.TaskID == 1 {
+			t.Fatalf("IPv4 task ran on an IPv6-only server: %#v", target)
+		}
+		if target.Kind == "public" && target.Family != "ipv6" {
+			t.Fatalf("public probe on IPv6-only server = %#v", target)
+		}
+	}
+
+	// An Agent without the capability still gets the family-filtered preset
+	// targets but no family field, so its plan digest matches.
+	legacy := dual
+	legacy.KernelCapabilities = nil
+	for _, target := range latencyProbeTargets(resource, legacy, tasks) {
+		if target.Family != "" || target.ProbeID == "t1-gd-cu-1-v6" || target.ProbeID == "t2-gd-cu-1-v4" {
+			t.Fatalf("legacy target = %#v", target)
+		}
+	}
+}

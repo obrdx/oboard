@@ -64,7 +64,7 @@ describe('return latency probe tasks', () => {
     await setInput(container.querySelector<HTMLInputElement>('[aria-label="目标地址"]')!, 'example.com')
     await click(container.querySelector<HTMLInputElement>('[aria-label="选择 Hong Kong"]')!)
     await click(buttonIn(container, '创建任务')!)
-    expect(submit).toHaveBeenCalledWith({ name: 'example.com', method: 'tcp', address: 'example.com', port: 80, preset_id: '', province: '', carrier: '', interval_seconds: 300, enabled: true, server_ids: [1] })
+    expect(submit).toHaveBeenCalledWith({ name: 'example.com', method: 'tcp', family: 'auto', address: 'example.com', port: 80, preset_id: '', province: '', carrier: '', interval_seconds: 300, enabled: true, server_ids: [1] })
   })
 
   it.each(['127.0.0.1', '10.0.0.1', '::1', 'fd00::1', 'fe80::1%eth0', 'localhost', 'router1'])('creates a probe for internal target %s', async address => {
@@ -110,7 +110,7 @@ describe('return latency probe tasks', () => {
     expect(container.querySelector('.probe-preset-bound')!.textContent).toContain('广东 · 中国电信')
     expect(container.textContent).toContain('地址随预设自动更新')
     await click(buttonIn(container, '创建任务')!)
-    expect(submit.mock.calls[0][0]).toMatchObject({ name: '广东 · 中国电信', address: '', preset_id: 'gd-ct', method: 'tcp', port: 80 })
+    expect(submit.mock.calls[0][0]).toMatchObject({ name: '广东 · 中国电信', family: 'ipv4', address: '', preset_id: 'gd-ct', method: 'tcp', port: 80 })
     await click(buttonIn(container, '改填地址')!)
     expect(container.querySelector('.probe-preset-bound')).toBeNull()
     expect(container.querySelector<HTMLInputElement>('[aria-label="目标地址"]')!.required).toBe(true)

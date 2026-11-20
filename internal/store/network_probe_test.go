@@ -164,3 +164,68 @@ func TestNetworkProbeCustomResultsAppearInHistory(t *testing.T) {
 		t.Fatalf("custom history missing: %#v %v", points, err)
 	}
 }
+
+func TestLatencyProbeTaskFamilyMigratesPreviousSchema(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "previous-family.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &model.Server{Name: "family-node", LatencyProbeEnabled: true}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	preset := model.LatencyProbeTask{Name: "广东 · 中国联通", PresetID: "gd-cu", Province: "广东", Carrier: "中国联通", IntervalSeconds: 300, Enabled: true, ServerIDs: []int64{server.ID}}
+	custom := model.LatencyProbeTask{Name: "网站", Method: model.LatencyProbeModeTCP, Address: "example.com", Port: 443, IntervalSeconds: 300, Enabled: true, ServerIDs: []int64{server.ID}}
+	for _, task := range []*model.LatencyProbeTask{&preset, &custom} {
+		if err := db.SaveLatencyProbeTask(ctx, task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.db.Exec("alter table latency_probe_tasks drop column family"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopen := func() *Store {
+		t.Helper()
+		next, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return next
+	}
+	db = reopen()
+	gotPreset, err := db.GetLatencyProbeTask(ctx, preset.ID)
+	if err != nil || gotPreset.Family != model.NetworkFamilyIPv4 || gotPreset.Name != preset.Name || len(gotPreset.ServerIDs) != 1 {
+		t.Fatalf("preset task after migration = %#v, %v", gotPreset, err)
+	}
+	gotCustom, err := db.GetLatencyProbeTask(ctx, custom.ID)
+	if err != nil || gotCustom.Family != model.NetworkFamilyAuto || gotCustom.Address != "example.com" {
+		t.Fatalf("custom task after migration = %#v, %v", gotCustom, err)
+	}
+	// An IPv6 sibling of the migrated preset task gets its own default name.
+	v6 := model.LatencyProbeTask{Family: model.NetworkFamilyIPv6, PresetID: "gd-cu", Province: "广东", Carrier: "中国联通", ServerIDs: []int64{server.ID}, Enabled: true}
+	if err := db.SaveLatencyProbeTask(ctx, &v6); err != nil || v6.Name != "广东 · 中国联通 IPv6" {
+		t.Fatalf("ipv6 sibling = %#v, %v", v6, err)
+	}
+	gotCustom.Family = model.NetworkFamilyIPv6
+	if err := db.SaveLatencyProbeTask(ctx, gotCustom); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db = reopen()
+	defer db.Close()
+	again, err := db.GetLatencyProbeTask(ctx, custom.ID)
+	if err != nil || again.Family != model.NetworkFamilyIPv6 {
+		t.Fatalf("migration overwrote operator family: %#v, %v", again, err)
+	}
+	mismatch := model.LatencyProbeTask{Name: "字面量", Family: model.NetworkFamilyIPv6, Method: model.LatencyProbeModeTCP, Address: "192.0.2.1", Port: 80, Enabled: true}
+	if err := db.SaveLatencyProbeTask(ctx, &mismatch); err == nil {
+		t.Fatal("IPv4 literal accepted for an IPv6 task")
+	}
+}

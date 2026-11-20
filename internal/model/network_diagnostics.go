@@ -37,6 +37,9 @@ const (
 	// monitor-origin probe_network_tcp, used by Controller availability checks
 	// of third-party nodes without the plugin gate.
 	AgentCapabilityNetworkTCPMonitor = "network_tcp_monitor_v1"
+	// AgentCapabilityLatencyProbeFamily is advertised by Agents that honor a
+	// latency probe target's family when resolving and dialing.
+	AgentCapabilityLatencyProbeFamily = "latency_probe_family_v1"
 
 	NetworkFamilyAuto = "auto"
 	NetworkFamilyIPv4 = "ipv4"

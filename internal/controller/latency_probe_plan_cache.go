@@ -137,6 +137,7 @@ func latencyProbePlanServerKey(server model.Server) string {
 		strconv.FormatBool(server.PublicIPv4 != ""),
 		strconv.FormatBool(server.PublicIPv6 != ""),
 		region,
+		strconv.FormatBool(serverSupportsCapability(server, model.AgentCapabilityLatencyProbeFamily)),
 	}
 	return strings.Join(parts, "\x1f")
 }

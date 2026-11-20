@@ -19,8 +19,11 @@ export type LatencyProbePresetTarget = { id: string; family: 'ipv4' | 'ipv6'; ho
 export type LatencyProbePreset = { id: string; province: string; carrier: string; targets: LatencyProbePresetTarget[] }
 export type NetworkProbeMethod = 'tcp' | 'icmp' | 'http'
 
+export type LatencyProbeFamily = 'ipv4' | 'ipv6' | 'auto'
+
 export type LatencyProbeTask = {
   method: NetworkProbeMethod
+  family: LatencyProbeFamily
   address: string
   port: number
   id: number

@@ -272,7 +272,11 @@ func latencyProbeTargets(resource latencyProbeResource, server model.Server, tas
 			if mode == "" {
 				mode = server.LatencyProbeMode
 			}
-			data, _ := json.Marshal([]any{"measurement_v1", t.Kind, t.TaskID, t.ProbeID, mode, t.URL, t.Host, t.IP, t.Port, server.IPStack, server.PublicIPv4 != "", server.PublicIPv6 != ""})
+			fields := []any{"measurement_v1", t.Kind, t.TaskID, t.ProbeID, mode, t.URL, t.Host, t.IP, t.Port, server.IPStack, server.PublicIPv4 != "", server.PublicIPv6 != ""}
+			if t.Family != "" {
+				fields = append(fields, t.Family)
+			}
+			data, _ := json.Marshal(fields)
 			t.MeasurementRevision = fmt.Sprintf("%x", sha256.Sum256(data))
 		}
 	}()
@@ -287,7 +291,14 @@ func latencyProbeTargets(resource latencyProbeResource, server model.Server, tas
 	if server.LatencyProbeMode == model.LatencyProbeModeICMP {
 		publicPort, regionalPort = 0, 0
 	}
-	items := []model.LatencyProbeTarget{{ProbeID: "public-" + string(publicTarget), Kind: "public", Host: publicHost, Port: publicPort}}
+	pinFamily := serverSupportsCapability(server, model.AgentCapabilityLatencyProbeFamily)
+	wireFamily := func(family string) string {
+		if !pinFamily || family == model.NetworkFamilyAuto {
+			return ""
+		}
+		return family
+	}
+	items := []model.LatencyProbeTarget{{ProbeID: "public-" + string(publicTarget), Kind: "public", Host: publicHost, Port: publicPort, Family: wireFamily(latencyProbePublicFamily(server))}}
 	if server.LatencyProbeMaxTargets == 1 {
 		return items
 	}
@@ -300,10 +311,11 @@ func latencyProbeTargets(resource latencyProbeResource, server model.Server, tas
 		targets  []model.LatencyProbePresetTarget
 		method   model.LatencyProbeMode
 		port     int
+		family   string
 	}
 	groups := make([]targetGroup, 0, len(tasks))
 	for _, task := range tasks {
-		if !task.Enabled {
+		if !task.Enabled || !latencyProbeTaskApplicable(server, task) {
 			continue
 		}
 		if task.Address != "" {
@@ -327,14 +339,16 @@ func latencyProbeTargets(resource latencyProbeResource, server model.Server, tas
 				}
 				_, ip, _ = parseCustomLatencyProbeTarget(host)
 			}
-			items = append(items, model.LatencyProbeTarget{ProbeID: fmt.Sprintf("t%d-0", task.ID), Kind: "custom", TaskID: task.ID, TaskName: task.Name, Mode: task.Method, Host: host, IP: ip, Port: port, URL: targetURL, IntervalSeconds: task.IntervalSeconds})
+			items = append(items, model.LatencyProbeTarget{ProbeID: fmt.Sprintf("t%d-0", task.ID), Kind: "custom", TaskID: task.ID, TaskName: task.Name, Mode: task.Method, Host: host, IP: ip, Port: port, URL: targetURL, Family: wireFamily(task.Family), IntervalSeconds: task.IntervalSeconds})
 			continue
 		}
 		// A preset task follows the preset's current targets. Names come from
 		// the resource, not the task row, so a renamed province or carrier is
 		// picked up without editing the task.
-		if preset, ok := resource.preset(task.PresetID); ok && len(preset.Targets) > 0 {
-			groups = append(groups, targetGroup{taskID: task.ID, taskName: task.Name, interval: task.IntervalSeconds, province: preset.Province, carrier: preset.Carrier, targets: preset.Targets, method: task.Method, port: task.Port})
+		if preset, ok := resource.preset(task.PresetID); ok {
+			if targets := latencyProbePresetTargetsForFamily(preset.Targets, task.Family); len(targets) > 0 {
+				groups = append(groups, targetGroup{taskID: task.ID, taskName: task.Name, interval: task.IntervalSeconds, province: preset.Province, carrier: preset.Carrier, targets: targets, method: task.Method, port: task.Port, family: wireFamily(task.Family)})
+			}
 		}
 	}
 	sort.Slice(groups, func(i, j int) bool {
@@ -365,13 +379,51 @@ func latencyProbeTargets(resource latencyProbeResource, server model.Server, tas
 					port = 0
 				}
 			}
-			items = append(items, model.LatencyProbeTarget{Mode: group.method, ProbeID: latencyProbePresetProbeID(group.taskID, target.ID), Kind: "regional", TaskID: group.taskID, TaskName: group.taskName, Province: group.province, Carrier: group.carrier, Host: host, IP: ip, Port: port, IntervalSeconds: group.interval})
+			items = append(items, model.LatencyProbeTarget{Mode: group.method, ProbeID: latencyProbePresetProbeID(group.taskID, target.ID), Kind: "regional", TaskID: group.taskID, TaskName: group.taskName, Province: group.province, Carrier: group.carrier, Host: host, IP: ip, Port: port, Family: group.family, IntervalSeconds: group.interval})
 		}
 		if !added {
 			break
 		}
 	}
 	return items
+}
+
+// latencyProbePublicFamily is the family of the built-in public probe. It
+// decides online state and SLA, so it stays on IPv4 and moves to IPv6 only on a
+// server whose effective stack has no IPv4 egress.
+func latencyProbePublicFamily(server model.Server) string {
+	if core.EffectiveIPStack(server) == model.IPStackIPv6Only {
+		return model.NetworkFamilyIPv6
+	}
+	return model.NetworkFamilyIPv4
+}
+
+// latencyProbeTaskApplicable reports whether a task's family can be measured
+// from this server. A single-stack server skips tasks of the family it has no
+// egress for; an unknown stack runs everything.
+func latencyProbeTaskApplicable(server model.Server, task model.LatencyProbeTask) bool {
+	switch core.EffectiveIPStack(server) {
+	case model.IPStackIPv4Only:
+		return task.Family != model.NetworkFamilyIPv6
+	case model.IPStackIPv6Only:
+		return task.Family != model.NetworkFamilyIPv4
+	}
+	return true
+}
+
+// latencyProbePresetTargetsForFamily keeps the preset targets of one family;
+// auto keeps them all.
+func latencyProbePresetTargetsForFamily(targets []model.LatencyProbePresetTarget, family string) []model.LatencyProbePresetTarget {
+	if family != model.NetworkFamilyIPv4 && family != model.NetworkFamilyIPv6 {
+		return targets
+	}
+	kept := make([]model.LatencyProbePresetTarget, 0, len(targets))
+	for _, target := range targets {
+		if target.Family == family {
+			kept = append(kept, target)
+		}
+	}
+	return kept
 }
 
 func effectiveLatencyProbePublicTarget(server model.Server) model.ConnectivityTarget {
@@ -799,7 +851,7 @@ func (s *Server) latencyProbeTasks(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &req) {
 			return
 		}
-		task := model.LatencyProbeTask{Method: req.Method, Address: req.Address, Port: req.Port, Name: req.Name, PresetID: req.PresetID, IntervalSeconds: req.IntervalSeconds, Enabled: true, ServerIDs: req.ServerIDs}
+		task := model.LatencyProbeTask{Method: req.Method, Family: req.Family, Address: req.Address, Port: req.Port, Name: req.Name, PresetID: req.PresetID, IntervalSeconds: req.IntervalSeconds, Enabled: true, ServerIDs: req.ServerIDs}
 		if req.Enabled != nil {
 			task.Enabled = *req.Enabled
 		}
@@ -880,7 +932,11 @@ func effectiveLatencyTargetMode(target model.LatencyProbeTarget, fallback model.
 func latencyProbeReportMatchesPreset(task model.LatencyProbeTask, item model.LatencyProbeResult) bool {
 	prefix := fmt.Sprintf("t%d-", task.ID)
 	targetID := strings.TrimPrefix(item.ProbeID, prefix)
-	if task.PresetID == "" || targetID == item.ProbeID || core.LatencyProbeTargetFamily(targetID) == "" {
+	family := core.LatencyProbeTargetFamily(targetID)
+	if task.PresetID == "" || targetID == item.ProbeID || family == "" {
+		return false
+	}
+	if task.Family != model.NetworkFamilyAuto && task.Family != "" && task.Family != family {
 		return false
 	}
 	latencyProbeCache.Lock()

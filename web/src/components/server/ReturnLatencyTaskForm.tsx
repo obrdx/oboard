@@ -3,7 +3,7 @@ import { ChevronDown, Loader2, Search } from 'lucide-react'
 import { FormField } from '../ui/form-field'
 import { Select } from '../ui/select'
 import { Switch } from '../ui/switch'
-import type { LatencyProbePreset, LatencyProbeTask, NetworkProbeMethod, Server } from '../proxy-path/types'
+import type { LatencyProbeFamily, LatencyProbePreset, LatencyProbeTask, NetworkProbeMethod, Server } from '../proxy-path/types'
 
 const INTERVAL_PRESETS = [60, 300, 900, 1800, 3600]
 const CARRIER_PRIORITY = ['中国电信', '中国联通', '中国移动', '中国广电', '教育网']
@@ -16,10 +16,33 @@ export const targetLabel = (province: string, carrier: string) => {
   return `${left} · ${right}`
 }
 
-const familyLabel = (preset: LatencyProbePreset) => {
-  const v4 = preset.targets.filter(target => target.family === 'ipv4').length
-  const v6 = preset.targets.filter(target => target.family === 'ipv6').length
-  return [v4 ? `IPv4${v4 > 1 ? ` ×${v4}` : ''}` : '', v6 ? `IPv6${v6 > 1 ? ` ×${v6}` : ''}` : ''].filter(Boolean).join(' · ')
+const familyLabel = (preset: LatencyProbePreset, family: LatencyProbeFamily = 'auto') => {
+  const v4 = family === 'ipv6' ? 0 : preset.targets.filter(target => target.family === 'ipv4').length
+  const v6 = family === 'ipv4' ? 0 : preset.targets.filter(target => target.family === 'ipv6').length
+  return [v4 ? `IPv4${v4 > 1 ? ` ×${v4}` : ''}` : '', v6 ? `IPv6${v6 > 1 ? ` ×${v6}` : ''}` : ''].filter(Boolean).join(' · ') || '该预设没有此地址族的目标'
+}
+
+export const familyName = (family: LatencyProbeFamily | undefined) => family === 'ipv4' ? 'IPv4' : family === 'ipv6' ? 'IPv6' : '自动'
+
+// Mirrors the Controller rule: a single-stack server skips tasks of the
+// family it has no egress for; an unknown stack runs everything.
+export const familyApplicable = (server: Server, family: LatencyProbeFamily | undefined) => {
+  let stack = server.ip_stack
+  if (!stack || stack === 'auto') {
+    const v4 = Boolean(server.public_ipv4?.trim())
+    const v6 = Boolean(server.public_ipv6?.trim())
+    stack = v4 && v6 ? 'dual_stack' : v6 ? 'ipv6_only' : v4 ? 'ipv4_only' : 'auto'
+  }
+  if (stack === 'ipv4_only') return family !== 'ipv6'
+  if (stack === 'ipv6_only') return family !== 'ipv4'
+  return true
+}
+
+const presetTaskName = (preset: LatencyProbePreset, family: LatencyProbeFamily) => `${targetLabel(preset.province, preset.carrier)}${family === 'ipv6' ? ' IPv6' : ''}`
+
+const literalHost = (value: string, method: NetworkProbeMethod) => {
+  if (method !== 'http') return value.replace(/%.*$/, '')
+  try { return new URL(value).hostname.replace(/^\[|\]$/g, '') } catch { return '' }
 }
 
 export function ReturnLatencyTaskForm({ task, presets = [], servers, loading, error, disabled, onSubmit, onCancel }: {
@@ -33,6 +56,7 @@ export function ReturnLatencyTaskForm({ task, presets = [], servers, loading, er
   onCancel: () => void
 }) {
   const [method, setMethod] = useState<NetworkProbeMethod>(task?.method || 'tcp')
+  const [family, setFamily] = useState<LatencyProbeFamily>(task?.family || (task && !task.address ? 'ipv4' : 'auto'))
   const [address, setAddress] = useState(task?.address || '')
   const [port, setPort] = useState<number | ''>(task?.port || 80)
   const [presetOpen, setPresetOpen] = useState(Boolean(task && !task.address))
@@ -70,7 +94,7 @@ export function ReturnLatencyTaskForm({ task, presets = [], servers, loading, er
   const presetMissing = presetMode && !loading && !error && !selectedPreset
   const effectiveName = nameTouched && name.trim() ? name.trim() : Array.from(address.trim() || (presetMode ? presetLabel || presetID : '')).slice(0, 60).join('')
   const online = (server: Server) => Boolean(server.agent_id) && server.status === 'online'
-  const suggested = useMemo(() => servers.filter(server => online(server) && server.latency_probe_enabled), [servers])
+  const suggested = useMemo(() => servers.filter(server => online(server) && server.latency_probe_enabled && familyApplicable(server, family)), [servers, family])
   const visibleServers = useMemo(() => {
     const q = serverQuery.trim().toLowerCase()
     if (!q) return servers
@@ -85,6 +109,8 @@ export function ReturnLatencyTaskForm({ task, presets = [], servers, loading, er
     if (method === 'http') {
       try { const url = new URL(value); if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash) return '请输入不含凭据或片段的 HTTP / HTTPS URL。' } catch { return '请输入完整 URL，例如 https://example.com/health。' }
     } else if (/[\s/?#]/.test(value) || (value.includes(':') && !/^[0-9a-fA-F:.]+(?:%[a-zA-Z0-9_.-]+)?$/.test(value))) return '请只填写 IP 地址或主机名，端口单独设置。'
+    const literal = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(literalHost(value, method)) ? 'ipv4' : literalHost(value, method).includes(':') ? 'ipv6' : ''
+    if (literal && family !== 'auto' && literal !== family) return `目标是 ${familyName(literal as LatencyProbeFamily)} 地址，与所选地址族不一致。`
     return ''
   })()
   const portInvalid = method === 'tcp' && (!Number.isInteger(port) || Number(port) < 1 || Number(port) > 65535)
@@ -102,7 +128,10 @@ export function ReturnLatencyTaskForm({ task, presets = [], servers, loading, er
       setPresetID(preset.id)
       setAddress('')
     }
-    if (!nameTouched) setName(targetLabel(preset.province, preset.carrier))
+    // A preset publishes both families; a task measures one, IPv4 unless chosen otherwise.
+    const nextFamily = method !== 'http' && family === 'auto' && !presetMode ? 'ipv4' : family
+    setFamily(nextFamily)
+    if (!nameTouched) setName(presetTaskName(preset, nextFamily))
     setNameTouched(true)
     setPresetOpen(false)
   }
@@ -112,7 +141,7 @@ export function ReturnLatencyTaskForm({ task, presets = [], servers, loading, er
     setSaving(true)
     setSubmitError('')
     try {
-      await onSubmit({ name: effectiveName, method, address: address.trim(), port: method === 'tcp' ? Number(port) : 0, preset_id: presetMode ? presetID : '', province: '', carrier: '', interval_seconds: Number(interval), enabled, server_ids: serverIDs })
+      await onSubmit({ name: effectiveName, method, family, address: address.trim(), port: method === 'tcp' ? Number(port) : 0, preset_id: presetMode ? presetID : '', province: '', carrier: '', interval_seconds: Number(interval), enabled, server_ids: serverIDs })
     } catch (err: any) {
       setSubmitError(err?.message || '保存失败，请重试')
     } finally {
@@ -134,10 +163,16 @@ export function ReturnLatencyTaskForm({ task, presets = [], servers, loading, er
                     </Select>
                     <p className="muted probe-method-hint">{method === 'tcp' ? '检测指定端口能否建立连接。' : method === 'icmp' ? '通过 ICMP 检测目标的可达性与延迟。' : '发送 GET 请求，跟随最多 3 次跳转，以 2xx 响应为成功。'}</p>
                   </FormField>
+                  <FormField label="地址族" required full>
+                    <Select variant="segmented" className="full-width" aria-label="地址族" value={family} onChange={event => { setFamily(event.target.value as LatencyProbeFamily) }}>
+                      <option value="ipv4">IPv4</option><option value="ipv6">IPv6</option><option value="auto">自动</option>
+                    </Select>
+                    <p className="muted probe-method-hint">{family === 'auto' ? '不限定地址族，预设的 IPv4 和 IPv6 目标都会测量。' : `只通过 ${familyName(family)} 测量；没有 ${familyName(family)} 出口的服务器不执行。对比两种地址族请分别建任务。`}</p>
+                  </FormField>
                   <FormField label={method === 'http' ? '目标 URL' : '目标地址'} required full={method !== 'tcp'}>
                     {presetMode ? <>
                       <div className="probe-preset-bound" role="group" aria-label="已绑定的预设目标" aria-describedby="probe-address-hint">
-                        <span className="probe-preset-bound-text"><strong>{presetLabel || presetID}</strong><span>{selectedPreset ? familyLabel(selectedPreset) : '全部目标'}</span></span>
+                        <span className="probe-preset-bound-text"><strong>{presetLabel || presetID}</strong><span>{selectedPreset ? familyLabel(selectedPreset, family) : '全部目标'}</span></span>
                         <button type="button" className="ghost probe-preset-unbind" onClick={() => { setPresetID(''); window.requestAnimationFrame(() => addressInputRef.current?.focus()) }}>改填地址</button>
                       </div>
                       <small id="probe-address-hint" className={presetMissing ? 'danger-text' : 'muted'}>{presetMissing ? '该运营商预设已下线，请重新选择或改填地址。' : '预设目标，地址随预设自动更新。'}</small>
@@ -162,7 +197,7 @@ export function ReturnLatencyTaskForm({ task, presets = [], servers, loading, er
                         </div>
                       </>}
                       <div className="probe-preset-results">
-                        {loading ? <p className="muted" role="status">正在加载预设…</p> : !visiblePresets.length ? <p className="muted">{error ? '预设暂不可用，仍可手动填写地址。' : '没有匹配的预设目标。'}</p> : visiblePresets.map(preset => <button type="button" className="probe-preset-option" key={preset.id} aria-pressed={presetMode && preset.id === presetID} title={preset.targets.map(target => target.host).join('\n')} onClick={() => selectPreset(preset)}><strong>{targetLabel(preset.province, preset.carrier)}</strong><span>{familyLabel(preset)}</span></button>)}
+                        {loading ? <p className="muted" role="status">正在加载预设…</p> : !visiblePresets.length ? <p className="muted">{error ? '预设暂不可用，仍可手动填写地址。' : '没有匹配的预设目标。'}</p> : visiblePresets.map(preset => <button type="button" className="probe-preset-option" key={preset.id} aria-pressed={presetMode && preset.id === presetID} title={preset.targets.map(target => target.host).join('\n')} onClick={() => selectPreset(preset)}><strong>{targetLabel(preset.province, preset.carrier)}</strong><span>{familyLabel(preset, family)}</span></button>)}
                       </div>
                     </section>}
                   </div>
@@ -217,7 +252,7 @@ export function ReturnLatencyTaskForm({ task, presets = [], servers, loading, er
                       <strong>{server.name}</strong>
                       <small className="muted">{server.public_ipv4 || server.public_ipv6 || `#${server.id}`}</small>
                     </span>
-                    <span className="probe-task-server-state muted">{online(server) ? (server.latency_probe_enabled ? '推荐' : '未启用探测') : server.agent_id ? '离线' : '未接入'}</span>
+                    <span className="probe-task-server-state muted">{!familyApplicable(server, family) ? `不适用（无 ${familyName(family)}）` : online(server) ? (server.latency_probe_enabled ? '推荐' : '未启用探测') : server.agent_id ? '离线' : '未接入'}</span>
                   </label>
                 ))}
               </div>

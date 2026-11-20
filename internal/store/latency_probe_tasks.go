@@ -78,9 +78,23 @@ func normalizeLatencyProbeTask(task *model.LatencyProbeTask) error {
 	default:
 		return errors.New("探测方式必须是 TCP、Ping 或 HTTP")
 	}
+	task.Family = strings.TrimSpace(task.Family)
+	switch task.Family {
+	case "":
+		task.Family = model.NetworkFamilyAuto
+		if task.Address == "" {
+			task.Family = model.NetworkFamilyIPv4
+		}
+	case model.NetworkFamilyAuto, model.NetworkFamilyIPv4, model.NetworkFamilyIPv6:
+	default:
+		return errors.New("地址族必须是 IPv4、IPv6 或自动")
+	}
 	if task.Address != "" {
 		if err := ValidateNetworkProbeAddress(task.Address, task.Method); err != nil {
 			return err
+		}
+		if literal := NetworkProbeAddressFamily(task.Address, task.Method); literal != "" && task.Family != model.NetworkFamilyAuto && task.Family != literal {
+			return errors.New("目标 IP 地址与所选地址族不一致")
 		}
 		if task.Method == model.LatencyProbeModeHTTP {
 			u, _ := url.Parse(task.Address)
@@ -96,6 +110,9 @@ func normalizeLatencyProbeTask(task *model.LatencyProbeTask) error {
 		task.Name = latencyProbeTargetLabel(task.Province, task.Carrier)
 		if task.Name == "" {
 			task.Name = task.PresetID
+		}
+		if task.Name != "" && task.Family == model.NetworkFamilyIPv6 {
+			task.Name += " IPv6"
 		}
 		if task.Name == "" {
 			task.Name = string([]rune(task.Address)[:min(len([]rune(task.Address)), latencyProbeTaskMaxNameLen)])
@@ -137,7 +154,7 @@ func (s *Store) scanLatencyProbeTasks(ctx context.Context, query string, args ..
 		var task model.LatencyProbeTask
 		var enabled int
 		var createdAt, updatedAt string
-		if err := rows.Scan(&task.ID, &task.Name, &task.PresetID, &task.Province, &task.Carrier, &task.IntervalSeconds, &task.Method, &task.Address, &task.Port, &enabled, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&task.ID, &task.Name, &task.PresetID, &task.Province, &task.Carrier, &task.IntervalSeconds, &task.Method, &task.Family, &task.Address, &task.Port, &enabled, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		task.Enabled = enabled == 1
@@ -179,7 +196,7 @@ func (s *Store) attachLatencyProbeTaskServers(ctx context.Context, tasks []model
 
 // ListLatencyProbeTasks returns every probe task with its assigned servers.
 func (s *Store) ListLatencyProbeTasks(ctx context.Context) ([]model.LatencyProbeTask, error) {
-	tasks, err := s.scanLatencyProbeTasks(ctx, `select id,name,preset_id,province,carrier,interval_seconds,method,address,port,enabled,created_at,updated_at from latency_probe_tasks order by name,id`)
+	tasks, err := s.scanLatencyProbeTasks(ctx, `select id,name,preset_id,province,carrier,interval_seconds,method,family,address,port,enabled,created_at,updated_at from latency_probe_tasks order by name,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +208,7 @@ func (s *Store) ListLatencyProbeTasks(ctx context.Context) ([]model.LatencyProbe
 
 // GetLatencyProbeTask loads one probe task by identifier.
 func (s *Store) GetLatencyProbeTask(ctx context.Context, id int64) (*model.LatencyProbeTask, error) {
-	tasks, err := s.scanLatencyProbeTasks(ctx, `select id,name,preset_id,province,carrier,interval_seconds,method,address,port,enabled,created_at,updated_at from latency_probe_tasks where id=?`, id)
+	tasks, err := s.scanLatencyProbeTasks(ctx, `select id,name,preset_id,province,carrier,interval_seconds,method,family,address,port,enabled,created_at,updated_at from latency_probe_tasks where id=?`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +223,7 @@ func (s *Store) GetLatencyProbeTask(ctx context.Context, id int64) (*model.Laten
 
 // ListLatencyProbeTasksForServer returns the enabled probe tasks assigned to one server.
 func (s *Store) ListLatencyProbeTasksForServer(ctx context.Context, serverID int64) ([]model.LatencyProbeTask, error) {
-	tasks, err := s.scanLatencyProbeTasks(ctx, `select t.id,t.name,t.preset_id,t.province,t.carrier,t.interval_seconds,t.method,t.address,t.port,t.enabled,t.created_at,t.updated_at from latency_probe_tasks t join latency_probe_task_servers m on m.task_id=t.id where m.server_id=? and t.enabled=1 order by t.name,t.id`, serverID)
+	tasks, err := s.scanLatencyProbeTasks(ctx, `select t.id,t.name,t.preset_id,t.province,t.carrier,t.interval_seconds,t.method,t.family,t.address,t.port,t.enabled,t.created_at,t.updated_at from latency_probe_tasks t join latency_probe_task_servers m on m.task_id=t.id where m.server_id=? and t.enabled=1 order by t.name,t.id`, serverID)
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +268,7 @@ func (s *Store) SaveLatencyProbeTask(ctx context.Context, task *model.LatencyPro
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if task.ID == 0 {
-		result, err := tx.ExecContext(ctx, `insert into latency_probe_tasks(name,preset_id,province,carrier,interval_seconds,method,address,port,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)`, task.Name, task.PresetID, task.Province, task.Carrier, task.IntervalSeconds, task.Method, task.Address, task.Port, boolInt(task.Enabled), now, now)
+		result, err := tx.ExecContext(ctx, `insert into latency_probe_tasks(name,preset_id,province,carrier,interval_seconds,method,family,address,port,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?)`, task.Name, task.PresetID, task.Province, task.Carrier, task.IntervalSeconds, task.Method, task.Family, task.Address, task.Port, boolInt(task.Enabled), now, now)
 		if err != nil {
 			return err
 		}
@@ -262,7 +279,7 @@ func (s *Store) SaveLatencyProbeTask(ctx context.Context, task *model.LatencyPro
 		task.ID = id
 		task.CreatedAt = parseTime(now)
 	} else {
-		result, err := tx.ExecContext(ctx, `update latency_probe_tasks set name=?,preset_id=?,province=?,carrier=?,interval_seconds=?,method=?,address=?,port=?,enabled=?,updated_at=? where id=?`, task.Name, task.PresetID, task.Province, task.Carrier, task.IntervalSeconds, task.Method, task.Address, task.Port, boolInt(task.Enabled), now, task.ID)
+		result, err := tx.ExecContext(ctx, `update latency_probe_tasks set name=?,preset_id=?,province=?,carrier=?,interval_seconds=?,method=?,family=?,address=?,port=?,enabled=?,updated_at=? where id=?`, task.Name, task.PresetID, task.Province, task.Carrier, task.IntervalSeconds, task.Method, task.Family, task.Address, task.Port, boolInt(task.Enabled), now, task.ID)
 		if err != nil {
 			return err
 		}
@@ -431,7 +448,7 @@ func (s *Store) migrateLatencyProbeTasks(ctx context.Context) error {
 		if exists > 0 {
 			continue
 		}
-		result, err := tx.ExecContext(ctx, `insert into latency_probe_tasks(name,preset_id,province,carrier,interval_seconds,enabled,created_at,updated_at) values(?,?,?,?,?,1,?,?)`, name, LatencyProbePresetIDFor(region.Province, region.Carrier), region.Province, region.Carrier, entry.interval, now, now)
+		result, err := tx.ExecContext(ctx, `insert into latency_probe_tasks(name,preset_id,province,carrier,interval_seconds,family,enabled,created_at,updated_at) values(?,?,?,?,?,'ipv4',1,?,?)`, name, LatencyProbePresetIDFor(region.Province, region.Carrier), region.Province, region.Carrier, entry.interval, now, now)
 		if err != nil {
 			return err
 		}
@@ -452,6 +469,27 @@ func (s *Store) migrateLatencyProbeTasks(ctx context.Context) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// NetworkProbeAddressFamily returns the family of an IP-literal probe target,
+// or "" when the target is a hostname.
+func NetworkProbeAddressFamily(address string, method model.LatencyProbeMode) string {
+	host := address
+	if method == model.LatencyProbeModeHTTP {
+		u, err := url.Parse(address)
+		if err != nil {
+			return ""
+		}
+		host = u.Hostname()
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return ""
+	}
+	if addr.Unmap().Is4() {
+		return model.NetworkFamilyIPv4
+	}
+	return model.NetworkFamilyIPv6
 }
 
 // ValidateNetworkProbeAddress validates operator-supplied network probe destinations.
@@ -511,7 +549,33 @@ func (s *Store) migrateNetworkProbeTaskFields(ctx context.Context) error {
 			return err
 		}
 	}
-	return nil
+	return s.migrateLatencyProbeTaskFamily(ctx)
+}
+
+// migrateLatencyProbeTaskFamily adds the per-task address family. Preset tasks
+// created before it measured both families of a preset in one task; they become
+// IPv4 tasks, and an operator who wants IPv6 adds a second task. Custom-address
+// tasks keep auto, which is the dialing behavior they had.
+func (s *Store) migrateLatencyProbeTaskFamily(ctx context.Context) error {
+	var tables, present int
+	if err := s.db.QueryRowContext(ctx, `select count(*) from sqlite_master where type='table' and name='latency_probe_tasks'`).Scan(&tables); err != nil || tables == 0 {
+		return err
+	}
+	if err := s.db.QueryRowContext(ctx, `select count(*) from pragma_table_info('latency_probe_tasks') where name='family'`).Scan(&present); err != nil || present > 0 {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `alter table latency_probe_tasks add column family text not null default 'auto'`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `update latency_probe_tasks set family='ipv4' where address=''`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ValidLatencyProbePresetID reports whether id has the shape of a stable

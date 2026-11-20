@@ -2357,6 +2357,8 @@ type LatencyProbeTarget struct {
 	Host                string           `json:"host"`
 	IP                  string           `json:"ip,omitempty"`
 	Port                int              `json:"port"`
+	// Family pins resolution and dialing to ipv4 or ipv6. Empty means auto.
+	Family string `json:"family,omitempty"`
 	// IntervalSeconds is the autonomous cadence for this single target. Zero means the plan cadence.
 	IntervalSeconds int `json:"interval_seconds,omitempty"`
 }
@@ -2384,11 +2386,15 @@ type LatencyProbeRegion struct {
 // LatencyProbeTask is one network target executed on a chosen set of servers
 // at its own cadence. Several tasks may share the same target with different servers or cadence.
 type LatencyProbeTask struct {
-	Method  LatencyProbeMode `json:"method"`
-	Address string           `json:"address"`
-	Port    int              `json:"port"`
-	ID      int64            `json:"id"`
-	Name    string           `json:"name"`
+	Method LatencyProbeMode `json:"method"`
+	// Family is the address family the task measures: ipv4, ipv6 or auto.
+	// A preset task keeps only the preset targets of that family; auto keeps
+	// both and lets the node pick the family of a custom hostname.
+	Family  string `json:"family"`
+	Address string `json:"address"`
+	Port    int    `json:"port"`
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
 	// PresetID binds the task to one carrier preset of the probe resource; its
 	// addresses follow resource updates. Province and Carrier are the preset's
 	// display names, refreshed from the resource on every save.
