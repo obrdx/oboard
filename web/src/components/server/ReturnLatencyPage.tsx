@@ -225,7 +225,7 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
               <td data-label="方式"><span className="probe-task-badge">{task.method === 'http' ? 'HTTP' : task.method === 'icmp' ? 'Ping' : 'TCP'}</span><span className="probe-task-badge">{familyName(task.family)}</span></td>
               <td data-label="间隔">{formatInterval(task.interval_seconds)}</td>
               <td data-label="执行节点" title={assigned.map(server => server.name).join('、')}>{assigned.length} 台<small className="muted">{live} 台可执行{inapplicable ? ` · ${inapplicable} 台不适用` : ''}</small></td>
-              <td data-label="任务状态"><span className={`probe-task-badge${task.enabled ? ' is-on' : ''}`}>{task.enabled ? assigned.length ? '已启用' : '待分配' : '已停用'}</span></td>
+              <td data-label="任务状态"><span className={`probe-task-badge ${task.enabled ? assigned.length ? 'online' : 'warning' : 'unregistered'}`}>{task.enabled ? assigned.length ? '已启用' : '待分配' : '已停用'}</span></td>
               <td><div className="probe-task-card-actions">
                 <button type="button" className="ghost" aria-label={`编辑 ${task.name}`} disabled={!canManage || busy} onClick={() => setEditing({ open: true, task })}><Pencil size={14} aria-hidden="true" />编辑</button>
                 <button type="button" className="ghost" disabled={!canManage || busy} onClick={() => toggleTask(task)}>{task.enabled ? '停用' : '启用'}</button>
@@ -279,7 +279,7 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
         </div>
       </section>}
     </div>
-    <Dialog isOpen={editing.open} onClose={() => setEditing({ open: false, task: null })} title={editing.task ? '编辑探测任务' : '创建探测任务'} size="xl" className="probe-task-dialog">
+    <Dialog isOpen={editing.open} onClose={() => setEditing({ open: false, task: null })} title={editing.task ? '编辑探测任务' : '创建探测任务'} size="xl" className="probe-task-dialog probe-task-editor-dialog">
       <ReturnLatencyTaskForm
         key={editing.task?.id ?? 'new'}
         task={editing.task}
