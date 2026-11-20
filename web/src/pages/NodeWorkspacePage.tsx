@@ -13,10 +13,9 @@ import { useRegisterPageRefresh } from '../page-refresh-context'
 type AdminView = 'catalog' | 'distribution' | 'user'
 type WorkspaceTab = 'library' | 'groups' | 'outputs' | 'subscription'
 
-const adminViewIntro: Record<AdminView, string> = {
+const adminViewIntro: Partial<Record<AdminView, string>> = {
   catalog: '全部可分配节点及其套餐归属与授权用户。勾选节点可批量调整套餐。',
   distribution: '选择客户端格式后为用户复制订阅链接，并管理自定义路径与 SSH 凭证。',
-  user: '以指定用户的身份查看和管理其节点库、节点组与组合订阅，修改会直接作用于该用户。',
 }
 
 export function NodeWorkspacePage({ data, client, load, notify, legacySubscriptions, sessionUser }: { data: any; client: Client; load: () => Promise<void>; notify?: Notify; legacySubscriptions?: React.ReactNode; sessionUser?: { role?: string } | null }) {
@@ -51,7 +50,7 @@ export function NodeWorkspacePage({ data, client, load, notify, legacySubscripti
           <TabsTrigger value="distribution"><Send size={16} aria-hidden="true" />订阅分发</TabsTrigger>
           <TabsTrigger value="user"><UserRound size={16} aria-hidden="true" />用户节点</TabsTrigger>
         </TabsList>
-        <p className="nw-view-intro">{adminViewIntro[adminView]}</p>
+        {adminViewIntro[adminView] && <p className="nw-view-intro">{adminViewIntro[adminView]}</p>}
       </div>
       <TabsContent value="catalog" className="nw-view">
         <NodeAssignmentsPage data={data} client={client} load={load} notify={notify} />
