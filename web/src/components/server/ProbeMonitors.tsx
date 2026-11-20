@@ -1,7 +1,8 @@
 import { useErrorToast, type ToastNotify } from "../ui/use-error-toast"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
-import { Activity, ListTree, Loader2, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react"
+import { Activity, ListTree, Loader2, Pencil, Plus, Search, Trash2 } from "lucide-react"
+import { useRegisterPageRefresh } from "../../page-refresh-context"
 import { Dialog } from "../ui/dialog"
 import { FormField } from "../ui/form-field"
 import { Select } from "../ui/select"
@@ -63,6 +64,7 @@ export function ProbeMonitors({ client, servers, kind, canManage, toolbarSlot, n
     catch (e: any) { if (!signal?.aborted) setError(e.message || "监控任务加载失败") }
     finally { if (!signal?.aborted) setLoading(false) }
   }, [request])
+  useRegisterPageRefresh(() => refresh())
   useEffect(() => { const abort = new AbortController(); void refresh(abort.signal); const timer = window.setInterval(() => { if (!document.hidden) void refresh(abort.signal) }, 15000); return () => { abort.abort(); window.clearInterval(timer) } }, [refresh])
   const mutate = async (action: string, task: Monitor) => {
     if (busyRef.current) return
@@ -102,7 +104,6 @@ export function ProbeMonitors({ client, servers, kind, canManage, toolbarSlot, n
 
   const toolbar = <>
     <button type="button" className="primary" disabled={!canManage} onClick={create}><Plus size={15} aria-hidden="true" />创建{title}任务</button>
-    <button type="button" className="ghost" onClick={() => { setError(""); void refresh() }} disabled={loading}><RefreshCw size={15} aria-hidden="true" />刷新</button>
   </>
 
   return <section aria-label={title} aria-busy={loading} className="return-latency-tasks probe-monitors">

@@ -1,6 +1,6 @@
 import type { ToastNotify } from "../ui/use-error-toast"
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Activity, History, Pencil, Plus, RefreshCw, Search, Settings2, Trash2 } from 'lucide-react'
+import { Activity, History, Pencil, Plus, Search, Settings2, Trash2 } from 'lucide-react'
 import { Dialog } from '../ui/dialog'
 import { ProbeMonitors } from './ProbeMonitors'
 import { ProbeDDNS } from './ProbeDDNS'
@@ -53,6 +53,12 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
   const [busy, setBusy] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<LatencyProbeTask | null>(null)
   const busyRef = useRef(false)
+  // Success feedback is transient; only errors stay on the page until the next action.
+  const report = useCallback((next: Notice) => {
+    if (notify && next.kind === 'success') { setNotice(null); notify(next.text, 'success') }
+    else setNotice(next)
+  }, [notify])
+  useEffect(() => { setNotice(null) }, [view])
 
   const online = useCallback((server: Server) => Boolean(server.agent_id) && server.status === 'online', [])
   const historyServer = servers.find(server => server.id === historyID)
@@ -101,14 +107,14 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
       body: JSON.stringify(payload),
     })
     setEditing({ open: false, task: null })
-    setNotice({ kind: 'success', text: target ? '任务已更新，等待 Agent 同步。' : '任务已创建，等待 Agent 同步。' })
+    report({ kind: 'success', text: target ? '任务已更新，等待 Agent 同步。' : '任务已创建，等待 Agent 同步。' })
     reloadTasks()
   }
 
   const deleteTask = (task: LatencyProbeTask) => void guard(async () => {
     try {
       await client.request(`/latency-probe-tasks/${task.id}`, { method: 'DELETE' })
-      setNotice({ kind: 'success', text: `已删除任务「${task.name}」。` })
+      report({ kind: 'success', text: `已删除任务「${task.name}」。` })
       setDeleteTarget(null)
       reloadTasks()
     } catch (error: any) {
@@ -139,14 +145,14 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
       reloadTasks()
     }
     setSettingsServer(null)
-    setNotice({ kind: 'success', text: `已保存 ${server.name} 的探测参数。` })
+    report({ kind: 'success', text: `已保存 ${server.name} 的探测参数。` })
     await onRefresh()
   }
 
   const probeNow = (server: Server) => void guard(async () => {
     try {
       const result = await client.request(`/servers/${server.id}/latency-probe`, { method: 'POST', body: JSON.stringify({}) })
-      setNotice({ kind: 'success', text: `${server.name}：${result.existing ? '已有探测任务' : '探测已排队'} #${result.task_id}` })
+      report({ kind: 'success', text: `${server.name}：${result.existing ? '已有探测任务' : '探测已排队'} #${result.task_id}` })
     } catch (error: any) {
       setNotice({ kind: 'error', text: `${server.name}：${error?.message || '探测失败，请重试'}` })
     }
@@ -163,7 +169,7 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
     for (const server of eligible) {
       try { await client.request(`/servers/${server.id}/latency-probe`, { method: 'POST', body: JSON.stringify({}) }); ok += 1 } catch { failed += 1 }
     }
-    setNotice({ kind: failed ? 'error' : 'success', text: `已触发 ${ok} 台服务器的探测${failed ? `，${failed} 台失败` : ''}。` })
+    report({ kind: failed ? 'error' : 'success', text: `已触发 ${ok} 台服务器的探测${failed ? `，${failed} 台失败` : ''}。` })
     await onRefresh()
   })
 
@@ -198,11 +204,10 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
         {(view === 'targets' || view === 'nodes') && <div className="return-latency-toolbar">
           <button type="button" className="primary" disabled={!canManage} onClick={() => setEditing({ open: true, task: null })}><Plus size={15} aria-hidden="true" />创建探测任务</button>
           <button type="button" className="ghost" disabled={busy || !canManage || !tasks.length} onClick={runAll}><Activity size={15} aria-hidden="true" />立即探测</button>
-          <button type="button" className="ghost" disabled={busy || loading} onClick={() => { void onRefresh(); reloadTasks() }}><RefreshCw size={15} aria-hidden="true" />刷新</button>
         </div>}
-        {monitorView && <div className="return-latency-toolbar" ref={setMonitorToolbar} />}
+        {(monitorView || view === 'ddns') && <div className="return-latency-toolbar" ref={setMonitorToolbar} />}
       </div>
-      {!monitorView && notice && <p className={notice.kind === 'error' ? 'danger-text' : 'muted'} role="status">{notice.text}</p>}
+      {(view === 'targets' || view === 'nodes') && notice && <p className={notice.kind === 'error' ? 'danger-text' : 'muted'} role="status">{notice.text}</p>}
       {view === 'targets' && resource.error && <p className="muted" role="status">预设目标暂不可用，仍可手动创建任务。 <button type="button" className="ghost" disabled={resource.loading} onClick={() => setResourceRevision(current => current + 1)}>重新加载</button></p>}
       {view === 'targets' && <section id="probe-targets-panel" role="tabpanel" aria-labelledby="probe-targets-tab" className="return-latency-tasks">
         <div className="return-latency-filters">
@@ -237,7 +242,7 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
       </section>}
 
       {(view === 'routes' || view === 'quality') && <section id={`probe-${view}-panel`} role="tabpanel" aria-labelledby={`probe-${view}-tab`}><ProbeMonitors key={view} client={client} servers={servers} kind={view === 'routes' ? 'route' : 'ip_quality'} canManage={canManage} toolbarSlot={monitorToolbar} notify={notify} /></section>}
-      {view === 'ddns' && <section id="probe-ddns-panel" role="tabpanel" aria-labelledby="probe-ddns-tab"><ProbeDDNS notify={notify} client={client} servers={servers} credentials={credentials} canManage={canManage} /></section>}
+      {view === 'ddns' && <section id="probe-ddns-panel" role="tabpanel" aria-labelledby="probe-ddns-tab"><ProbeDDNS toolbarSlot={monitorToolbar} notify={notify} client={client} servers={servers} credentials={credentials} canManage={canManage} /></section>}
       {view === 'nodes' && <section id="probe-nodes-panel" role="tabpanel" aria-labelledby="probe-nodes-tab" className="return-latency-servers">
         <div className="return-latency-filters">
           <div className="return-latency-search">

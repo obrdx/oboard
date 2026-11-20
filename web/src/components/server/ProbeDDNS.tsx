@@ -1,5 +1,7 @@
 import { useErrorToast, type ToastNotify } from "../ui/use-error-toast"
 import { useCallback, useEffect, useId, useMemo, useState, type FormEvent } from 'react'
+import { createPortal } from 'react-dom'
+import { useRegisterPageRefresh } from '../../page-refresh-context'
 import { ChevronRight, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { RegionFlag, serverRegionCode } from '../ui/RegionFlag'
 import { Dialog } from '../ui/dialog'
@@ -67,10 +69,10 @@ export function ddnsDefaultEntryServer(servers: Server[], record: Pick<ProbeDDNS
 
 type ServerGroup = { id: number; server?: Server; name: string; records: ProbeDDNSRecord[] }
 
-export function ProbeDDNS({ client, servers, credentials, canManage, notify }: { client: Client; servers: Server[]; credentials: Credential[]; canManage: boolean; notify?: ToastNotify }) {
+export function ProbeDDNS({ client, servers, credentials, canManage, notify, toolbarSlot }: { client: Client; servers: Server[]; credentials: Credential[]; canManage: boolean; notify?: ToastNotify; toolbarSlot?: HTMLElement | null }) {
   const [records, setRecords] = useState<ProbeDDNSRecord[]>([])
   const [, setError] = useErrorToast(notify)
-  const [notice, setNotice] = useState('')
+  const setNotice = (text: string) => notify?.(text, 'success')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [editing, setEditing] = useState<{ record: ProbeDDNSRecord; serverLocked: boolean } | null>(null)
@@ -91,6 +93,7 @@ export function ProbeDDNS({ client, servers, credentials, canManage, notify }: {
     }
   }, [client])
   useEffect(() => { void refresh() }, [refresh])
+  useRegisterPageRefresh(() => refresh())
   const save = async (record: ProbeDDNSRecord) => {
     setBusy(true)
     setError('')
@@ -144,15 +147,9 @@ export function ProbeDDNS({ client, servers, credentials, canManage, notify }: {
     return next
   })
   const create = (serverID: number, serverLocked: boolean) => setEditing({ record: emptyRecord(serverID), serverLocked })
+  const newButton = <button type="button" className="primary" disabled={!canManage || !servers.length} onClick={() => create(servers[0]?.id || 0, false)}><Plus size={15} aria-hidden="true" />新建 DDNS</button>
   return <div className="return-latency-tasks probe-ddns">
-    <div className="return-latency-section-head">
-      <div><h3>DDNS</h3><p className="muted">按服务器维护动态解析。入口可以选用这里的域名作为连接地址。</p></div>
-      <div className="return-latency-toolbar">
-        <button type="button" className="primary" disabled={!canManage || !servers.length} onClick={() => create(servers[0]?.id || 0, false)}><Plus size={15} aria-hidden="true" />新建 DDNS</button>
-        <button type="button" className="ghost" disabled={busy || loading} onClick={() => { setLoading(true); void refresh() }}><RefreshCw size={15} aria-hidden="true" />刷新</button>
-      </div>
-    </div>
-    {notice && <p className="muted" role="status">{notice}</p>}
+    {toolbarSlot ? createPortal(newButton, toolbarSlot) : <div className="return-latency-toolbar">{newButton}</div>}
     {records.length > 0 && <p className="muted probe-ddns-summary">{configuredServers} 台服务器 · {records.length} 条记录{failedCount ? <> · <span className="danger-text">{failedCount} 条更新失败</span></> : null}</p>}
     <div className="return-latency-filters">
       <div className="return-latency-search"><Search size={15} aria-hidden="true" /><input type="search" aria-label="搜索 DDNS" placeholder="搜索服务器、名称或域名" value={query} onChange={event => setQuery(event.target.value)} /></div>
