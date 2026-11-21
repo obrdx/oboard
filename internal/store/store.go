@@ -5256,7 +5256,9 @@ func cascadeDeleteProxyPathBranchesTx(ctx context.Context, tx *sql.Tx, deletedSt
 			return err
 		}
 	}
-
+	if len(pathSet) > 0 {
+		return pruneDanglingUserNodeExceptionsTx(ctx, tx)
+	}
 	return nil
 }
 
@@ -5503,6 +5505,9 @@ func truncateProxyPathStepsTx(ctx context.Context, tx *sql.Tx, matchQuery string
 		if _, err := tx.ExecContext(ctx, `delete from proxy_paths where id=? and not exists (select 1 from proxy_path_steps s where s.path_id=proxy_paths.id)`, item.pathID); err != nil {
 			return err
 		}
+	}
+	if len(emptyPathIDs) > 0 {
+		return pruneDanglingUserNodeExceptionsTx(ctx, tx)
 	}
 	return nil
 }

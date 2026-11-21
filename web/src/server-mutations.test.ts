@@ -37,18 +37,18 @@ describe('server mutation response recovery', () => {
 
   it('confirms deletion after a lost response instead of restoring a deleted server', async () => {
     const request = vi.fn().mockRejectedValueOnce(unavailable).mockRejectedValueOnce({ status: 404 })
-    await expect(deleteServerRecord({ request }, server.id)).resolves.toBeUndefined()
-    expect(request.mock.calls).toEqual([['/servers/7', { method: 'DELETE' }], ['/servers/7']])
+    await expect(deleteServerRecord({ request }, server.id, server.name)).resolves.toBeUndefined()
+    expect(request.mock.calls).toEqual([['/servers/7', { method: 'DELETE', body: JSON.stringify({ confirm_name: server.name, source: 'servers' }) }], ['/servers/7']])
   })
 
   it('keeps deletion unknown while a read still sees the server, without retrying', async () => {
     const request = vi.fn().mockRejectedValueOnce(unavailable).mockResolvedValueOnce({ server })
-    await expect(deleteServerRecord({ request }, server.id)).rejects.toBeInstanceOf(ServerMutationUncertainError)
+    await expect(deleteServerRecord({ request }, server.id, server.name)).rejects.toBeInstanceOf(ServerMutationUncertainError)
   })
 
   it('does not claim success or failure when both mutation and verification fail', async () => {
     const request = vi.fn().mockRejectedValue(unavailable)
     await expect(createServerRecord({ request }, { name: 'Tokyo' }, [])).rejects.toBeInstanceOf(ServerMutationUncertainError)
-    await expect(deleteServerRecord({ request }, server.id)).rejects.toBeInstanceOf(ServerMutationUncertainError)
+    await expect(deleteServerRecord({ request }, server.id, server.name)).rejects.toBeInstanceOf(ServerMutationUncertainError)
   })
 })

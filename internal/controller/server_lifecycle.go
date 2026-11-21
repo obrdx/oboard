@@ -388,7 +388,11 @@ func (s *Server) registerServerLifecycleOperations() {
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"server_id": srv.ID, "name": srv.Name, "agent_connected": srv.AgentID != ""}, nil
+		impact, err := s.serverDeletionImpact(ctx, srv.ID)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"server_id": srv.ID, "name": srv.Name, "agent_connected": srv.AgentID != "", "impact": impact}, nil
 	})
 	s.automation.RegisterRevisionResolver("servers.delete", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
 		srv, err := s.serverDeleteCandidate(ctx, principal, input)
@@ -402,7 +406,7 @@ func (s *Server) registerServerLifecycleOperations() {
 		if err != nil {
 			return nil, err
 		}
-		if _, err := s.deleteServerRecord(ctx, srv.ID, principal.UserID, "mcp"); err != nil {
+		if _, err := s.deleteServerRecord(ctx, srv.ID, principal.UserID, "mcp", "mcp"); err != nil {
 			return nil, err
 		}
 		return map[string]any{"deleted": true, "server_id": srv.ID}, nil
@@ -428,8 +432,9 @@ func (s *Server) serverEnrollmentIssueCandidate(ctx context.Context, principal a
 
 func (s *Server) serverDeleteCandidate(ctx context.Context, principal application.Principal, input json.RawMessage) (model.Server, error) {
 	var request struct {
-		ServerID int64 `json:"server_id"`
-		Confirm  bool  `json:"confirm"`
+		ServerID    int64  `json:"server_id"`
+		Confirm     bool   `json:"confirm"`
+		ConfirmName string `json:"confirm_name"`
 	}
 	if err := strictAutomationInput(input, &request); err != nil {
 		return model.Server{}, err
@@ -437,11 +442,17 @@ func (s *Server) serverDeleteCandidate(ctx context.Context, principal applicatio
 	if request.ServerID <= 0 || !request.Confirm {
 		return model.Server{}, errors.New("server_id and confirm=true are required")
 	}
+	if !model.HasManagementAccess(principal.Role) {
+		return model.Server{}, errors.New("management role required to delete a server")
+	}
 	if !principal.AllowsInt64("server_ids", request.ServerID) {
 		return model.Server{}, errors.New("authorized server_id is required")
 	}
 	srv, err := s.store.GetServer(ctx, request.ServerID)
 	if err != nil {
+		return model.Server{}, err
+	}
+	if err := checkServerDeleteConfirmation(*srv, request.ConfirmName); err != nil {
 		return model.Server{}, err
 	}
 	return *srv, nil

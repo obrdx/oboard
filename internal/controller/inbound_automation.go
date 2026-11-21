@@ -91,24 +91,10 @@ func (s *Server) registerInboundAutomationOperations() {
 		if err != nil {
 			return nil, err
 		}
-		if _, err := s.store.RemoveAssignableNodeFromPlans(ctx, model.AssignableNodeInbound, inbound.ID); err != nil {
+		if _, err := s.deleteInboundRecord(ctx, inbound); err != nil {
 			return nil, err
 		}
-		if err := s.deleteDNSInboundRecords(ctx, inbound); err != nil {
-			return nil, err
-		}
-		if err := s.store.DeleteProxyPathsForInbound(ctx, inbound.ID); err != nil {
-			return nil, err
-		}
-		if err := s.reconcileProxyPathNameTemplates(ctx); err != nil {
-			return nil, err
-		}
-		if err := s.store.DeleteInboundProbeResults(ctx, inbound.ID); err != nil {
-			return nil, err
-		}
-		if err := s.store.Delete(ctx, "inbounds", inbound.ID); err != nil {
-			return nil, err
-		}
+		_ = s.store.AddAudit(ctx, model.AuditLog{ActorID: principal.UserID, Action: "delete", Target: "inbound", Detail: fmt.Sprintf("id=%d name=%s server_id=%d source=mcp", inbound.ID, strconv.Quote(inbound.Name), inbound.ServerID), IP: "mcp"})
 		return map[string]any{"deleted": true, "inbound_id": inbound.ID, "deleted_proxy_path_count": pathCount, "requires_deployment": true}, nil
 	})
 

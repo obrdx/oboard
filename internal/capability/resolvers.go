@@ -158,6 +158,22 @@ func proxyPathStepTruncateRefs(ctx context.Context, input any) ([]mcpauth.Resour
 	return refsFromSingleID(ctx, input, "path_id", "proxy_path")
 }
 
+func topologyDetachRefs(ctx context.Context, input any) ([]mcpauth.ResourceRef, error) {
+	object, err := canonicalMap(input)
+	if err != nil {
+		return nil, err
+	}
+	refs := []mcpauth.ResourceRef{}
+	if root, ok := int64Value(object["root_server_id"]); ok {
+		refs = append(refs, mcpauth.ResourceRef{Type: "server", ID: strconv.FormatInt(root, 10)})
+	}
+	targetType, _ := object["target_type"].(string)
+	if target, ok := int64Value(object["target_id"]); ok && targetType != "" {
+		refs = append(refs, mcpauth.ResourceRef{Type: targetType, ID: strconv.FormatInt(target, 10)})
+	}
+	return refs, nil
+}
+
 func topologyWriteRefs(ctx context.Context, input any) ([]mcpauth.ResourceRef, error) {
 	object, err := canonicalMap(input)
 	if err != nil {

@@ -545,6 +545,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/proxy-paths", s.auth(s.proxyPaths, model.RoleOperator))
 	mux.HandleFunc("/api/v1/proxy-paths/", s.auth(s.proxyPaths, model.RoleOperator))
 	mux.HandleFunc("/api/v1/proxy-path-steps", s.auth(s.proxyPathSteps, model.RoleOperator))
+	mux.HandleFunc("/api/v1/topology/detach", s.auth(s.topologyDetachHandler, model.RoleOperator))
 	mux.HandleFunc("/api/v1/proxy-path-steps/", s.auth(s.proxyPathSteps, model.RoleOperator))
 	mux.HandleFunc("/api/v1/warp-profiles", s.auth(s.warpProfiles, model.RoleOperator))
 	mux.HandleFunc("/api/v1/warp-profiles/", s.auth(s.warpProfiles, model.RoleOperator))
@@ -4453,6 +4454,24 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.serverAgentUpdate(w, r, id)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "deletion-preview" {
+		if r.Method != http.MethodGet {
+			method(w)
+			return
+		}
+		srv, err := s.store.GetServer(r.Context(), id)
+		if err != nil {
+			fail(w, err, 404)
+			return
+		}
+		impact, err := s.serverDeletionImpact(r.Context(), id)
+		if err != nil {
+			fail(w, err, 500)
+			return
+		}
+		write(w, 200, map[string]any{"server_id": id, "confirm_name": serverDeleteConfirmationName(*srv), "impact": impact})
+		return
+	}
 	if len(parts) == 2 && parts[1] == "agent-uninstall" {
 		s.serverAgentUninstall(w, r, id)
 		return
@@ -4769,7 +4788,31 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodDelete {
-		if status, err := s.deleteServerRecord(r.Context(), id, requestActorID(r), clientIP(r)); err != nil {
+		if !roleAllows(currentRole(r), model.RoleAdmin) {
+			fail(w, errors.New("management role required to delete a server"), http.StatusForbidden)
+			return
+		}
+		var request struct {
+			ConfirmName string `json:"confirm_name"`
+			Source      string `json:"source"`
+		}
+		if !decode(w, r, &request) {
+			return
+		}
+		current, err := s.store.GetServer(r.Context(), id)
+		if err != nil {
+			fail(w, err, 404)
+			return
+		}
+		if err := checkServerDeleteConfirmation(*current, request.ConfirmName); err != nil {
+			fail(w, err, 400)
+			return
+		}
+		source := "servers"
+		if serverDeleteSources[request.Source] {
+			source = request.Source
+		}
+		if status, err := s.deleteServerRecord(r.Context(), id, requestActorID(r), clientIP(r), source); err != nil {
 			fail(w, err, status)
 			return
 		}
@@ -4779,7 +4822,7 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 	method(w)
 }
 
-func (s *Server) deleteServerRecord(ctx context.Context, id int64, actorID *int64, ip string) (int, error) {
+func (s *Server) deleteServerRecord(ctx context.Context, id int64, actorID *int64, ip, source string) (int, error) {
 	inbounds, err := s.store.ListInbounds(ctx)
 	if err != nil {
 		return http.StatusInternalServerError, err
@@ -4839,7 +4882,7 @@ func (s *Server) deleteServerRecord(ctx context.Context, id int64, actorID *int6
 	} else {
 		s.releaseServerDeletionInBackground(deletion)
 	}
-	_ = s.store.AddAudit(ctx, model.AuditLog{ActorID: actorID, Action: "delete", Target: "server", Detail: fmt.Sprint(id), IP: ip})
+	_ = s.store.AddAudit(ctx, model.AuditLog{ActorID: actorID, Action: "delete", Target: "server", Detail: serverDeleteAuditDetail(id, name, source), IP: ip})
 	return 0, nil
 }
 
@@ -5114,6 +5157,16 @@ func (s *Server) serverAgentUninstall(w http.ResponseWriter, r *http.Request, id
 	}
 	if !agentUninstallSupported(server) {
 		fail(w, errors.New("服务器 Agent 版本过旧，请先更新 Agent 后再远程卸载；也可取消勾选直接删除"), http.StatusConflict)
+		return
+	}
+	var confirmation struct {
+		ConfirmName string `json:"confirm_name"`
+	}
+	if !decode(w, r, &confirmation) {
+		return
+	}
+	if err := checkServerDeleteConfirmation(*server, confirmation.ConfirmName); err != nil {
+		fail(w, err, 400)
 		return
 	}
 	task, existing, err := s.enqueueAgentUninstall(r.Context(), server, requestActorID(r))
@@ -6776,50 +6829,11 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 404)
 			return
 		}
-		// Deleting an inbound also deletes every proxy path rooted at it, so
-		// guard both the standalone inbound node and its paths against active
-		// plan references.
-		if _, err := s.guardAssignableNodeDelete(r.Context(), model.AssignableNodeInbound, id); err != nil {
-			fail(w, err, http.StatusConflict)
+		if status, err := s.deleteInboundRecord(r.Context(), *inbound); err != nil {
+			fail(w, err, status)
 			return
 		}
-		paths, err := s.store.ListProxyPaths(r.Context())
-		if err != nil {
-			fail(w, err, 500)
-			return
-		}
-		for _, path := range paths {
-			if path.InboundID == id {
-				if _, err := s.guardAssignableNodeDelete(r.Context(), model.AssignableNodeProxyPath, path.ID); err != nil {
-					fail(w, err, http.StatusConflict)
-					return
-				}
-			}
-		}
-		if _, err := s.store.RemoveAssignableNodeFromPlans(r.Context(), model.AssignableNodeInbound, id); err != nil {
-			fail(w, err, http.StatusConflict)
-			return
-		}
-		if err := s.deleteDNSInboundRecords(r.Context(), *inbound); err != nil {
-			fail(w, err, 502)
-			return
-		}
-		if err := s.store.DeleteProxyPathsForInbound(r.Context(), id); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		if err := s.store.DeleteInboundProbeResults(r.Context(), id); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		if err := s.store.Delete(r.Context(), "inbounds", id); err != nil {
-			fail(w, err, 500)
-			return
-		}
+		auditReq(s, r, "delete", "inbound", fmt.Sprintf("id=%d name=%s server_id=%d", inbound.ID, strconv.Quote(inbound.Name), inbound.ServerID))
 		write(w, 200, map[string]any{"deleted": true})
 	default:
 		method(w)
@@ -9308,26 +9322,16 @@ func (s *Server) externalOutbounds(w http.ResponseWriter, r *http.Request) {
 			fail(w, errors.New("missing id"), 400)
 			return
 		}
-		if _, err := s.guardAssignableNodeDelete(r.Context(), model.AssignableNodeExternalOutbound, id); err != nil {
-			fail(w, err, http.StatusConflict)
+		external, err := s.store.GetExternalOutbound(r.Context(), id)
+		if err != nil {
+			fail(w, err, 404)
 			return
 		}
-		if _, err := s.store.RemoveAssignableNodeFromPlans(r.Context(), model.AssignableNodeExternalOutbound, id); err != nil {
-			fail(w, err, http.StatusConflict)
+		if status, err := s.deleteExternalOutboundRecord(r.Context(), id); err != nil {
+			fail(w, err, status)
 			return
 		}
-		if err := s.store.DeleteProxyPathStepsForExternal(r.Context(), id); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		if err := s.store.Delete(r.Context(), "external_outbounds", id); err != nil {
-			fail(w, err, 500)
-			return
-		}
+		auditReq(s, r, "delete", "external_outbound", fmt.Sprintf("id=%d name=%s", id, strconv.Quote(external.Name)))
 		write(w, 200, map[string]any{"deleted": true})
 	default:
 		method(w)
@@ -10917,6 +10921,25 @@ func (s *Server) createProxyPathStepBatch(w http.ResponseWriter, r *http.Request
 func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/batch") {
 		s.createProxyPathStepBatch(w, r)
+		return
+	}
+	if trimmed := strings.TrimSuffix(r.URL.Path, "/"); strings.HasSuffix(trimmed, "/removal-preview") {
+		if r.Method != http.MethodGet {
+			method(w)
+			return
+		}
+		stepID := idFromPath(strings.TrimSuffix(trimmed, "/removal-preview"), "/api/v1/proxy-path-steps/")
+		step, err := s.store.GetProxyPathStep(r.Context(), stepID)
+		if err != nil {
+			fail(w, err, 404)
+			return
+		}
+		impact, err := s.proxyPathStepRemovalImpact(r.Context(), *step)
+		if err != nil {
+			fail(w, err, topologyErrorStatus(err))
+			return
+		}
+		write(w, 200, map[string]any{"step_id": step.ID, "path_id": step.PathID, "impact": impact})
 		return
 	}
 	id := idFromPath(r.URL.Path, "/api/v1/proxy-path-steps/")
@@ -16433,7 +16456,7 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 		// depend on the panel-side removal: reporting a failure here makes the
 		// Agent retry a result it has no way to change, and the record removal
 		// is durable and retried on its own once it is claimed.
-		if _, deleteErr := s.deleteServerRecord(context.WithoutCancel(r.Context()), task.ServerID, actorID, "controller"); deleteErr != nil {
+		if _, deleteErr := s.deleteServerRecord(context.WithoutCancel(r.Context()), task.ServerID, actorID, "controller", "agent_uninstall"); deleteErr != nil {
 			log.Printf("delete server %d after agent uninstall: %v", task.ServerID, deleteErr)
 		}
 	}

@@ -35,7 +35,7 @@ func TestServerAgentUninstallQueuesTaskAndReusesActive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first := request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(server.ID)+"/agent-uninstall", token, map[string]any{}, http.StatusAccepted)
+	first := request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(server.ID)+"/agent-uninstall", token, map[string]any{"confirm_name": server.Name}, http.StatusAccepted)
 	task := first["task"].(map[string]any)
 	if task["type"] != model.AgentTaskTypeUninstallAgent {
 		t.Fatalf("unexpected uninstall response: %#v", first)
@@ -51,7 +51,7 @@ func TestServerAgentUninstallQueuesTaskAndReusesActive(t *testing.T) {
 		t.Fatal("uninstall payload should carry actor_id")
 	}
 
-	second := request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(server.ID)+"/agent-uninstall", token, map[string]any{}, http.StatusAccepted)
+	second := request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(server.ID)+"/agent-uninstall", token, map[string]any{"confirm_name": server.Name}, http.StatusAccepted)
 	if second["existing"] != true {
 		t.Fatalf("active uninstall task was not reused: %#v", second)
 	}
@@ -88,7 +88,8 @@ func TestServerAgentUninstallRejectsUnenrolledAndOfflineButAllowsOperator(t *tes
 
 	request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(unenrolled.ID)+"/agent-uninstall", adminToken, map[string]any{}, http.StatusBadRequest)
 	request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(offline.ID)+"/agent-uninstall", adminToken, map[string]any{}, http.StatusConflict)
-	request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(online.ID)+"/agent-uninstall", operatorToken, map[string]any{}, http.StatusAccepted)
+	request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(online.ID)+"/agent-uninstall", operatorToken, map[string]any{"confirm_name": "wrong"}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(online.ID)+"/agent-uninstall", operatorToken, map[string]any{"confirm_name": online.Name}, http.StatusAccepted)
 }
 
 func TestAgentUninstallSuccessDeletesServerAndFailureKeepsIt(t *testing.T) {

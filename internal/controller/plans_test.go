@@ -402,7 +402,7 @@ func TestDeleteServerSupersedesFailedPlanVersion(t *testing.T) {
 		t.Fatalf("plan is not pinned by the failed version: %#v, %v", stuck, err)
 	}
 
-	request(t, h, http.MethodDelete, "/api/v1/ui/servers/"+itoa(serverID), token, nil, http.StatusOK)
+	deleteServerConfirmed(t, h, token, serverID, http.StatusOK)
 
 	after, err := srv.store.GetSubscriptionPlan(t.Context(), planID)
 	if err != nil || after.PendingRevisionID != 0 {

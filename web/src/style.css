@@ -10817,6 +10817,36 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   line-height: 1.5;
 }
 
+.server-delete-impact {
+  max-height: 220px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.server-delete-impact p { margin: 0 0 4px; overflow-wrap: anywhere; }
+.server-delete-impact p:last-child { margin-bottom: 0; }
+
+.topology-impact p { margin: 0 0 4px; overflow-wrap: anywhere; }
+.topology-impact-paths { margin: 4px 0 8px; padding-left: 18px; }
+.topology-impact-paths li { overflow-wrap: anywhere; }
+
+.server-delete-confirm {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.server-delete-confirm strong {
+  color: var(--text-strong);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
 .server-delete-error {
   margin: 0;
 }

@@ -815,6 +815,7 @@ func (s *Server) registerAutomationHandlers() {
 	s.registerServerTrafficResetOperation()
 	s.registerInboundAutomationOperations()
 	s.registerProxyPathAutomationOperations()
+	s.registerTopologyRemovalAutomation()
 	s.registerSubscriptionPlanAutomationOperations()
 	s.registerUserNodeAuthorizationAutomationOperations()
 	s.registerUserAutomationOperations()

@@ -19,6 +19,13 @@ import (
 // fallback interval when nothing is scheduled) and wakes early on
 // authorization mutations.
 func (s *Server) StartAccessLifecycleWorker(ctx context.Context) {
+	// Deletions now remove their access exceptions in the same transaction;
+	// rows left by earlier builds are swept once at start.
+	if removed, err := s.store.PruneDanglingUserNodeExceptions(ctx); err != nil {
+		log.Printf("prune dangling user node exceptions: %v", err)
+	} else if removed > 0 {
+		log.Printf("pruned %d user node exceptions whose node no longer exists", removed)
+	}
 	immediateRuns := 0
 	for {
 		sleep := time.Minute

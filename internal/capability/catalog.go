@@ -474,11 +474,19 @@ func defaultDescriptors() []Descriptor {
 	})
 	deleteInput, deleteOutput, _ := executableSchemas("servers.delete")
 	descriptors = append(descriptors, Descriptor{
-		Name: "servers.delete", Description: "删除服务器记录及其关联入口、路径与遥测；清理完成后释放 Server ID 供新服务器复用，旧服务器的指定授权不会继承；未接入 Agent 的重复或僵尸记录可直接清理",
+		Name: "servers.delete", Description: "删除服务器注册及其全部入口、以它为入口的链路、端口转发、隧道、路由规则与遥测；经过它的其他入口服务器链路在它这一跳被截断并停用。confirm_name 必须等于服务器名称（无名称时为 #ID）。校验结果的 impact 列出将删除和截断的链路及离开的套餐。只想从某个拓扑移除服务器请用 topology.detach。清理完成后 Server ID 可被新服务器复用，旧服务器的指定授权不会继承",
 		InputSchema: deleteInput, OutputSchema: deleteOutput, RequiredScopes: []string{"servers:write"},
 		ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", RiskClass: 3, ApprovalPolicy: "required",
 		Idempotent: true, DataClassification: DataInternal, Destructive: true, MCPEnabled: true, Executable: true,
 		MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: serverRefFromServerID,
+	})
+	detachInput, detachOutput, _ := executableSchemas("topology.detach")
+	descriptors = append(descriptors, Descriptor{
+		Name: "topology.detach", Description: "从一个入口服务器的拓扑中移除服务器、入口或导入节点，不删除资源本身：只截断 root_server_id 入口上经过它的链路（与 proxy_path_steps.truncate 规则相同），target_type=inbound 且是该拓扑的入口时删除以它为根的链路。端口转发、隧道和其他拓扑保持不变。校验结果的 impact 列出将删除或截断的链路、分支及离开的套餐",
+		InputSchema: detachInput, OutputSchema: detachOutput, RequiredScopes: []string{"topology:write"},
+		ResourceTypes: []string{"server", "inbound", "external_outbound"}, ResourceEvaluator: "server_ids", RiskClass: 3, ApprovalPolicy: "required",
+		Idempotent: true, DataClassification: DataInternal, Destructive: true, MCPEnabled: true, Executable: true,
+		MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: topologyDetachRefs,
 	})
 	input, output, evaluator := executableSchemas("subscription_plans.nodes.update")
 	descriptors = append(descriptors, Descriptor{
@@ -674,6 +682,8 @@ func writeResolver(name string) func(context.Context, any) ([]mcpauth.ResourceRe
 		return proxyPathDeleteRefs
 	case "proxy_path_steps.truncate":
 		return proxyPathStepTruncateRefs
+	case "topology.detach":
+		return topologyDetachRefs
 	case "topology.reuse_inbound":
 		return topologyReuseInboundRefs
 	case "deployments.apply":
@@ -804,7 +814,14 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"enrollment_expires_at": stringValue, "enrollment_token": stringValue, "update_command": stringValue, "uninstall_command": stringValue,
 		}), "server_ids"
 	case "servers.delete":
-		return schemaObject(map[string]any{"server_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "server_id", "confirm"), simpleOutput(map[string]any{"deleted": boolValue, "server_id": positiveID}), "server_ids"
+		return schemaObject(map[string]any{"server_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}, "confirm_name": map[string]any{"type": "string", "minLength": 1, "maxLength": 200, "description": "服务器名称（无名称时为 #ID），用于确认删除对象"}}, "server_id", "confirm", "confirm_name"), simpleOutput(map[string]any{"deleted": boolValue, "server_id": positiveID}), "server_ids"
+	case "topology.detach":
+		return schemaObject(map[string]any{
+			"root_server_id": positiveID,
+			"target_type":    map[string]any{"type": "string", "enum": []string{"server", "inbound", "external_outbound"}},
+			"target_id":      positiveID,
+			"confirm":        map[string]any{"type": "boolean", "const": true},
+		}, "root_server_id", "target_type", "target_id", "confirm"), simpleOutput(map[string]any{"detached": boolValue, "impact": map[string]any{"type": "object"}, "requires_deployment": boolValue}), "server_ids"
 	case "servers.extend_expiry":
 		return schemaObject(map[string]any{
 			"server_id": positiveID,

@@ -3126,14 +3126,14 @@ func TestDeletingServerCutsDependentProxyPath(t *testing.T) {
 	second := request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "singbox", "config_json": `{}`}, http.StatusCreated)
 	secondID := int64(second["proxy_path_step"].(map[string]any)["id"].(float64))
 
-	request(t, h, http.MethodDelete, "/api/v1/ui/servers/"+itoa(serverCID), token, nil, http.StatusOK)
+	deleteServerConfirmed(t, h, token, serverCID, http.StatusOK)
 	request(t, h, http.MethodGet, "/api/v1/ui/proxy-path-steps/"+itoa(secondID), token, nil, http.StatusNotFound)
 	remaining := request(t, h, http.MethodGet, "/api/v1/ui/proxy-path-steps/"+itoa(firstID), token, nil, http.StatusOK)
 	if int64(remaining["proxy_path_step"].(map[string]any)["server_id"].(float64)) != serverBID {
 		t.Fatalf("path prefix was not preserved: %#v", remaining)
 	}
 
-	request(t, h, http.MethodDelete, "/api/v1/ui/servers/"+itoa(serverBID), token, nil, http.StatusOK)
+	deleteServerConfirmed(t, h, token, serverBID, http.StatusOK)
 	request(t, h, http.MethodGet, "/api/v1/ui/proxy-paths/"+itoa(pathID), token, nil, http.StatusNotFound)
 }
 

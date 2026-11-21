@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -57,7 +58,7 @@ func TestServerLifecycleDoesNotWaitForCredentialReconciliation(t *testing.T) {
 		}
 	})
 	withBusyWorker(func() {
-		request(t, h, http.MethodDelete, "/api/v1/ui/servers/"+itoa(serverID), token, nil, http.StatusOK)
+		deleteServerConfirmed(t, h, token, serverID, http.StatusOK)
 	})
 	user := &model.User{Username: "machine-owner", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused"}
 	if err := db.CreateUser(context.Background(), user); err != nil {
@@ -72,7 +73,7 @@ func TestServerLifecycleDoesNotWaitForCredentialReconciliation(t *testing.T) {
 		t.Fatalf("servers=%+v err=%v", servers, err)
 	}
 	withBusyWorker(func() {
-		applyAutomationChangeset(t, srv, principal, "fast-mcp-delete", automation.OperationRequest{Capability: "servers.delete", Input: json.RawMessage(`{"server_id":` + itoa(servers[0].ID) + `,"confirm":true}`)})
+		applyAutomationChangeset(t, srv, principal, "fast-mcp-delete", automation.OperationRequest{Capability: "servers.delete", Input: json.RawMessage(`{"server_id":` + itoa(servers[0].ID) + `,"confirm":true,"confirm_name":` + strconv.Quote(servers[0].Name) + `}`)})
 	})
 }
 
@@ -175,7 +176,7 @@ func TestServerOnboardUniquenessEnrollmentIssueAndDelete(t *testing.T) {
 		t.Fatalf("persisted changeset retained token: %s", persisted.Result)
 	}
 
-	deleteInput, _ := json.Marshal(map[string]any{"server_id": existing.ID, "confirm": true})
+	deleteInput, _ := json.Marshal(map[string]any{"server_id": existing.ID, "confirm": true, "confirm_name": existing.Name})
 	applyAutomationChangeset(t, server, principal, "delete-sjc", automation.OperationRequest{Capability: "servers.delete", Input: deleteInput})
 	if _, err := db.GetServer(ctx, existing.ID); err == nil {
 		t.Fatal("deleted server still exists")

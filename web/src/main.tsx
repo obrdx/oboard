@@ -230,7 +230,8 @@ import { configHealthSummaryOf } from './config-health'
 import { realtimeInvalidatedPages, scheduleRealtimeRefresh } from './realtime-pages'
 import { isConfigurationMutationPath, mergeConfigurationMutationResponse, MutationActivityTracker, type ConfigurationSyncRow } from './configuration-sync'
 import { removeServerSnapshot, upsertServerSnapshot } from './server-state'
-import { createServerRecord, deleteServerRecord, ServerMutationUncertainError } from './server-mutations'
+import { createServerRecord, deleteServerRecord, serverDeleteConfirmName, serverDeleteRequestInit, ServerMutationUncertainError } from './server-mutations'
+import { TopologyImpactDetail, type TopologyRemovalImpact } from './topology-impact'
 import { getServerTimeIssue, hasServerTimeMeasurement } from './server-time'
 import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServerList, type ServerSortMode, type ServerStatusFilter } from './server-list'
 import { applyServerExpiryExtension, serverExpiryDateLabel, serverExpiryExtensionLabel, serverExpiryInputValue, serverExpiryOutputValue, serverExpiryQuickExtensions, serverExpiryStatusValue, type ServerExpiryExtension, type ServerExpiryTone } from './server-expiry'
@@ -6819,7 +6820,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
   }
   // Polls quickly at first so a fast uninstall is reflected without a fixed
   // 1.5 s wait, then settles at the old cadence for slow hosts.
-  const waitForUninstallTask = async (serverID: number) => {
+  const waitForUninstallTask = async (serverID: number, confirmName: string) => {
     const deadline = Date.now() + 180_000
     for (let delay = 400; Date.now() < deadline; delay = Math.min(1500, Math.round(delay * 1.5))) {
       await sleep(delay)
@@ -6832,7 +6833,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
         }
         if (task.status === 'succeeded') {
           try {
-            await client.request(`/servers/${serverID}`, { method: 'DELETE' })
+            await client.request(`/servers/${serverID}`, serverDeleteRequestInit(confirmName))
           } catch (error: any) {
             if (error?.status === 404) return
             throw error
@@ -6859,14 +6860,14 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
       pendingDeleteServerIDsRef.current.add(id)
       setUninstallingServerIDs(current => new Set(current).add(id))
       try {
-        const res = await client.request(`/servers/${id}/agent-uninstall`, { method: 'POST', body: '{}' })
+        const res = await client.request(`/servers/${id}/agent-uninstall`, { method: 'POST', body: JSON.stringify({ confirm_name: serverDeleteConfirmName(server) }) })
         notify?.(
           res.existing
             ? `${server.name || '服务器'} 已有卸载任务进行中，完成后自动删除`
             : `${server.name || '服务器'} 已下发卸载，完成后自动删除`,
           res.existing ? 'info' : 'success',
         )
-        await waitForUninstallTask(id)
+        await waitForUninstallTask(id, serverDeleteConfirmName(server))
         if (!serversMountedRef.current) return
         setDeleteServerDraft(null)
         deletedServerIDsRef.current.add(id)
@@ -6899,7 +6900,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
     const id = server.id
     pendingDeleteServerIDsRef.current.add(id)
     try {
-      await deleteServerRecord(client, id)
+      await deleteServerRecord(client, id, serverDeleteConfirmName(server))
       if (!serversMountedRef.current) return
       deletedServerIDsRef.current.add(id)
       localServerSnapshotsRef.current.delete(id)
@@ -7157,7 +7158,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
     <AnimatePresence>{connectivityServer && <ServerConnectivityDialog server={connectivityServer.server} client={client} onClose={() => setConnectivityServer(null)} onUpdated={() => { void refreshServers() }} />}</AnimatePresence>
     <AnimatePresence>{agentConfigServer && <AgentConfigDialog server={agentConfigServer} controllerURL={effectiveControllerURL(data)} onCancel={() => setAgentConfigServer(null)} onSubmit={cfg => syncAgentConfig(agentConfigServer, cfg)} />}</AnimatePresence>
     <AnimatePresence>{installTarget && <AgentInstallDialog server={installTarget.server} installCommand={installTarget.command} updateCommand={installTarget.updateCommand} uninstallCommand={installTarget.uninstallCommand} windowsInstallCommand={installTarget.windowsCommand} loading={Boolean(installTarget.loading)} error={installTarget.error} onRetry={() => void enroll(installTarget.server)} controllerURL={effectiveControllerURL(data)} onUpdate={updateAgent} onClose={() => { enrollRequestRef.current++; setInstallTarget(null) }} />}</AnimatePresence>
-    <AnimatePresence>{deleteServerDraft && <DeleteServerDialog server={deleteServerDraft} busy={deleteServerBusy} error={deleteServerError} onCancel={() => { if (!deleteServerBusy) setDeleteServerDraft(null) }} onSubmit={uninstall => void deleteServer(deleteServerDraft, uninstall)} />}</AnimatePresence>
+    <AnimatePresence>{deleteServerDraft && <DeleteServerDialog server={deleteServerDraft} client={client} busy={deleteServerBusy} error={deleteServerError} onCancel={() => { if (!deleteServerBusy) setDeleteServerDraft(null) }} onSubmit={uninstall => void deleteServer(deleteServerDraft, uninstall)} />}</AnimatePresence>
     <AnimatePresence>{logServer && <AgentLogsDialog server={logServer} data={data} client={client} onClose={() => setLogServer(null)} />}</AnimatePresence>
     </div>
   </section>
@@ -7275,35 +7276,63 @@ function agentBuildMismatch(server: Server, data: any) {
   return Boolean(expected && actual && expected !== actual)
 }
 
-export function DeleteServerDialog({ server, busy, error, onCancel, onSubmit }: { server: Server; busy: boolean; error?: string; onCancel: () => void; onSubmit: (uninstall: boolean) => void }) {
+export function DeleteServerDialog({ server, client, busy, error, onCancel, onSubmit }: { server: Server; client?: { request: (path: string, init?: RequestInit) => Promise<any> }; busy: boolean; error?: string; onCancel: () => void; onSubmit: (uninstall: boolean) => void }) {
   const [uninstall, setUninstall] = useState(false)
+  const [typedName, setTypedName] = useState('')
+  const [impact, setImpact] = useState<TopologyRemovalImpact | null>(null)
+  const [impactError, setImpactError] = useState('')
   const name = resourceLabel(server, `服务器 #${server.id}`)
+  const confirmName = serverDeleteConfirmName(server)
+  const confirmed = typedName.trim() === confirmName
+  useEffect(() => {
+    if (!client) return
+    let cancelled = false
+    setImpact(null)
+    setImpactError('')
+    client.request(`/servers/${server.id}/deletion-preview`).then(
+      result => { if (!cancelled) setImpact(result.impact || null) },
+      (e: any) => { if (!cancelled) setImpactError(localizeErrorMessage(e?.message || e)) },
+    )
+    return () => { cancelled = true }
+  }, [client, server.id])
   return <MotionDialogPanel onCancel={busy ? () => undefined : onCancel} className="server-delete-dialog" surfaceMotion="compact" aria-labelledby="server-delete-title" aria-describedby="server-delete-desc">
     <button className="ghost dialog-close icon-button server-delete-close" onClick={onCancel} disabled={busy} aria-label="关闭" title="关闭"><XIcon /></button>
     <div className="server-delete-main">
       <span className="server-delete-icon" aria-hidden="true"><Trash2 size={18} /></span>
       <div className="server-delete-copy">
         <h2 id="server-delete-title">删除服务器</h2>
-        <p id="server-delete-desc">将删除 <strong>{name}</strong>，此操作无法撤销。</p>
+        <p id="server-delete-desc">将删除 <strong>{name}</strong> 的服务器注册，此操作无法撤销。</p>
         <ul className="server-delete-scope">
           <li className="server-delete-scope-label">一并清理</li>
           <li>入口</li>
           <li>链路</li>
+          <li>端口转发 / 隧道</li>
           <li>DNS 记录</li>
+          <li>历史数据</li>
         </ul>
       </div>
     </div>
+    {client && <div className="server-delete-impact" aria-live="polite">
+      {impact ? <TopologyImpactDetail impact={impact} currentRootServerID={server.id} />
+        : impactError ? <p className="error">无法计算影响：{impactError}</p>
+          : <p className="muted"><Loader2 size={14} className="spin" aria-hidden="true" /> 正在计算影响…</p>}
+      {impact && impact.other_root_path_count > 0 && <p className="muted">经过它的其他入口服务器链路会在它这一跳截断并停用。只想从某个拓扑移除它，请在代理拓扑中使用「从此拓扑移除」。</p>}
+    </div>}
     <div className={`server-delete-option${uninstall ? ' is-checked' : ''}`}>
       <span className="server-delete-option-copy">
         <strong id="server-delete-uninstall-label">同时卸载 Agent</strong>
-        <small>先远程卸载 Agent 并清理节点配置，成功后再删除。</small>
+        <small>先远程卸载 Agent 并清理节点配置，成功后再删除。不卸载时 Agent 会留在机器上继续运行。</small>
       </span>
       <Switch checked={uninstall} disabled={busy} onChange={setUninstall} aria-labelledby="server-delete-uninstall-label" />
     </div>
+    <label className="server-delete-confirm">
+      <span>输入 <strong>{confirmName}</strong> 确认删除</span>
+      <input value={typedName} disabled={busy} autoComplete="off" spellCheck={false} onChange={event => setTypedName(event.target.value)} aria-label="输入服务器名称确认删除" />
+    </label>
     {error && <p className="error server-delete-error" role="alert">{error}</p>}
     <footer className="server-delete-actions">
       <button className="ghost" onClick={onCancel} disabled={busy}>取消</button>
-      <button className="danger-button" onClick={() => onSubmit(uninstall)} disabled={busy} aria-busy={busy}>{busy && <Loader2 size={15} className="spin" aria-hidden="true" />}{busy ? uninstall ? '卸载并删除中…' : '删除中…' : uninstall ? '卸载并删除' : '删除'}</button>
+      <button className="danger-button" onClick={() => onSubmit(uninstall)} disabled={busy || !confirmed} aria-busy={busy}>{busy && <Loader2 size={15} className="spin" aria-hidden="true" />}{busy ? uninstall ? '卸载并删除中…' : '删除中…' : uninstall ? '卸载并删除' : '删除'}</button>
     </footer>
   </MotionDialogPanel>
 }
@@ -9356,6 +9385,7 @@ function graphEntityRemoveLabel(entity: GraphEntity) {
   )
   if (fromCanvas) return '移出画布'
   if (entity.type === 'proxy-path-step') return '移除后续'
+  if (entity.type === 'server' || entity.type === 'entry' || entity.type === 'imported') return '从此拓扑移除'
   return '删除'
 }
 
@@ -11346,10 +11376,14 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       })
       return
     }
+    if (entity.type === 'server' || entity.type === 'entry' || entity.type === 'imported') {
+      await detachGraphEntity(entity)
+      return
+    }
     const meta: Record<GraphEntity['type'], { name: string; path: string }> = {
-      server: { name: '服务器', path: `/servers/${entity.id}` },
-      entry: { name: '入口节点', path: `/inbounds/${entity.id}` },
-      imported: { name: '导入节点', path: `/external-outbounds/${entity.id}` },
+      server: { name: '服务器', path: '' },
+      entry: { name: '入口节点', path: '' },
+      imported: { name: '导入节点', path: '' },
       warp: { name: 'WARP 出口', path: '' },
       vpngate: { name: 'VPNGate 出口', path: '' },
       routing: { name: '分流出口', path: '' },
@@ -11361,37 +11395,35 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       'detached-step': { name: '未连接链段', path: '' },
     }
     const item = meta[entity.type]
+    if (!item.path) return
     const cascading = entity.type === 'proxy-path-step'
-    // Deleting a server or an entry cuts every path that traverses it, including
-    // branches rooted at another entry server that this canvas does not draw.
-    const affected = entity.type === 'server' || entity.type === 'entry'
-      ? proxyPathsTouchingEntity(data, entity)
-      : []
+    let impact: TopologyRemovalImpact | null = null
+    if (cascading) {
+      try {
+        impact = (await client.request(`/proxy-path-steps/${entity.id}/removal-preview`)).impact
+      } catch (e: any) {
+        await dialogs.alert({ title: '无法移除后续节点', message: localizeErrorMessage(e.message || e) })
+        return
+      }
+    }
     await dialogs.confirm({
-      title: cascading ? '取消后续链路' : `删除${item.name}`,
-      message: cascading
+      title: cascading ? '移除后续节点' : `删除${item.name}`,
+      message: cascading && impact
         ? <div className="dialog-detail">
-          <p>确认从 {entity.label} 开始断开？该位置及其全部后续节点都会从这条路径移除。</p>
-          <p className="muted">删除共享前缀的末端分支时，整条分支及其套餐关联会一并移除，其他分支保留。有入口分流规则的路径会保留。</p>
+          <p>从 {entity.label} 开始，该位置及其后续节点会从链路中删除，节点对应的服务器和入口本身保留。</p>
+          <TopologyImpactDetail impact={impact} currentRootServerID={selected?.id} />
         </div>
         : <div className="dialog-detail">
-          <p>确认删除 {entity.label}？</p>
-          <p className="muted">如果该节点已加入订阅套餐，删除时会从所有套餐自动移除；相关链路会同步清理。</p>
-          {affected.length > 0 && <>
-            <p>以下 {affected.length} 条链路经过它，会被同步截断或删除：</p>
-            <ul>{affected.map((name, index) => <li key={index}>{name}</li>)}</ul>
-          </>}
+          <p>确认删除 {entity.label}？此操作无法撤销。</p>
+          {(entity.type === 'proxy-path' || entity.type === 'direct') && <p className="muted">链路会从所有订阅套餐移除，从它复制出的分支链路一并删除。</p>}
         </div>,
       tone: 'danger',
-      confirmText: cascading ? '取消后续节点' : '删除',
+      confirmText: cascading ? '移除后续节点' : '删除',
       pendingText: '删除中…',
       onConfirm: () => withGraphPending(graphEntityNodeIDs(entity), async () => {
         const result = await client.request(item.path, { method: 'DELETE' }) as Record<string, any>
 
         const removals: Partial<Record<string, readonly number[]>> = {}
-        if (entity.type === 'server') removals.servers = [entity.id]
-        if (entity.type === 'entry') removals.inbounds = [entity.id]
-        if (entity.type === 'imported') removals.external_outbounds = [entity.id]
         if (entity.type === 'port-forward') removals.port_forwards = [entity.id]
         if (entity.type === 'tunnel') removals.tunnels = [entity.id]
         if (entity.type === 'proxy-path' || entity.type === 'direct') {
@@ -11411,7 +11443,47 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
           }
         }
         patchPageData?.((current: any) => removeTopologyRows(mergeTopologyMutation(current, result), removals))
-
+        if (impact && impact.paths.some(path => path.reason === 'branch')) await load()
+      }),
+    })
+  }
+  // Removing a server, entry or imported node from the topology only cuts the
+  // paths of this entry server that use it; the resource itself is deleted on
+  // its own management page.
+  const detachGraphEntity = async (entity: GraphEntity) => {
+    const rootServerID = selected?.id || 0
+    if (!rootServerID) return
+    const kind = entity.type === 'server'
+      ? { target: 'server', name: '服务器', keep: '服务器注册、入口、端口转发、隧道和其他拓扑都保留。', page: '服务器页面（可同时卸载 Agent）' }
+      : entity.type === 'entry'
+        ? { target: 'inbound', name: '入口', keep: '入口本身和它在其他拓扑中的链路保留。', page: '入口管理' }
+        : { target: 'external_outbound', name: '导入节点', keep: '导入节点本身和其他拓扑中使用它的链路保留。', page: '导入节点页面' }
+    if (entity.type === 'server' && entity.id === rootServerID) {
+      await dialogs.alert({ title: '无法从拓扑移除一级服务器', message: '一级服务器是这张拓扑的起点。只想去掉某条链路请在链路上操作；如需删除服务器注册，请到服务器页面删除（可同时卸载 Agent）。' })
+      return
+    }
+    const target = { root_server_id: rootServerID, target_type: kind.target, target_id: entity.id }
+    let impact: TopologyRemovalImpact
+    try {
+      const query = new URLSearchParams({ root_server_id: String(rootServerID), target_type: kind.target, target_id: String(entity.id) })
+      impact = (await client.request(`/topology/detach?${query}`)).impact
+    } catch (e: any) {
+      await dialogs.alert({ title: `无法从拓扑移除${kind.name}`, message: localizeErrorMessage(e.message || e) })
+      return
+    }
+    await dialogs.confirm({
+      title: `从此拓扑移除${kind.name}`,
+      message: <div className="dialog-detail">
+        <p>只从 {selected?.name || '当前服务器'} 的拓扑中移除 {entity.label}。{kind.keep}</p>
+        <TopologyImpactDetail impact={impact} currentRootServerID={rootServerID} />
+        <p className="muted">如需删除{kind.name}本身，请到{kind.page}操作。</p>
+      </div>,
+      tone: 'danger',
+      confirmText: '从拓扑移除',
+      pendingText: '移除中…',
+      onConfirm: () => withGraphPending(graphEntityNodeIDs(entity), async () => {
+        await client.request('/topology/detach', { method: 'POST', body: JSON.stringify({ ...target, confirm: true }) })
+        await load()
       }),
     })
   }
@@ -11450,7 +11522,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
     if (!selectedCandidate) {
       const selectedPathID = await dialogs.prompt({
         title: '选择要断开的路径',
-        message: '这条连线由多条路径共享。只会断开所选路径，其他路径保持不变。',
+        message: '这条连线由多条路径共享。选择要断开的路径，下一步会列出实际影响。',
         defaultValue: String(candidates[0].pathID),
         choices: candidates.map(candidate => {
           const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === candidate.pathID)
@@ -11468,16 +11540,22 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       await dialogs.alert({ title: '无法断开连接', message: '路径数据已经变化，请刷新后重试。' })
       return
     }
-    const suffixIDs = new Set(suffix.map(step => step.id))
-    const affectedRuleCount = ((data.routing_rules || []) as Array<{ stage_step_id?: number }>).filter(rule => rule.stage_step_id && suffixIDs.has(rule.stage_step_id)).length
+    let impact: TopologyRemovalImpact
+    try {
+      impact = (await client.request(`/proxy-path-steps/${selectedCandidate.step.id}/removal-preview`)).impact
+    } catch (e: any) {
+      await dialogs.alert({ title: '无法断开连接', message: localizeErrorMessage(e.message || e) })
+      return
+    }
     await dialogs.confirm({
       title: '断开连接',
       message: <div className="dialog-detail">
-        <p>确认断开 {path.name || `路径 ${path.id}`} 的这条连线？后续 {suffix.length} 个节点会保留在当前画布，可重新连到入口或其他路径。</p>
-        <p className="muted">未连接链段只保留到当前页面关闭或刷新。{affectedRuleCount ? `依赖后续位置的 ${affectedRuleCount} 条分流规则会被移除。` : '依赖后续位置的分流规则会随原步骤移除。'}</p>
+        <p>断开 {path.name || `路径 ${path.id}`} 的这条连线会删除这条链路从此处开始的 {suffix.length} 个节点。</p>
+        <TopologyImpactDetail impact={impact} currentRootServerID={selected?.id} />
+        <p className="muted">被断开的后续节点只作为未连接链段暂时留在画布上，可重新连到入口或其他链路；刷新或关闭页面后消失，不会保存。</p>
       </div>,
       tone: 'danger',
-      confirmText: '断开并保留节点',
+      confirmText: '断开连接',
       pendingText: '断开中…',
       onConfirm: () => withGraphPending(graphEntityNodeIDs(entity), async () => {
         const instanceID = `${path.id}-${Date.now().toString(36)}-${selectedCandidate!.step.id}`
@@ -16060,30 +16138,6 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
 // Every enabled path that traverses a server or uses an inbound, regardless of
 // which entry server it is rooted at. Used to spell out the blast radius of a
 // delete that the single-root canvas would otherwise hide.
-function proxyPathsTouchingEntity(data: any, entity: GraphEntity) {
-  const inboundByID = new Map<number, Inbound>(((data.inbounds || []) as Inbound[]).map(x => [x.id, x]))
-  const stepsByPath = new Map<number, ProxyPathStep[]>()
-  ;((data.proxy_path_steps || []) as ProxyPathStep[]).forEach(step => {
-    const list = stepsByPath.get(step.path_id) || []
-    list.push(step)
-    stepsByPath.set(step.path_id, list)
-  })
-  const out: string[] = []
-  ;((data.proxy_paths || []) as ProxyPath[]).forEach(path => {
-    if (path.enabled === false) return
-    const root = inboundByID.get(path.inbound_id)
-    if (!root) return
-    const steps = stepsByPath.get(path.id) || []
-    const usesEntity = entity.type === 'entry'
-      ? root.id === entity.id || steps.some(step => step.inbound_id === entity.id)
-      : root.server_id === entity.id || steps.some(step => graphStepServerID(step, inboundByID) === entity.id)
-    if (!usesEntity) return
-    const label = path.name || `路径 ${path.id}`
-    if (!out.includes(label)) out.push(label)
-  })
-  return out
-}
-
 function proxyPathStepUpstreamLabel(data: any, step: ProxyPathStep) {
   const earlier = ((data.proxy_path_steps || []) as ProxyPathStep[])
     .filter(item => item.path_id === step.path_id && item.position < step.position)

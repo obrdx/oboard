@@ -1103,18 +1103,10 @@ func (s *Server) applyExternalOutboundOperation(ctx context.Context, principal a
 				return nil, err
 			}
 		case "external_outbounds.delete":
-			if _, err := s.store.RemoveAssignableNodeFromPlans(ctx, model.AssignableNodeExternalOutbound, external.ID); err != nil {
+			if _, err := s.deleteExternalOutboundRecord(ctx, external.ID); err != nil {
 				return nil, err
 			}
-			if err := s.store.DeleteProxyPathStepsForExternal(ctx, external.ID); err != nil {
-				return nil, err
-			}
-			if err := s.reconcileProxyPathNameTemplates(ctx); err != nil {
-				return nil, err
-			}
-			if err := s.store.Delete(ctx, "external_outbounds", external.ID); err != nil {
-				return nil, err
-			}
+			_ = s.store.AddAudit(ctx, model.AuditLog{ActorID: principal.UserID, Action: "delete", Target: "external_outbound", Detail: fmt.Sprintf("id=%d name=%s source=mcp", external.ID, strconv.Quote(external.Name)), IP: "mcp"})
 			return map[string]any{"deleted": true, "external_outbound_id": external.ID}, nil
 		}
 		return automationExternalOutboundResult(external, changed)

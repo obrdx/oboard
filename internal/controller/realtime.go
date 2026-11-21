@@ -865,7 +865,7 @@ func realtimeResourcesForRequest(path string) []string {
 		return []string{"users", "subscriptions", "account", "topology", "user_overview"}
 	case "subscriptions":
 		return []string{"subscriptions", "account", "user_overview"}
-	case "inbounds", "outbounds", "routing-rules", "external-outbounds", "proxy-paths", "proxy-path-steps", "warp-profiles":
+	case "inbounds", "outbounds", "routing-rules", "external-outbounds", "proxy-paths", "proxy-path-steps", "warp-profiles", "topology":
 		return []string{"topology", "subscriptions", "servers", "deployments", "user_overview"}
 	case "port-forwards":
 		return []string{"port_forwards", "topology", "deployments"}

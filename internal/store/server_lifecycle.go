@@ -64,6 +64,9 @@ func (s *Store) DeleteServer(ctx context.Context, serverID int64) error {
 	if err := releaseServerReferencesTx(ctx, tx, serverID); err != nil {
 		return err
 	}
+	if err := pruneDanglingUserNodeExceptionsTx(ctx, tx); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `insert into history_cleanup_queue(kind,object_id,created_at) values('server',?,?) on conflict(kind,object_id) do nothing`, serverID, now()); err != nil {
 		return err
 	}

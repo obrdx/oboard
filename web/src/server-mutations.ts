@@ -24,10 +24,20 @@ export async function createServerRecord<T extends ServerRecord>(client: ServerC
   }
 }
 
-export async function deleteServerRecord(client: ServerClient, serverID: number): Promise<void> {
+// The Controller requires the server name (or #id when unnamed) to be typed
+// back before it deletes a server registration.
+export function serverDeleteConfirmName(server: { id: number; name?: string }) {
+  return String(server.name || '').trim() || `#${server.id}`
+}
+
+export function serverDeleteRequestInit(confirmName: string): RequestInit {
+  return { method: 'DELETE', body: JSON.stringify({ confirm_name: confirmName, source: 'servers' }) }
+}
+
+export async function deleteServerRecord(client: ServerClient, serverID: number, confirmName: string): Promise<void> {
   const path = `/servers/${serverID}`
   try {
-    await client.request(path, { method: 'DELETE' })
+    await client.request(path, serverDeleteRequestInit(confirmName))
   } catch (error) {
     if (!isIndeterminateMutationFailure(error) && Number((error as { status?: number })?.status) !== 404) throw error
     try {

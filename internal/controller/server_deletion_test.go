@@ -39,7 +39,7 @@ func TestServerDeletionReusesIDAndIgnoresStaleWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.deleteServerRecord(ctx, first.ID, nil, "test"); err != nil {
+	if _, err := srv.deleteServerRecord(ctx, first.ID, nil, "test", "servers"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.RunMaintenance(ctx, time.Now().UTC()); err != nil {
@@ -87,7 +87,7 @@ func TestServerDeletionAPIReusesIDAfterHistoryCleanup(t *testing.T) {
 		return request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": name, "auto_renew_enabled": false}, http.StatusCreated)["server"].(map[string]any)
 	}
 	first := create("old")
-	request(t, h, http.MethodDelete, fmt.Sprintf("/api/v1/ui/servers/%d", int64(first["id"].(float64))), token, nil, http.StatusOK)
+	deleteServerConfirmed(t, h, token, int64(first["id"].(float64)), http.StatusOK)
 	if _, err := db.RunMaintenance(context.Background(), time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestServerDeleteSurvivesUnreachableDNSProvider(t *testing.T) {
 	records["foreign-1"] = fakeCloudflareRecord{ID: "foreign-1", Type: "AAAA", Name: "edge.example.com", Content: "2001:db8::1", Comment: "managed elsewhere"}
 
 	down = true
-	request(t, h, http.MethodDelete, fmt.Sprintf("/api/v1/ui/servers/%d", serverID), token, nil, http.StatusOK)
+	deleteServerConfirmed(t, h, token, serverID, http.StatusOK)
 	if _, err := db.GetServer(ctx, serverID); err == nil {
 		t.Fatal("an unreachable DNS provider kept the server undeletable")
 	}
@@ -404,7 +404,7 @@ func TestServerDeleteDoesNotWaitForDNSProvider(t *testing.T) {
 		t.Fatalf("records after sync = %#v", records)
 	}
 
-	request(t, h, http.MethodDelete, fmt.Sprintf("/api/v1/ui/servers/%d", serverID), token, nil, http.StatusOK)
+	deleteServerConfirmed(t, h, token, serverID, http.StatusOK)
 	if _, err := db.GetServer(ctx, serverID); err == nil {
 		t.Fatal("the server row is still present after the delete response")
 	}
@@ -416,4 +416,17 @@ func TestServerDeleteDoesNotWaitForDNSProvider(t *testing.T) {
 	if _, err := db.GetServerDeletion(ctx, serverID); err == nil {
 		t.Fatal("the deletion is still pending after the background release")
 	}
+}
+
+// deleteServerConfirmed deletes a server through the REST API with the typed
+// name confirmation the endpoint requires.
+func deleteServerConfirmed(t *testing.T, h http.Handler, token string, serverID int64, status int) map[string]any {
+	t.Helper()
+	current := request(t, h, http.MethodGet, fmt.Sprintf("/api/v1/ui/servers/%d", serverID), token, nil, http.StatusOK)
+	name, _ := current["server"].(map[string]any)["name"].(string)
+	confirmName := strings.TrimSpace(name)
+	if confirmName == "" {
+		confirmName = fmt.Sprintf("#%d", serverID)
+	}
+	return request(t, h, http.MethodDelete, fmt.Sprintf("/api/v1/ui/servers/%d", serverID), token, map[string]any{"confirm_name": confirmName}, status)
 }

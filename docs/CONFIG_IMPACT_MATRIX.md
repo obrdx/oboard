@@ -5,6 +5,7 @@
 | 领域 | 直接 Web/REST 写入口 | Capability / 后台入口 | 自动协调 | 影响范围 |
 | --- | --- | --- | --- | --- |
 | 服务器 | `POST /servers`, `PATCH/DELETE /servers/:id` | `servers.onboard`, `servers.update`, `servers.delete` | 完整部署 | 新增/修改为目标服务器；删除为剩余完整拓扑 |
+| 拓扑移除 | `POST /topology/detach` | `topology.detach` | 完整部署 | 选中入口服务器上被截断或删除的路径成员；资源本身不删除 |
 | 服务器到期 | `PATCH /servers/:id` 到期字段, `POST /servers/:id/extend-expiry` | `servers.update`, `servers.extend_expiry` | 不触发 Agent | 仅主控到期元数据、自动续期和通知调度 |
 | 服务器已用流量 | `POST /servers/:id/reset-traffic`, `PATCH /servers/:id` 的 `traffic_used_bytes` | `servers.reset_traffic`, `servers.update` | 不触发 Agent | 仅主控当前周期 `server_telemetry.traffic_*` 计数；不改用户账本 |
 | 入口 | `POST/PATCH/DELETE /inbounds`, `POST /inbounds/:id/padding` | `inbounds.create/update/delete`, `inbounds.padding.update` | 完整部署 | 入口所属服务器及以该入口为根的路径成员；可信转发前缀再扩展；AnyTLS Padding 只有显式操作可改写；Snell v6 `config_json.shaping` 不进入内核配置，变更后由凭据对账只轮换不满足策略的身份 PSK，经运行时用户车道下发 |
