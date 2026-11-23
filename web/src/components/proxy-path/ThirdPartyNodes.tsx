@@ -9,7 +9,7 @@ import type { ExternalOutbound, Server } from './types'
 
 export type ExternalOutboundCheck = {
   external_outbound_id: number
-  status: 'reachable' | 'unreachable' | 'failed'
+  status: 'reachable' | 'unreachable' | 'failed' | 'skipped'
   target: string
   exit_ip?: string
   region_code?: string
@@ -128,6 +128,7 @@ function checkText(check: ExternalOutboundCheck) {
   switch (check.status) {
     case 'reachable': return `可用 · ${Math.round(check.connect_ms || 0)} ms`
     case 'unreachable': return `不可达 · ${check.error || '连接失败'}`
+    case 'skipped': return '仅服务器可达 · 主控不检测，部署后由路径探测出口'
     default: return check.error ? `检测失败 · ${check.error}` : '检测失败'
   }
 }

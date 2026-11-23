@@ -17,6 +17,13 @@ inbound listeners or live configuration changes. Only fixed HTTPS IP sources
 proxies. The kernel budget is ten seconds; Controller kills and reaps the process
 after fifteen seconds and bounds stdout to 1 KiB. Controller serializes checks.
 
+Nodes whose address is only reachable from the servers (`localhost`, loopback,
+private, link-local, CGNAT or unspecified IP literals such as a local client on
+`127.0.0.1:1080`) are not probed on the Controller, which would test its own
+network. The check returns `status=skipped`, deletes any stored Controller
+result, and leaves the exit region to the deployed-path `/probe-egress`
+diagnostic; the path settings dialog runs that probe for such a terminal node.
+
 Controller validates the public exit IP again, resolves its country using GeoIP,
 and stores credential-free results in `external_outbound_probe_results` with the
 node connection fingerprint (`task_id=0` identifies Controller execution). A failed

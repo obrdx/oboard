@@ -12340,7 +12340,15 @@ export function ProxyPathNameDialog({ path, data, client, load, onClose }: { pat
 	  setProbing(true)
 	  try {
 		if (!terminalNode) return
-		setProbeResult(await checkThirdPartyNode(client.request, terminalNode))
+		const result = await checkThirdPartyNode(client.request, terminalNode)
+		if (result.status === 'skipped') {
+		  // A loopback/private node is only reachable from the server, so the
+		  // exit is probed through this path's deployed outbound instead.
+		  setProbeResult(null)
+		  await client.request(`/proxy-paths/${path.id}/probe-egress`, { method: 'POST' })
+		} else {
+		  setProbeResult(result)
+		}
 		await load()
 	  } catch (error: any) {
 		await dialogs.alert({ title: '出口地区探测未开始', message: localizeErrorMessage(error.message || error) })

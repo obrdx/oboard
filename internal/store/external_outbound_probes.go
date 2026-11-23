@@ -40,3 +40,10 @@ func (s *Store) BeginControllerExternalOutboundProbe(ctx context.Context, id int
 	_, err := s.db.ExecContext(ctx, `insert into external_outbound_probe_results(external_outbound_id,fingerprint,task_id,status,checked_at) values(?,?,0,'pending',?) on conflict(external_outbound_id) do update set fingerprint=excluded.fingerprint,task_id=0,status='pending',exit_ip='',region_code='',error='',checked_at=excluded.checked_at`, id, fingerprint, now())
 	return err
 }
+
+// ClearExternalOutboundProbe removes the stored standalone result so path
+// geography falls back to the deployed branch probe.
+func (s *Store) ClearExternalOutboundProbe(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `delete from external_outbound_probe_results where external_outbound_id=?`, id)
+	return err
+}

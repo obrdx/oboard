@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -73,6 +74,17 @@ func (s *Server) checkExternalOutbound(ctx context.Context, external model.Exter
 		return result, http.StatusConflict, errors.New("主控正在检测第三方节点，请稍后再试")
 	}
 	defer s.externalCheckMu.Unlock()
+	if externalOutboundServerLocal(external.TargetAddress) {
+		// A loopback or private proxy lives next to each server (a local client
+		// such as 127.0.0.1:1080). Probing it here would test the Controller's
+		// own network, so the check is skipped and any earlier Controller result
+		// is dropped; the exit region then comes from the deployed path probe.
+		if err := s.store.ClearExternalOutboundProbe(ctx, external.ID); err != nil {
+			return result, 500, err
+		}
+		result.Status, result.RegionStatus, result.Error = "skipped", "", externalOutboundServerLocalMessage
+		return result, http.StatusOK, nil
+	}
 	outbound, err := core.ExternalOutboundProbeConfig(external)
 	if err != nil {
 		return result, http.StatusBadRequest, err
@@ -114,6 +126,27 @@ func (s *Server) checkExternalOutbound(ctx context.Context, external model.Exter
 		return result, 500, err
 	}
 	return result, http.StatusOK, nil
+}
+
+const externalOutboundServerLocalMessage = "本机或内网地址只能从服务器访问，主控不检测；加入代理路径并部署后由路径出口探测确定地区"
+
+// externalOutboundServerLocal reports whether a third-party node address is
+// only meaningful from the servers themselves: localhost names and loopback,
+// private, link-local, shared (CGNAT) or unspecified IP literals.
+func externalOutboundServerLocal(address string) bool {
+	host := strings.ToLower(strings.TrimSuffix(strings.Trim(strings.TrimSpace(address), "[]"), "."))
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	if zone := strings.IndexByte(host, '%'); zone >= 0 {
+		host = host[:zone]
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	addr = addr.Unmap()
+	return addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() || addr.IsUnspecified() || netip.MustParsePrefix("100.64.0.0/10").Contains(addr)
 }
 
 func (s *Server) runControllerOutboundProbe(ctx context.Context, outbound json.RawMessage) (string, error) {

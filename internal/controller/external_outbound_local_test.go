@@ -104,3 +104,46 @@ func TestControllerExternalProbePreservesMCPResourceBoundary(t *testing.T) {
 		t.Fatal("unauthorized node check accepted")
 	}
 }
+
+// A loopback client proxy lives on each server; the Controller must not probe
+// its own loopback, and an earlier Controller failure must not keep shadowing
+// the deployed path probe.
+func TestControllerExternalProbeSkipsServerLocalAddresses(t *testing.T) {
+	f := newExternalEgressControllerFixture(t)
+	ctx := context.Background()
+	f.srv.externalCheckRunner = func(context.Context, json.RawMessage) (string, error) {
+		return "", errors.New("probe failed")
+	}
+	if _, _, err := f.srv.checkExternalOutbound(ctx, *f.external); err != nil {
+		t.Fatal(err)
+	}
+	f.external.TargetAddress = "127.0.0.1"
+	if err := f.db.UpdateExternalOutbound(ctx, f.external); err != nil {
+		t.Fatal(err)
+	}
+	ran := false
+	f.srv.externalCheckRunner = func(context.Context, json.RawMessage) (string, error) {
+		ran = true
+		return "8.8.8.8", nil
+	}
+	result, status, err := f.srv.checkExternalOutbound(ctx, *f.external)
+	if err != nil || status != 200 || ran || result.Status != "skipped" || result.ExitIP != "" {
+		t.Fatalf("result=%+v status=%d ran=%t err=%v", result, status, ran, err)
+	}
+	saved, err := f.db.GetExternalOutbound(ctx, f.external.ID)
+	if err != nil || saved.ProbeFingerprint != "" || saved.ProbeStatus != "" {
+		t.Fatalf("stored controller result must be cleared: %+v %v", saved, err)
+	}
+}
+
+func TestExternalOutboundServerLocal(t *testing.T) {
+	for address, want := range map[string]bool{
+		"127.0.0.1": true, "::1": true, "[::1]": true, "localhost": true, "LOCALHOST.": true, "proxy.localhost": true,
+		"10.0.0.5": true, "192.168.1.1": true, "172.16.0.1": true, "100.64.1.1": true, "fe80::1%eth0": true, "fd00::1": true, "0.0.0.0": true,
+		"85.121.122.169": false, "210.198.124.223": false, "2001:4860::8888": false, "proxy.example.com": false, "": false,
+	} {
+		if got := externalOutboundServerLocal(address); got != want {
+			t.Errorf("externalOutboundServerLocal(%q) = %t, want %t", address, got, want)
+		}
+	}
+}
