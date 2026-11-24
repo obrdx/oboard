@@ -217,8 +217,8 @@ type oauthConsentView struct {
 	Hidden          []map[string]string
 }
 
-func (s *Server) renderOAuthSuccess(w http.ResponseWriter, r *http.Request, redirectURI, state, code, clientName string) {
-	location := oauthRedirectLocation(redirectURI, state, code, "")
+func (s *Server) renderOAuthSuccess(w http.ResponseWriter, r *http.Request, request oauthAuthorizationRequest, code, clientName string) {
+	location := oauthRedirectLocation(request, code, "", "")
 	const page = `<!doctype html>
 <html lang="zh-CN">
 <head>

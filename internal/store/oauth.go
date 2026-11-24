@@ -7,7 +7,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/OboardProject/oboard/internal/mcpauth"
 	"github.com/OboardProject/oboard/internal/model"
 )
 
@@ -17,6 +16,9 @@ var (
 	// inside the replay grace window. The token family stays intact so a client
 	// that lost a concurrent rotation keeps a working session.
 	ErrOAuthRefreshReplay = errors.New("oauth refresh token replayed inside grace window")
+	// ErrOAuthCodeReplay reports a second redemption of an authorization code.
+	// The tokens the first redemption issued have already been revoked.
+	ErrOAuthCodeReplay = errors.New("oauth authorization code replayed")
 )
 
 func (s *Store) CreateOAuthClient(ctx context.Context, item *model.OAuthClient) error {
@@ -37,6 +39,12 @@ func (s *Store) CreateOAuthClient(ctx context.Context, item *model.OAuthClient) 
 
 func (s *Store) GetOAuthClient(ctx context.Context, id string) (*model.OAuthClient, error) {
 	return scanOAuthClient(s.db.QueryRowContext(ctx, `select id,name,redirect_uris_json,identity_type,coalesce(metadata_uri,''),coalesce(metadata_hash,''),coalesce(metadata_etag,''),metadata_fetched_at,client_metadata_json,enabled,created_at,updated_at from oauth_clients where id=?`, id))
+}
+
+// GetOAuthClientByIdentifier resolves the client_id a request presents: a
+// stored client ID, or the Client ID Metadata Document URL of a CIMD client.
+func (s *Store) GetOAuthClientByIdentifier(ctx context.Context, identifier string) (*model.OAuthClient, error) {
+	return scanOAuthClient(s.db.QueryRowContext(ctx, `select id,name,redirect_uris_json,identity_type,coalesce(metadata_uri,''),coalesce(metadata_hash,''),coalesce(metadata_etag,''),metadata_fetched_at,client_metadata_json,enabled,created_at,updated_at from oauth_clients where id=? or (identity_type='cimd' and metadata_uri=?) order by (id=?) desc, created_at limit 1`, identifier, identifier, identifier))
 }
 
 func (s *Store) ListOAuthClients(ctx context.Context) ([]model.OAuthClient, error) {
@@ -282,16 +290,88 @@ func (s *Store) CreateOAuthAuthorizationCode(ctx context.Context, item *model.OA
 	return err
 }
 
-func (s *Store) ConsumeOAuthAuthorizationCode(ctx context.Context, codeHash string) (*model.OAuthAuthorizationCode, error) {
+// ConsumeOAuthAuthorizationCode redeems a code once. The redemption is
+// remembered for retention so a second presentation of the same code is
+// reported as ErrOAuthCodeReplay after revoking what the first one issued
+// (OAuth 2.1 section 4.1.3).
+func (s *Store) ConsumeOAuthAuthorizationCode(ctx context.Context, codeHash string, at time.Time, retention time.Duration) (*model.OAuthAuthorizationCode, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	ts := at.UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `delete from oauth_consumed_codes where expires_at<?`, ts); err != nil {
+		return nil, err
+	}
 	var item model.OAuthAuthorizationCode
 	var expires, created, scopesJSON string
-	err := s.db.WriteQueryRowContext(ctx, `delete from oauth_authorization_codes where code_hash=? returning code_hash,grant_id,client_id,user_id,principal_id,redirect_uri,resource,code_challenge,requested_scopes_json,expires_at,created_at`, codeHash).Scan(&item.CodeHash, &item.GrantID, &item.ClientID, &item.UserID, &item.PrincipalID, &item.RedirectURI, &item.Resource, &item.CodeChallenge, &scopesJSON, &expires, &created)
+	err = tx.QueryRowContext(ctx, `delete from oauth_authorization_codes where code_hash=? returning code_hash,grant_id,client_id,user_id,principal_id,redirect_uri,resource,code_challenge,requested_scopes_json,expires_at,created_at`, codeHash).Scan(&item.CodeHash, &item.GrantID, &item.ClientID, &item.UserID, &item.PrincipalID, &item.RedirectURI, &item.Resource, &item.CodeChallenge, &scopesJSON, &expires, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		var grantID, accessHash, family string
+		if lookupErr := tx.QueryRowContext(ctx, `update oauth_consumed_codes set replayed_at=coalesce(replayed_at,?) where code_hash=? returning grant_id,access_token_hash,refresh_family_id`, ts, codeHash).Scan(&grantID, &accessHash, &family); lookupErr != nil {
+			return nil, err
+		}
+		if err := revokeOAuthCodeTokensTx(ctx, tx, ts, grantID, accessHash, family); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return nil, ErrOAuthCodeReplay
+	}
 	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `insert into oauth_consumed_codes(code_hash,grant_id,expires_at) values(?,?,?)`, codeHash, item.GrantID, at.Add(retention).UTC().Format(time.RFC3339Nano)); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	_ = json.Unmarshal([]byte(scopesJSON), &item.Scopes)
 	item.ExpiresAt, item.CreatedAt = parseTime(expires), parseTime(created)
 	return &item, nil
+}
+
+// RecordOAuthCodeTokens links the tokens a code redemption issued to that
+// code. When the code was replayed while they were being issued, the tokens
+// are revoked at once and replayed is true.
+func (s *Store) RecordOAuthCodeTokens(ctx context.Context, codeHash, accessTokenHash, refreshFamilyID string, at time.Time) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var replayed sql.NullString
+	var grantID string
+	if err := tx.QueryRowContext(ctx, `update oauth_consumed_codes set access_token_hash=?,refresh_family_id=? where code_hash=? returning grant_id,replayed_at`, accessTokenHash, refreshFamilyID, codeHash).Scan(&grantID, &replayed); err != nil {
+		return false, err
+	}
+	if replayed.Valid {
+		if err := revokeOAuthCodeTokensTx(ctx, tx, at.UTC().Format(time.RFC3339Nano), grantID, accessTokenHash, refreshFamilyID); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return replayed.Valid, nil
+}
+
+// revokeOAuthCodeTokensTx revokes what a replayed code produced: the refresh
+// family it started and every access token of its grant, matching how refresh
+// token reuse is handled.
+func revokeOAuthCodeTokensTx(ctx context.Context, tx *sql.Tx, ts, grantID, accessTokenHash, refreshFamilyID string) error {
+	if _, err := tx.ExecContext(ctx, `update oauth_access_tokens set revoked_at=coalesce(revoked_at,?) where token_hash=? or grant_id=?`, ts, accessTokenHash, grantID); err != nil {
+		return err
+	}
+	if refreshFamilyID != "" {
+		if _, err := tx.ExecContext(ctx, `update oauth_refresh_tokens set revoked_at=coalesce(revoked_at,?) where family_id=?`, ts, refreshFamilyID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // MigrateOAuthResource rewrites the exact MCP resource audience on every OAuth
@@ -349,52 +429,6 @@ func (s *Store) AuthenticateMCPAccessToken(ctx context.Context, tokenHash, resou
 		return nil, "", "", 0, sql.ErrNoRows
 	}
 	return &item, role, userStatus, item.UserID, nil
-}
-
-// AuthenticateOAuthAccessToken is the legacy REST-oriented resolver used by the
-// generic apiAuth path and older tests. It verifies the token, grant, client,
-// and user and returns the API principal. MCP uses
-// AuthenticateMCPAccessToken + ResolveActiveGrant instead.
-func (s *Store) AuthenticateOAuthAccessToken(ctx context.Context, tokenHash string, at time.Time) (*model.APIPrincipal, *model.OAuthToken, *model.OAuthGrant, error) {
-	row := s.db.QueryRowContext(ctx, `select t.token_hash,t.grant_id,t.principal_id,t.client_id,t.user_id,t.resource,t.expires_at,t.revoked_at,t.created_at,p.id,p.owner_user_id,p.name,p.type,p.enabled,p.scopes_json,p.resource_filter_json,p.allowed_cidrs_json,p.rate_limit_per_minute,p.max_concurrency,p.expires_at,p.last_used_at,p.created_at,p.updated_at from oauth_access_tokens t join api_principals p on p.id=t.principal_id where t.token_hash=?`, tokenHash)
-	var token model.OAuthToken
-	var tokenExpires, tokenCreated string
-	var tokenRevoked sql.NullString
-	var principal model.APIPrincipal
-	var owner sql.NullInt64
-	var enabled int
-	var scopesJSON, filterJSON, cidrsJSON string
-	var principalExpires, principalLastUsed sql.NullString
-	var principalCreated, principalUpdated string
-	if err := row.Scan(&token.TokenHash, &token.GrantID, &token.PrincipalID, &token.ClientID, &token.UserID, &token.Resource, &tokenExpires, &tokenRevoked, &tokenCreated, &principal.ID, &owner, &principal.Name, &principal.Type, &enabled, &scopesJSON, &filterJSON, &cidrsJSON, &principal.RateLimitPerMinute, &principal.MaxConcurrency, &principalExpires, &principalLastUsed, &principalCreated, &principalUpdated); err != nil {
-		return nil, nil, nil, err
-	}
-	token.ExpiresAt, token.RevokedAt, token.CreatedAt = parseTime(tokenExpires), nullableTime(tokenRevoked), parseTime(tokenCreated)
-	principal.Enabled = enabled != 0
-	if owner.Valid {
-		principal.OwnerUserID = &owner.Int64
-	}
-	_ = json.Unmarshal([]byte(scopesJSON), &principal.Scopes)
-	_ = json.Unmarshal([]byte(cidrsJSON), &principal.AllowedCIDRs)
-	principal.ResourceFilter = json.RawMessage(filterJSON)
-	principal.ExpiresAt, principal.LastUsedAt = nullableTime(principalExpires), nullableTime(principalLastUsed)
-	principal.CreatedAt, principal.UpdatedAt = parseTime(principalCreated), parseTime(principalUpdated)
-	if !principal.Enabled || token.RevokedAt != nil || !token.ExpiresAt.After(at) || principal.ExpiresAt != nil && !principal.ExpiresAt.After(at) {
-		return nil, nil, nil, sql.ErrNoRows
-	}
-	grant, err := s.GetOAuthGrant(ctx, token.GrantID)
-	if err != nil || grant.PrincipalID != principal.ID || grant.ClientID != token.ClientID || grant.UserID != token.UserID || grant.RevokedAt != nil || grant.Status != model.OAuthGrantActive || grant.ExpiresAt != nil && !grant.ExpiresAt.After(at) {
-		return nil, nil, nil, sql.ErrNoRows
-	}
-	// MCP authorization derives everything from the grant; the API principal
-	// row keeps only a projection for audit identity and rate limiting.
-	level := mcpauth.ParseAccessLevel(grant.AccessLevel)
-	principal.Scopes = level.NormalizedScopes(grant.OfflineAccess)
-	principal.ResourceFilter = mcpauth.LegacyResourceFilterJSON(mcpauth.ParseBoundary(grant.ResourceBoundaryJSON))
-	_, _ = s.db.ExecContext(ctx, `update api_principals set last_used_at=? where id=?`, at.UTC().Format(time.RFC3339Nano), principal.ID)
-	_, _ = s.db.ExecContext(ctx, `update oauth_grants set last_used_at=? where id=?`, at.UTC().Format(time.RFC3339Nano), grant.ID)
-	grant.LastUsedAt = &at
-	return &principal, &token, grant, nil
 }
 
 // ResolveActiveGrant returns the grant row for an active grant along with the
@@ -474,9 +508,11 @@ func (s *Store) ConsumeOAuthRefreshToken(ctx context.Context, tokenHash string, 
 	return &item, nil
 }
 
-func (s *Store) RevokeOAuthToken(ctx context.Context, tokenHash string) error {
+// RevokeOAuthToken revokes an access token, or a refresh token's whole family,
+// only when it was issued to clientID.
+func (s *Store) RevokeOAuthToken(ctx context.Context, tokenHash, clientID string) error {
 	ts := now()
-	if result, err := s.db.ExecContext(ctx, `update oauth_access_tokens set revoked_at=? where token_hash=? and revoked_at is null`, ts, tokenHash); err == nil {
+	if result, err := s.db.ExecContext(ctx, `update oauth_access_tokens set revoked_at=? where token_hash=? and client_id=? and revoked_at is null`, ts, tokenHash, clientID); err == nil {
 		if count, _ := result.RowsAffected(); count > 0 {
 			return nil
 		}
@@ -484,7 +520,7 @@ func (s *Store) RevokeOAuthToken(ctx context.Context, tokenHash string) error {
 		return err
 	}
 	var family string
-	if err := s.db.QueryRowContext(ctx, `select family_id from oauth_refresh_tokens where token_hash=?`, tokenHash).Scan(&family); err != nil {
+	if err := s.db.QueryRowContext(ctx, `select family_id from oauth_refresh_tokens where token_hash=? and client_id=?`, tokenHash, clientID).Scan(&family); err != nil {
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, `update oauth_refresh_tokens set revoked_at=? where family_id=? and revoked_at is null`, ts, family)

@@ -530,8 +530,9 @@ func TestOAuthRejectsUnknownCoarseScope(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+admin)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, req)
-	if response.Code != http.StatusBadRequest {
-		t.Fatalf("unknown scope status=%d body=%s", response.Code, response.Body.String())
+	location, _ := url.Parse(response.Header().Get("Location"))
+	if response.Code != http.StatusFound || location == nil || location.Query().Get("error") != "invalid_scope" || location.Query().Get("iss") != "https://panel.example.com" || location.Query().Get("state") != "state-test" {
+		t.Fatalf("unknown scope status=%d location=%q body=%s", response.Code, response.Header().Get("Location"), response.Body.String())
 	}
 }
 
@@ -580,10 +581,16 @@ func TestOAuthMetadataRemovesRegistrationEndpoint(t *testing.T) {
 	for _, scope := range resourceScopes {
 		resourceScopeSet[scope.(string)] = true
 	}
-	for _, want := range []string{"oboard:read", "oboard:operate", "offline_access"} {
+	for _, want := range []string{"oboard:read", "oboard:operate"} {
 		if !resourceScopeSet[want] {
 			t.Fatalf("protected resource metadata scopes missing %q: %#v", want, resourceMetadata)
 		}
+	}
+	if resourceScopeSet["offline_access"] {
+		t.Fatalf("protected resource metadata must not advertise offline_access: %#v", resourceMetadata)
+	}
+	if supported, _ := authMetadata["authorization_response_iss_parameter_supported"].(bool); !supported {
+		t.Fatalf("authorization metadata does not advertise iss: %#v", authMetadata)
 	}
 }
 
@@ -649,7 +656,7 @@ func TestOAuthProtectedResourceChallengeRequestsDurableAccess(t *testing.T) {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 	challenge := response.Header().Get("WWW-Authenticate")
-	if !strings.Contains(challenge, `resource_metadata="https://panel.example.com/.well-known/oauth-protected-resource/hidden/api/v1/mcp"`) || !strings.Contains(challenge, `scope="oboard:read oboard:operate offline_access"`) {
+	if !strings.Contains(challenge, `resource_metadata="https://panel.example.com/.well-known/oauth-protected-resource/hidden/api/v1/mcp"`) || !strings.Contains(challenge, `scope="oboard:read oboard:operate"`) || strings.Contains(challenge, "offline_access") {
 		t.Fatalf("challenge=%q", challenge)
 	}
 }
@@ -1058,9 +1065,21 @@ func TestOAuthAuthorizationCodePKCESingleUseAndCoarseScopes(t *testing.T) {
 	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), `"access_token":"oba_`) || !strings.Contains(first.Body.String(), `"refresh_token":"obr_`) || !strings.Contains(first.Body.String(), `"scope":"oboard:read oboard:operate offline_access"`) {
 		t.Fatalf("first exchange status=%d body=%s", first.Code, first.Body.String())
 	}
+	var firstTokens struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(first.Body.Bytes(), &firstTokens); err != nil {
+		t.Fatal(err)
+	}
+	if location.Query().Get("iss") != "https://panel.example.com" {
+		t.Fatalf("authorization response is missing iss: %s", location)
+	}
 	second := exchange()
 	if second.Code != http.StatusBadRequest {
 		t.Fatalf("second exchange status=%d body=%s", second.Code, second.Body.String())
+	}
+	if _, _, _, _, err := db.AuthenticateMCPAccessToken(context.Background(), security.HashAPISecret("test-secret", firstTokens.AccessToken), "https://panel.example.com/api/v1/mcp", time.Now().UTC()); err == nil {
+		t.Fatal("authorization code reuse did not revoke the tokens issued from it")
 	}
 	grants, err := db.ListOAuthGrants(context.Background())
 	if err != nil || len(grants) != 1 {
@@ -1141,8 +1160,10 @@ func TestOAuthAuthorizationCodeConcurrentExchangeIsSingleUse(t *testing.T) {
 			t.Fatalf("unexpected token status %d from %#v", status, results)
 		}
 	}
-	if ok != 1 || denied != 7 {
-		t.Fatalf("concurrent code exchange statuses=%v want one 200 and seven 400", results)
+	// A concurrent replay may revoke the winner before it answers, so at most
+	// one exchange succeeds and every other one is refused.
+	if ok > 1 || ok+denied != len(results) {
+		t.Fatalf("concurrent code exchange statuses=%v want at most one 200 and the rest 400", results)
 	}
 }
 
@@ -1389,4 +1410,147 @@ func oauthSuccessRedirectURL(body string) (*url.URL, error) {
 
 func oauthTestAuthorizationForm(client *model.OAuthClient, scope, challenge string) url.Values {
 	return url.Values{"client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "response_type": {"code"}, "scope": {scope}, "state": {"state-test"}, "resource": {"https://panel.example.com/api/v1/mcp"}, "code_challenge": {challenge}, "code_challenge_method": {"S256"}}
+}
+
+func newOAuthEndpointTestServer(t *testing.T) (*store.Store, *Server, http.Handler, string) {
+	t.Helper()
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(db, "test-secret", "")
+	handler := server.Handler()
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	session := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	return db, server, handler, session
+}
+
+func oauthAuthorizeGet(handler http.Handler, form url.Values, session string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+form.Encode(), nil)
+	if session != "" {
+		req.Header.Set("Authorization", "Bearer "+session)
+	}
+	out := httptest.NewRecorder()
+	handler.ServeHTTP(out, req)
+	return out
+}
+
+func TestOAuthAuthorizeWithoutSessionRedirectsToLogin(t *testing.T) {
+	db, _, handler, _ := newOAuthEndpointTestServer(t)
+	client := testOAuthClient(t, db, "oc_login", "Login client", []string{"https://client.example/callback"})
+	form := oauthTestAuthorizationForm(client, "oboard:read", strings.Repeat("c", 43))
+	out := oauthAuthorizeGet(handler, form, "")
+	if out.Code != http.StatusFound {
+		t.Fatalf("status=%d body=%s", out.Code, out.Body.String())
+	}
+	location, err := url.Parse(out.Header().Get("Location"))
+	if err != nil || location.Path != "/" {
+		t.Fatalf("location=%q", out.Header().Get("Location"))
+	}
+	back, err := url.Parse(location.Query().Get("oauth_return"))
+	if err != nil || back.Path != "/oauth/authorize" || back.Query().Get("client_id") != client.ID {
+		t.Fatalf("oauth_return=%q", location.Query().Get("oauth_return"))
+	}
+}
+
+func TestOAuthAuthorizeAcceptsCIMDURLAndLoopbackPort(t *testing.T) {
+	db, _, handler, session := newOAuthEndpointTestServer(t)
+	metadataURL := "https://client.example/oauth/client.json"
+	fetched := time.Now().UTC()
+	client := &model.OAuthClient{ID: "oc_cimd", Name: "CIMD client", RedirectURIs: []string{"http://127.0.0.1/callback"}, IdentityType: "cimd", MetadataURI: metadataURL, MetadataFetchedAt: &fetched, ClientMetadata: json.RawMessage(`{}`), Enabled: true}
+	if err := db.CreateOAuthClient(context.Background(), client); err != nil {
+		t.Fatal(err)
+	}
+	form := oauthTestAuthorizationForm(client, "oboard:read", strings.Repeat("c", 43))
+	form.Set("client_id", metadataURL)
+	form.Set("redirect_uri", "http://127.0.0.1:49152/callback")
+	if out := oauthAuthorizeGet(handler, form, session); out.Code != http.StatusOK || !strings.Contains(out.Body.String(), "CIMD client") {
+		t.Fatalf("CIMD consent status=%d body=%s", out.Code, out.Body.String())
+	}
+	form.Set("redirect_uri", "http://127.0.0.1:49152/other")
+	if out := oauthAuthorizeGet(handler, form, session); out.Code != http.StatusBadRequest || out.Header().Get("Location") != "" {
+		t.Fatalf("mismatched loopback path status=%d location=%q", out.Code, out.Header().Get("Location"))
+	}
+}
+
+func TestOAuthAuthorizeRedirectsInvalidTarget(t *testing.T) {
+	db, _, handler, session := newOAuthEndpointTestServer(t)
+	client := testOAuthClient(t, db, "oc_target", "Target client", []string{"https://client.example/callback"})
+	form := oauthTestAuthorizationForm(client, "oboard:read", strings.Repeat("c", 43))
+	form.Set("resource", "HTTPS://Panel.Example.com:443/api/v1/mcp/")
+	if out := oauthAuthorizeGet(handler, form, session); out.Code != http.StatusOK {
+		t.Fatalf("normalized resource status=%d body=%s", out.Code, out.Body.String())
+	}
+	form.Set("resource", "https://other.example.com/api/v1/mcp")
+	out := oauthAuthorizeGet(handler, form, session)
+	location, _ := url.Parse(out.Header().Get("Location"))
+	if out.Code != http.StatusFound || location == nil || location.Host != "client.example" || location.Query().Get("error") != "invalid_target" {
+		t.Fatalf("status=%d location=%q", out.Code, out.Header().Get("Location"))
+	}
+}
+
+func TestOAuthAccessTokenIsRejectedByRESTAPI(t *testing.T) {
+	db, server, handler, _ := newOAuthEndpointTestServer(t)
+	user, err := db.GetUserByUsername(context.Background(), "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := testOAuthClient(t, db, "oc_rest", "REST client", []string{"https://client.example/callback"})
+	grant, principal := createTestGrant(t, server, *user, client, []string{"oboard:read"})
+	plain := "oba_rest-audience-token"
+	issueTestMCPToken(t, db, grant, principal, client, user.ID, "https://panel.example.com/api/v1/mcp", plain)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/servers", nil)
+	req.Header.Set("Authorization", "Bearer "+plain)
+	out := httptest.NewRecorder()
+	handler.ServeHTTP(out, req)
+	if out.Code != http.StatusUnauthorized || !strings.Contains(out.Header().Get("WWW-Authenticate"), "invalid_token") {
+		t.Fatalf("REST with MCP token status=%d body=%s", out.Code, out.Body.String())
+	}
+}
+
+func TestOAuthRevokeRequiresIssuingClient(t *testing.T) {
+	db, server, handler, _ := newOAuthEndpointTestServer(t)
+	user, err := db.GetUserByUsername(context.Background(), "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := testOAuthClient(t, db, "oc_revoke", "Revoke client", []string{"https://client.example/callback"})
+	grant, principal := createTestGrant(t, server, *user, client, []string{"oboard:read"})
+	plain := "oba_revoke-token"
+	issueTestMCPToken(t, db, grant, principal, client, user.ID, "https://panel.example.com/api/v1/mcp", plain)
+	revoke := func(values url.Values) int {
+		req := httptest.NewRequest(http.MethodPost, "/oauth/revoke", strings.NewReader(values.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(out, req)
+		return out.Code
+	}
+	active := func() bool {
+		_, _, _, _, err := db.AuthenticateMCPAccessToken(context.Background(), security.HashAPISecret("test-secret", plain), "https://panel.example.com/api/v1/mcp", time.Now().UTC())
+		return err == nil
+	}
+	if code := revoke(url.Values{"token": {plain}}); code != http.StatusBadRequest || !active() {
+		t.Fatalf("revoke without client_id status=%d active=%v", code, active())
+	}
+	if code := revoke(url.Values{"token": {plain}, "client_id": {"oc_other"}}); code != http.StatusOK || !active() {
+		t.Fatalf("revoke by another client status=%d active=%v", code, active())
+	}
+	if code := revoke(url.Values{"token": {plain}, "client_id": {client.ID}}); code != http.StatusOK || active() {
+		t.Fatalf("revoke by issuing client status=%d active=%v", code, active())
+	}
+}
+
+func TestMCPInvalidOriginIsForbiddenBeforeAuthentication(t *testing.T) {
+	_, _, handler, _ := newOAuthEndpointTestServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp", strings.NewReader(`{}`))
+	req.Header.Set("Origin", "https://evil.example.com")
+	out := httptest.NewRecorder()
+	handler.ServeHTTP(out, req)
+	if out.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", out.Code, out.Body.String())
+	}
 }

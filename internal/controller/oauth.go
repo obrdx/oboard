@@ -30,10 +30,14 @@ const (
 	oauthAccessTokenTTL       = 15 * time.Minute
 	oauthRefreshTokenTTL      = 30 * 24 * time.Hour
 	// oauthRefreshReplayGrace is how long a rotated refresh token keeps
-	// returning the token pair it produced. Multi-process clients routinely
-	// present the same stored refresh token twice; replaying the winning pair
-	// keeps that race out of reuse detection.
-	oauthRefreshReplayGrace = 30 * time.Second
+	// returning the token pair it produced. Multi-process clients present the
+	// same stored refresh token twice within milliseconds; replaying the
+	// winning pair keeps that race out of reuse detection while bounding how
+	// long a stolen, already-rotated token stays useful.
+	oauthRefreshReplayGrace = 10 * time.Second
+	// oauthConsumedCodeRetention is how long a redeemed authorization code is
+	// remembered so a second redemption revokes the tokens the first produced.
+	oauthConsumedCodeRetention = 10 * time.Minute
 
 	oauthAuthorizationMetadataPath = "/.well-known/oauth-authorization-server"
 	oauthProtectedResourcePath     = "/.well-known/oauth-protected-resource"
@@ -42,7 +46,7 @@ const (
 func (s *Server) registerOAuthRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(oauthAuthorizationMetadataPath, s.oauthAuthorizationMetadata)
 	mux.HandleFunc(oauthProtectedResourcePath, s.oauthProtectedResourceMetadata)
-	mux.HandleFunc("/oauth/authorize", s.auth(s.oauthAuthorize, model.RoleViewer))
+	mux.HandleFunc("/oauth/authorize", s.oauthAuthorizeEntry)
 	mux.HandleFunc("/oauth/token", s.oauthToken)
 	mux.HandleFunc("/oauth/revoke", s.oauthRevoke)
 	// DCR is retired. The route remains during the migration window to return a
@@ -69,17 +73,20 @@ func (s *Server) oauthAuthorizationMetadata(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"issuer":                                base,
-		"authorization_endpoint":                base + "/oauth/authorize",
-		"token_endpoint":                        base + "/oauth/token",
-		"revocation_endpoint":                   base + "/oauth/revoke",
-		"response_types_supported":              []string{"code"},
-		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
-		"code_challenge_methods_supported":      []string{"S256"},
-		"token_endpoint_auth_methods_supported": []string{"none"},
-		"client_id_metadata_document_supported": true,
-		"scopes_supported":                      []string{mcpauth.ScopeRead, mcpauth.ScopeOperate, mcpauth.ScopeOffline},
-		"resource":                              base + "/api/v1/mcp",
+		"issuer":                                         base,
+		"authorization_endpoint":                         base + "/oauth/authorize",
+		"token_endpoint":                                 base + "/oauth/token",
+		"revocation_endpoint":                            base + "/oauth/revoke",
+		"response_types_supported":                       []string{"code"},
+		"response_modes_supported":                       []string{"query"},
+		"grant_types_supported":                          []string{"authorization_code", "refresh_token"},
+		"code_challenge_methods_supported":               []string{"S256"},
+		"token_endpoint_auth_methods_supported":          []string{"none"},
+		"revocation_endpoint_auth_methods_supported":     []string{"none"},
+		"client_id_metadata_document_supported":          true,
+		"authorization_response_iss_parameter_supported": true,
+		"scopes_supported":                               []string{mcpauth.ScopeRead, mcpauth.ScopeOperate, mcpauth.ScopeOffline},
+		"resource":                                       base + "/api/v1/mcp",
 	})
 }
 
@@ -129,7 +136,7 @@ func (s *Server) oauthProtectedResourceMetadata(w http.ResponseWriter, r *http.R
 		"resource":                 base + "/api/v1/mcp",
 		"authorization_servers":    []string{base},
 		"bearer_methods_supported": []string{"header"},
-		"scopes_supported":         []string{mcpauth.ScopeRead, mcpauth.ScopeOperate, mcpauth.ScopeOffline},
+		"scopes_supported":         []string{mcpauth.ScopeRead, mcpauth.ScopeOperate},
 		"resource_documentation":   base + "/docs/mcp",
 	})
 }
@@ -311,7 +318,7 @@ func (s *Server) writeMCPAuthenticationRequired(w http.ResponseWriter, r *http.R
 		v2Error(w, r, http.StatusServiceUnavailable, "oauth_metadata_unavailable", err.Error())
 		return
 	}
-	challenge := "Bearer resource_metadata=" + strconv.Quote(oauthProtectedResourceMetadataURL(base)) + `, scope="oboard:read oboard:operate offline_access"`
+	challenge := "Bearer resource_metadata=" + strconv.Quote(oauthProtectedResourceMetadataURL(base)) + `, scope=` + strconv.Quote(mcpChallengeScope)
 	code, message := "unauthorized", "需要 OAuth 登录"
 	if invalidToken {
 		challenge += `, error="invalid_token", error_description="The access token is invalid or expired"`
@@ -321,6 +328,11 @@ func (s *Server) writeMCPAuthenticationRequired(w http.ResponseWriter, r *http.R
 	v2Error(w, r, http.StatusUnauthorized, code, message)
 }
 
+// mcpChallengeScope is the scope set an unauthenticated MCP request is asked to
+// obtain. offline_access is deliberately absent: it is an authorization-server
+// scope the client requests on its own, not a resource requirement.
+const mcpChallengeScope = mcpauth.ScopeRead + " " + mcpauth.ScopeOperate
+
 type oauthAuthorizationRequest struct {
 	ClientID      string
 	RedirectURI   string
@@ -328,6 +340,75 @@ type oauthAuthorizationRequest struct {
 	State         string
 	Resource      string
 	CodeChallenge string
+	Issuer        string
+}
+
+// oauthAuthorizationError is an authorization endpoint failure. redirect is set
+// only once client_id and redirect_uri are verified, which is the point after
+// which OAuth 2.1 returns errors to the client's callback instead of the user.
+type oauthAuthorizationError struct {
+	code        string
+	description string
+	redirect    bool
+}
+
+func (e *oauthAuthorizationError) Error() string { return e.description }
+
+func oauthAuthorizeFailure(code, description string, redirect bool) error {
+	return &oauthAuthorizationError{code: code, description: description, redirect: redirect}
+}
+
+// oauthLoginRedirectWriter suppresses the session middleware's 401 so a browser
+// without a panel session can be sent to the login page instead.
+type oauthLoginRedirectWriter struct {
+	http.ResponseWriter
+	intercept  bool
+	suppressed bool
+}
+
+func (w *oauthLoginRedirectWriter) WriteHeader(status int) {
+	if w.intercept && status == http.StatusUnauthorized {
+		w.suppressed = true
+		return
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *oauthLoginRedirectWriter) Write(body []byte) (int, error) {
+	if w.suppressed {
+		return len(body), nil
+	}
+	return w.ResponseWriter.Write(body)
+}
+
+// oauthAuthorizeEntry requires a panel session for the authorization endpoint.
+// A browser GET without one is redirected to the panel login page, which
+// returns to this exact same-origin authorization request after sign-in.
+func (s *Server) oauthAuthorizeEntry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet || strings.TrimSpace(r.Header.Get("Authorization")) != "" {
+		s.auth(s.oauthAuthorize, model.RoleViewer)(w, r)
+		return
+	}
+	writer := &oauthLoginRedirectWriter{ResponseWriter: w, intercept: true}
+	s.auth(func(inner http.ResponseWriter, request *http.Request) {
+		writer.intercept = false
+		s.oauthAuthorize(inner, request)
+	}, model.RoleViewer)(writer, r)
+	if writer.suppressed {
+		s.redirectOAuthLogin(w, r)
+	}
+}
+
+func (s *Server) redirectOAuthLogin(w http.ResponseWriter, r *http.Request) {
+	basePath := requestBasePath(r, s.currentBasePath())
+	target := basePath + "/oauth/authorize"
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	w.Header().Del("Content-Type")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Location", basePath+"/?oauth_return="+url.QueryEscape(target))
+	w.WriteHeader(http.StatusFound)
 }
 
 func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
@@ -339,13 +420,19 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusBadRequest, "invalid_request", "invalid authorization request")
 		return
 	}
+	user := currentUser(r)
 	request, client, err := s.validateOAuthAuthorizationRequest(r)
 	if err != nil {
-		s.auditOAuthEvent(r, nil, "oauth_authorization_denied", "oauth_client", boundedOAuthAuditValue(r.Form.Get("client_id")), map[string]any{"reason": "invalid_request"})
-		oauthError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		failure := &oauthAuthorizationError{code: "invalid_request", description: err.Error()}
+		_ = errors.As(err, &failure)
+		s.auditOAuthEvent(r, oauthAuditActor(user), "oauth_authorization_denied", "oauth_client", boundedOAuthAuditValue(r.Form.Get("client_id")), map[string]any{"reason": failure.code})
+		if failure.redirect {
+			oauthRedirectError(w, r, request, failure.code, failure.description)
+			return
+		}
+		oauthError(w, http.StatusBadRequest, failure.code, failure.description)
 		return
 	}
-	user := currentUser(r)
 	if r.Method == http.MethodGet {
 		if user == nil {
 			s.auditOAuthEvent(r, nil, "oauth_authorization_denied", "oauth_client", client.ID, map[string]any{"reason": "login_required"})
@@ -354,7 +441,7 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.validateOAuthUserGrant(r.Context(), user, request.Scope); err != nil {
 			s.auditOAuthEvent(r, oauthAuditActor(user), "oauth_authorization_denied", "oauth_client", client.ID, map[string]any{"reason": "scope_denied", "scopes": request.Scope})
-			oauthError(w, http.StatusForbidden, "access_denied", err.Error())
+			oauthRedirectError(w, r, request, "access_denied", err.Error())
 			return
 		}
 		s.renderOAuthConsent(w, r, request, client)
@@ -362,7 +449,7 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Form.Get("decision") != "approve" {
 		s.auditOAuthEvent(r, oauthAuditActor(user), "oauth_authorization_denied", "oauth_client", client.ID, map[string]any{"reason": "user_denied", "scopes": request.Scope})
-		oauthRedirect(w, r, request.RedirectURI, request.State, "", "access_denied")
+		oauthRedirectError(w, r, request, "access_denied", "")
 		return
 	}
 	if user == nil {
@@ -372,18 +459,18 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.validateOAuthUserGrant(r.Context(), user, request.Scope); err != nil {
 		s.auditOAuthEvent(r, &user.ID, "oauth_authorization_denied", "oauth_client", client.ID, map[string]any{"reason": "scope_denied", "scopes": request.Scope})
-		oauthError(w, http.StatusForbidden, "access_denied", err.Error())
+		oauthRedirectError(w, r, request, "access_denied", err.Error())
 		return
 	}
 	grant, principal, profile, policies, err := s.buildOAuthGrantMaterial(r, *user, *client, request.Scope)
 	if err != nil {
 		s.auditOAuthEvent(r, &user.ID, "oauth_authorization_denied", "oauth_client", client.ID, map[string]any{"reason": "invalid_consent", "scopes": request.Scope})
-		oauthError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		oauthRedirectError(w, r, request, "invalid_request", err.Error())
 		return
 	}
 	rawCode, err := security.RandomToken(32)
 	if err != nil {
-		oauthError(w, http.StatusInternalServerError, "server_error", err.Error())
+		oauthRedirectError(w, r, request, "server_error", "")
 		return
 	}
 	code := &model.OAuthAuthorizationCode{
@@ -394,7 +481,7 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 	_, offline, scopeErr := normalizeRequestedScopes(request.Scope)
 	if scopeErr != nil {
 		s.auditOAuthEvent(r, &user.ID, "oauth_authorization_denied", "oauth_client", client.ID, map[string]any{"reason": "invalid_consent", "scopes": request.Scope})
-		oauthError(w, http.StatusBadRequest, "invalid_request", scopeErr.Error())
+		oauthRedirectError(w, r, request, "invalid_scope", scopeErr.Error())
 		return
 	}
 	boundary := s.oauthRoleBoundary(mustEffectiveRole(r.Context(), s.store, *user))
@@ -410,38 +497,184 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 			target = grant.ID
 		}
 		s.auditOAuthEvent(r, &user.ID, "oauth_authorization_denied", "oauth_grant", target, map[string]any{"client_id": client.ID, "reason": "authorize_failed"})
-		oauthError(w, http.StatusInternalServerError, "server_error", err.Error())
+		oauthRedirectError(w, r, request, "server_error", "")
 		return
 	}
 	s.auditOAuthEvent(r, &user.ID, "oauth_authorization_granted", "oauth_grant", grant.ID, map[string]any{"client_id": client.ID, "scopes": mcpauth.ParseAccessLevel(grant.AccessLevel).NormalizedScopes(grant.OfflineAccess), "resource": request.Resource, "access_level": grant.AccessLevel})
-	s.renderOAuthSuccess(w, r, request.RedirectURI, request.State, rawCode, client.Name)
+	s.renderOAuthSuccess(w, r, request, rawCode, client.Name)
 }
 
 func (s *Server) validateOAuthAuthorizationRequest(r *http.Request) (oauthAuthorizationRequest, *model.OAuthClient, error) {
 	request := oauthAuthorizationRequest{ClientID: strings.TrimSpace(r.Form.Get("client_id")), RedirectURI: r.Form.Get("redirect_uri"), Scope: strings.Fields(r.Form.Get("scope")), State: r.Form.Get("state"), Resource: r.Form.Get("resource"), CodeChallenge: r.Form.Get("code_challenge")}
-	client, err := s.store.GetOAuthClient(r.Context(), request.ClientID)
-	if err != nil || !client.Enabled {
-		return request, nil, errors.New("unknown or disabled client")
+	base, baseErr := s.publicBaseURL(r.Context())
+	if baseErr == nil {
+		request.Issuer = base
 	}
-	if r.Form.Get("response_type") != "code" || r.Form.Get("code_challenge_method") != "S256" || len(request.CodeChallenge) < 43 || len(request.CodeChallenge) > 128 {
-		return request, nil, errors.New("authorization code with PKCE S256 is required")
+	client, err := s.resolveOAuthClient(r, request.ClientID, true)
+	if err != nil {
+		return request, nil, oauthAuthorizeFailure("invalid_request", err.Error(), false)
 	}
-	if !slices.Contains(client.RedirectURIs, request.RedirectURI) {
-		return request, nil, errors.New("redirect_uri does not exactly match the registered client")
+	if !oauthRedirectURIMatches(client.RedirectURIs, request.RedirectURI) {
+		return request, nil, oauthAuthorizeFailure("invalid_request", "redirect_uri does not match the registered client", false)
 	}
-	base, err := s.publicBaseURL(r.Context())
-	if err != nil || request.Resource != base+"/api/v1/mcp" {
-		return request, nil, errors.New("invalid resource audience")
+	if baseErr != nil {
+		return request, nil, oauthAuthorizeFailure("temporarily_unavailable", baseErr.Error(), true)
 	}
+	if r.Form.Get("response_type") != "code" {
+		return request, nil, oauthAuthorizeFailure("unsupported_response_type", "only the authorization code flow is supported", true)
+	}
+	if r.Form.Get("code_challenge_method") != "S256" || len(request.CodeChallenge) < 43 || len(request.CodeChallenge) > 128 {
+		return request, nil, oauthAuthorizeFailure("invalid_request", "authorization code with PKCE S256 is required", true)
+	}
+	resource := canonicalOAuthResource(base + "/api/v1/mcp")
+	if strings.TrimSpace(request.Resource) == "" {
+		request.Resource = resource
+	} else if canonicalOAuthResource(request.Resource) != resource {
+		return request, nil, oauthAuthorizeFailure("invalid_target", "resource is not this MCP server", true)
+	}
+	request.Resource = resource
 	if len(request.Scope) == 0 {
-		return request, nil, errors.New("scope is required")
+		request.Scope = strings.Fields(mcpChallengeScope)
 	}
 	for _, scope := range request.Scope {
 		if !mcpauth.KnownScope(scope) {
-			return request, nil, errors.New("unsupported OAuth scope: " + scope)
+			return request, nil, oauthAuthorizeFailure("invalid_scope", "unsupported OAuth scope: "+scope, true)
 		}
 	}
 	return request, client, nil
+}
+
+// resolveOAuthClient finds the client a request names. A pre-registered client
+// is addressed by its oc_ identifier. An HTTPS client_id is a Client ID
+// Metadata Document: a known document is revalidated when stale, and, when
+// discover is set, an unknown one is fetched with the SSRF-safe fetcher and
+// recorded under an oc_ identifier with the document URL as metadata_uri, so
+// administrators can see and disable it like any other client.
+func (s *Server) resolveOAuthClient(r *http.Request, raw string, discover bool) (*model.OAuthClient, error) {
+	raw = strings.TrimSpace(raw)
+	unknown := errors.New("unknown or disabled client")
+	if raw == "" || len(raw) > 2048 {
+		return nil, unknown
+	}
+	client, err := s.store.GetOAuthClientByIdentifier(r.Context(), raw)
+	if err == nil {
+		if !client.Enabled {
+			return nil, unknown
+		}
+		if discover && client.IdentityType == "cimd" {
+			if refreshErr := s.refreshClientMetadataIfStale(r.Context(), client); refreshErr != nil {
+				return nil, errors.New("client metadata could not be revalidated: " + refreshErr.Error())
+			}
+		}
+		return client, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if !discover || !strings.HasPrefix(raw, "https://") {
+		return nil, unknown
+	}
+	if !s.allowRateRaw("oauth-cimd:"+clientIP(r), 10, time.Minute) {
+		return nil, errors.New("too many client metadata lookups; retry later")
+	}
+	metadata, err := s.fetchClientMetadata(r.Context(), raw)
+	if err != nil {
+		return nil, err
+	}
+	random, err := security.RandomToken(18)
+	if err != nil {
+		return nil, err
+	}
+	item := &model.OAuthClient{
+		ID: "oc_" + random, Name: truncateOAuthClientName(metadata.clientName), RedirectURIs: metadata.redirectURIs,
+		IdentityType: "cimd", MetadataURI: raw, MetadataHash: metadata.hash, MetadataETag: metadata.etag,
+		MetadataFetchedAt: metadata.fetchedAt, ClientMetadata: json.RawMessage(`{}`), Enabled: true,
+	}
+	if err := s.store.CreateOAuthClient(r.Context(), item); err != nil {
+		if existing, getErr := s.store.GetOAuthClientByIdentifier(r.Context(), raw); getErr == nil {
+			if !existing.Enabled {
+				return nil, unknown
+			}
+			return existing, nil
+		}
+		return nil, err
+	}
+	s.auditOAuthEvent(r, oauthAuditActor(currentUser(r)), "oauth_client_discovered", "oauth_client", item.ID, map[string]any{"client_name": boundedOAuthAuditValue(item.Name), "redirect_uris": item.RedirectURIs, "identity_type": item.IdentityType})
+	return item, nil
+}
+
+// oauthClientIdentity maps the client_id a token request presents to the stored
+// client identifier without fetching anything.
+func (s *Server) oauthClientIdentity(ctx context.Context, raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if client, err := s.store.GetOAuthClientByIdentifier(ctx, raw); err == nil {
+		return client.ID
+	}
+	return raw
+}
+
+func truncateOAuthClientName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "Remote MCP Client"
+	}
+	runes := []rune(name)
+	if len(runes) > 80 {
+		return string(runes[:80])
+	}
+	return name
+}
+
+// oauthRedirectURIMatches compares a requested callback with the registered
+// ones exactly, except that an HTTP loopback callback may use any port
+// (OAuth 2.1 section 8.4.2): native clients bind an ephemeral port per run.
+func oauthRedirectURIMatches(registered []string, requested string) bool {
+	if requested == "" {
+		return false
+	}
+	if slices.Contains(registered, requested) {
+		return true
+	}
+	candidate, err := url.Parse(requested)
+	if err != nil || candidate.Scheme != "http" || candidate.User != nil || candidate.Fragment != "" || !isLoopbackRedirectHost(candidate.Hostname()) {
+		return false
+	}
+	for _, raw := range registered {
+		allowed, parseErr := url.Parse(raw)
+		if parseErr != nil || allowed.Scheme != "http" || !isLoopbackRedirectHost(allowed.Hostname()) {
+			continue
+		}
+		if strings.EqualFold(allowed.Hostname(), candidate.Hostname()) && allowed.EscapedPath() == candidate.EscapedPath() && allowed.RawQuery == candidate.RawQuery {
+			return true
+		}
+	}
+	return false
+}
+
+// canonicalOAuthResource normalizes a resource indicator for comparison: scheme
+// and host are case-insensitive, a default port is implied, and a trailing
+// slash carries no meaning. The path otherwise stays case-sensitive.
+func canonicalOAuthResource(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Host == "" {
+		return strings.TrimSpace(raw)
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	host := strings.ToLower(parsed.Hostname())
+	port := parsed.Port()
+	if scheme == "https" && port == "443" || scheme == "http" && port == "80" {
+		port = ""
+	}
+	if port != "" {
+		host = net.JoinHostPort(host, port)
+	} else if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	out := url.URL{Scheme: scheme, Host: host, Path: strings.TrimRight(parsed.Path, "/"), RawQuery: parsed.RawQuery}
+	return out.String()
 }
 
 // normalizeRequestedScopes canonicalizes the client's coarse scope request.
@@ -600,13 +833,31 @@ func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) oauthExchangeCode(w http.ResponseWriter, r *http.Request) {
-	code, err := s.store.ConsumeOAuthAuthorizationCode(r.Context(), security.HashAPISecret(s.sessionSecret, r.Form.Get("code")))
-	if err != nil || !code.ExpiresAt.After(time.Now().UTC()) || code.ClientID != r.Form.Get("client_id") || code.RedirectURI != r.Form.Get("redirect_uri") || !pkceMatches(code.CodeChallenge, r.Form.Get("code_verifier")) || code.Resource != r.Form.Get("resource") {
-		s.auditOAuthEvent(r, nil, "oauth_token_denied", "oauth_client", boundedOAuthAuditValue(r.Form.Get("client_id")), map[string]any{"flow": "authorization_code", "reason": "invalid_grant"})
+	clientID := s.oauthClientIdentity(r.Context(), r.Form.Get("client_id"))
+	codeHash := security.HashAPISecret(s.sessionSecret, r.Form.Get("code"))
+	now := time.Now().UTC()
+	code, err := s.store.ConsumeOAuthAuthorizationCode(r.Context(), codeHash, now, oauthConsumedCodeRetention)
+	if errors.Is(err, store.ErrOAuthCodeReplay) {
+		s.auditOAuthEvent(r, nil, "oauth_code_reuse", "oauth_client", boundedOAuthAuditValue(clientID), map[string]any{"flow": "authorization_code", "reason": "tokens_revoked"})
+		oauthError(w, http.StatusBadRequest, "invalid_grant", "authorization code was already used; tokens issued from it are revoked")
+		return
+	}
+	if err != nil || !code.ExpiresAt.After(now) || code.ClientID != clientID || code.RedirectURI != r.Form.Get("redirect_uri") || !pkceMatches(code.CodeChallenge, r.Form.Get("code_verifier")) || !oauthResourceMatches(r.Form.Get("resource"), code.Resource) {
+		s.auditOAuthEvent(r, nil, "oauth_token_denied", "oauth_client", boundedOAuthAuditValue(clientID), map[string]any{"flow": "authorization_code", "reason": "invalid_grant"})
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "authorization code is invalid")
 		return
 	}
-	s.issueOAuthTokens(w, r, "authorization_code", code.GrantID, code.PrincipalID, code.ClientID, code.UserID, code.Resource, "", "", mcpauth.RequestsOffline(code.Scopes))
+	s.issueOAuthTokens(w, r, oauthTokenIssue{flow: "authorization_code", grantID: code.GrantID, principalID: code.PrincipalID, clientID: code.ClientID, userID: code.UserID, resource: code.Resource, requestOffline: mcpauth.RequestsOffline(code.Scopes), codeHash: codeHash})
+}
+
+// oauthResourceMatches accepts an omitted resource parameter on the token
+// endpoint (the grant already carries its audience) and otherwise compares the
+// normalized indicator with the stored one.
+func oauthResourceMatches(requested, stored string) bool {
+	if strings.TrimSpace(requested) == "" {
+		return true
+	}
+	return canonicalOAuthResource(requested) == canonicalOAuthResource(stored)
 }
 
 // oauthRefreshGate serializes rotations that present the same refresh token.
@@ -686,12 +937,15 @@ func (s *Server) oauthRefreshReplayResponse(tokenHash, clientID, resource string
 
 func (s *Server) oauthExchangeRefresh(w http.ResponseWriter, r *http.Request) {
 	tokenHash := security.HashAPISecret(s.sessionSecret, r.Form.Get("refresh_token"))
-	clientID, resource := r.Form.Get("client_id"), r.Form.Get("resource")
+	clientID, resource := s.oauthClientIdentity(r.Context(), r.Form.Get("client_id")), r.Form.Get("resource")
 	// Serialize rotations of one refresh token so a second caller observes a
 	// finished rotation and its cached result instead of a half-written one.
 	defer s.lockOAuthRefresh(tokenHash)()
 	at := time.Now().UTC()
 	refresh, err := s.store.ConsumeOAuthRefreshToken(r.Context(), tokenHash, at, s.oauthRefreshGrace)
+	if refresh != nil && oauthResourceMatches(resource, refresh.Resource) {
+		resource = refresh.Resource
+	}
 	if errors.Is(err, store.ErrOAuthRefreshReplay) {
 		s.oauthReplayRefresh(w, r, refresh, tokenHash, clientID, resource, at)
 		return
@@ -716,7 +970,7 @@ func (s *Server) oauthExchangeRefresh(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "refresh token is invalid")
 		return
 	}
-	s.issueOAuthTokens(w, r, "refresh_token", refresh.GrantID, refresh.PrincipalID, refresh.ClientID, refresh.UserID, refresh.Resource, refresh.FamilyID, refresh.TokenHash, true)
+	s.issueOAuthTokens(w, r, oauthTokenIssue{flow: "refresh_token", grantID: refresh.GrantID, principalID: refresh.PrincipalID, clientID: refresh.ClientID, userID: refresh.UserID, resource: refresh.Resource, familyID: refresh.FamilyID, parentTokenHash: refresh.TokenHash, requestOffline: true})
 }
 
 // oauthReplayRefresh answers a refresh token that was already rotated inside the
@@ -746,7 +1000,20 @@ func (s *Server) oauthReplayRefresh(w http.ResponseWriter, r *http.Request, refr
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) issueOAuthTokens(w http.ResponseWriter, r *http.Request, flow, grantID, principalID, clientID string, userID int64, resource, familyID, parentTokenHash string, requestOffline bool) {
+// oauthTokenIssue describes one token endpoint answer. codeHash is set for an
+// authorization code exchange so a concurrent replay of the same code can
+// revoke what this exchange issues.
+type oauthTokenIssue struct {
+	flow, grantID, principalID, clientID string
+	userID                               int64
+	resource, familyID, parentTokenHash  string
+	requestOffline                       bool
+	codeHash                             string
+}
+
+func (s *Server) issueOAuthTokens(w http.ResponseWriter, r *http.Request, issue oauthTokenIssue) {
+	flow, grantID, principalID, clientID, userID := issue.flow, issue.grantID, issue.principalID, issue.clientID, issue.userID
+	resource, familyID, parentTokenHash, requestOffline := issue.resource, issue.familyID, issue.parentTokenHash, issue.requestOffline
 	grant, err := s.store.GetOAuthGrant(r.Context(), grantID)
 	if err != nil || grant.RevokedAt != nil || grant.Status != model.OAuthGrantActive || grant.ExpiresAt != nil && !grant.ExpiresAt.After(time.Now().UTC()) || grant.PrincipalID != principalID || grant.ClientID != clientID || grant.UserID != userID {
 		s.auditOAuthEvent(r, &userID, "oauth_token_denied", "oauth_grant", grantID, map[string]any{"client_id": clientID, "flow": flow, "reason": "inactive_grant"})
@@ -799,6 +1066,18 @@ func (s *Server) issueOAuthTokens(w http.ResponseWriter, r *http.Request, flow, 
 		oauthError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}
+	if issue.codeHash != "" {
+		refreshFamily := ""
+		if refresh != nil {
+			refreshFamily = refresh.FamilyID
+		}
+		replayed, err := s.store.RecordOAuthCodeTokens(r.Context(), issue.codeHash, access.TokenHash, refreshFamily, now)
+		if err != nil || replayed {
+			s.auditOAuthEvent(r, &userID, "oauth_code_reuse", "oauth_grant", grantID, map[string]any{"client_id": clientID, "flow": flow, "reason": "tokens_revoked"})
+			oauthError(w, http.StatusBadRequest, "invalid_grant", "authorization code was already used; tokens issued from it are revoked")
+			return
+		}
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	scopes := mcpAccessLevelForRole(effectiveRole).NormalizedScopes(grant.OfflineAccess)
@@ -820,13 +1099,23 @@ func (s *Server) oauthRevoke(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusMethodNotAllowed, "invalid_request", "method not allowed")
 		return
 	}
-	outcome := "ignored"
-	if err := r.ParseForm(); err == nil {
-		if err := s.store.RevokeOAuthToken(r.Context(), security.HashAPISecret(s.sessionSecret, r.Form.Get("token"))); err == nil {
-			outcome = "revoked"
-		}
+	if err := r.ParseForm(); err != nil {
+		oauthError(w, http.StatusBadRequest, "invalid_request", "invalid revocation request")
+		return
 	}
-	s.auditOAuthEvent(r, nil, "oauth_token_revoked", "oauth_token", "", map[string]any{"outcome": outcome})
+	// Public clients authenticate a revocation only by client_id (RFC 7009
+	// section 2.1): a token is revoked only for the client it was issued to,
+	// and a mismatch is answered like an unknown token.
+	clientID := s.oauthClientIdentity(r.Context(), r.Form.Get("client_id"))
+	if clientID == "" {
+		oauthError(w, http.StatusBadRequest, "invalid_request", "client_id is required")
+		return
+	}
+	outcome := "ignored"
+	if err := s.store.RevokeOAuthToken(r.Context(), security.HashAPISecret(s.sessionSecret, r.Form.Get("token")), clientID); err == nil {
+		outcome = "revoked"
+	}
+	s.auditOAuthEvent(r, nil, "oauth_token_revoked", "oauth_client", clientID, map[string]any{"outcome": outcome})
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -852,38 +1141,6 @@ func boundedOAuthAuditValue(value string) string {
 		return value[:128]
 	}
 	return value
-}
-
-// authenticateOAuthToken is the legacy REST path resolver for oba_ tokens. MCP
-// uses the dedicated mcpAuth middleware instead; this remains only for the
-// generic apiAuth compatibility branch and older tests.
-func (s *Server) authenticateOAuthToken(r *http.Request, raw string) (*model.APIPrincipal, error) {
-	principal, token, grant, err := s.store.AuthenticateOAuthAccessToken(r.Context(), security.HashAPISecret(s.sessionSecret, raw), time.Now().UTC())
-	if err != nil {
-		return nil, err
-	}
-	base, err := s.publicBaseURL(r.Context())
-	if err != nil || token.Resource != base+"/api/v1/mcp" {
-		return nil, sql.ErrNoRows
-	}
-	client, err := s.store.GetOAuthClient(r.Context(), token.ClientID)
-	if err != nil || !client.Enabled {
-		return nil, sql.ErrNoRows
-	}
-	user, err := s.store.GetUser(r.Context(), token.UserID)
-	if err != nil || s.validateOAuthUserGrant(r.Context(), user, []string{"oboard:read"}) != nil {
-		return nil, sql.ErrNoRows
-	}
-	effectiveRole, err := s.store.EffectiveUserRole(r.Context(), *user)
-	if err != nil {
-		return nil, sql.ErrNoRows
-	}
-	accessLevel := mcpAccessLevelForRole(effectiveRole)
-	boundary := s.oauthRoleBoundary(effectiveRole)
-	principal.Scopes = accessLevel.NormalizedScopes(grant.OfflineAccess)
-	principal.ResourceFilter = application.ResourceFilterFromBoundary(boundary)
-	principal.OAuthGrantID = grant.ID
-	return principal, nil
 }
 
 func (s *Server) validateOAuthUserGrant(ctx context.Context, user *model.User, scopes []string) error {
@@ -928,18 +1185,27 @@ func pkceMatches(challenge, verifier string) bool {
 	return challenge == base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-func oauthRedirect(w http.ResponseWriter, r *http.Request, redirectURI, state, code, oauthErr string) {
-	http.Redirect(w, r, oauthRedirectLocation(redirectURI, state, code, oauthErr), http.StatusFound)
+// oauthRedirectError returns an authorization error to the verified client
+// callback (OAuth 2.1 section 4.1.2.1), carrying iss for mix-up defence.
+func oauthRedirectError(w http.ResponseWriter, r *http.Request, request oauthAuthorizationRequest, oauthErr, description string) {
+	w.Header().Set("Cache-Control", "no-store")
+	http.Redirect(w, r, oauthRedirectLocation(request, "", oauthErr, description), http.StatusFound)
 }
 
-func oauthRedirectLocation(redirectURI, state, code, oauthErr string) string {
-	u, _ := url.Parse(redirectURI)
+func oauthRedirectLocation(request oauthAuthorizationRequest, code, oauthErr, description string) string {
+	u, _ := url.Parse(request.RedirectURI)
 	query := u.Query()
-	if state != "" {
-		query.Set("state", state)
+	if request.State != "" {
+		query.Set("state", request.State)
+	}
+	if request.Issuer != "" {
+		query.Set("iss", request.Issuer)
 	}
 	if oauthErr != "" {
 		query.Set("error", oauthErr)
+		if description != "" {
+			query.Set("error_description", description)
+		}
 	} else {
 		query.Set("code", code)
 	}

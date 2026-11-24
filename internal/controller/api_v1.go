@@ -187,19 +187,15 @@ func (s *Server) apiAuth(next http.HandlerFunc, minimumRole model.Role) http.Han
 			s.machineAPIAuth(next, w, r, token)
 			return
 		}
-		if strings.HasPrefix(token, "oba_") {
-			stored, err := s.authenticateOAuthToken(r, token)
-			if err != nil {
-				if r.URL.Path == "/api/v1/mcp" {
-					s.writeMCPAuthenticationRequired(w, r, true)
-					return
-				}
-				v2Error(w, r, http.StatusUnauthorized, "invalid_token", "OAuth access token 无效或已过期")
+		if strings.HasPrefix(token, "oba_") || strings.HasPrefix(token, "obr_") {
+			// OAuth tokens are audience-bound to the MCP resource (RFC 8707) and
+			// are never accepted by the REST API.
+			if r.URL.Path == "/api/v1/mcp" {
+				s.writeMCPAuthenticationRequired(w, r, true)
 				return
 			}
-			source, _ := netip.ParseAddr(clientIP(r))
-			principal := application.Principal{ID: stored.ID, GrantID: stored.OAuthGrantID, UserID: stored.OwnerUserID, Name: stored.Name, Type: stored.Type, Scopes: stored.Scopes, ResourceFilter: stored.ResourceFilter, SourceIP: source, ClientName: r.Header.Get("User-Agent")}
-			s.machinePrincipalAuth(next, w, r, principal)
+			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token", error_description="OAuth access tokens are valid only for the MCP resource"`)
+			v2Error(w, r, http.StatusUnauthorized, "invalid_token", "OAuth 访问令牌仅限 MCP 使用，REST API 请使用服务账号令牌")
 			return
 		}
 		if r.URL.Path == "/api/v1/mcp" {

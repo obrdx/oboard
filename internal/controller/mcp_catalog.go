@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/OboardProject/oboard/internal/application"
@@ -104,7 +105,15 @@ func (s *Server) newMCPHandler() http.Handler {
 		MaxRequestBodyBytes:          1 << 20,
 		PropagateRequestCancellation: true,
 	})
-	h := s.mcpLocalhostProtection(s.mcpOriginProtection(handler))
+	// The SDK binds each Mcp-Session-Id to TokenInfo.UserID so a session cannot
+	// be continued with another user's token. mcpAuth has already verified the
+	// bearer token; this only hands its result to the SDK.
+	h := auth.RequireBearerToken(func(ctx context.Context, _ string, _ *http.Request) (*auth.TokenInfo, error) {
+		if info, ok := ctx.Value(mcpTokenInfoContextKey{}).(*auth.TokenInfo); ok && info != nil {
+			return info, nil
+		}
+		return nil, auth.ErrInvalidToken
+	}, nil)(handler)
 	mcpHandlers[s] = h
 	return h
 }

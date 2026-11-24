@@ -685,8 +685,10 @@ func (s *Server) Handler() http.Handler {
 	rootMux.Handle("/s/", mux)
 	rootMux.Handle("/api/v1/subscription-relay/", mux)
 	rootMux.HandleFunc("/api/v1/version", mux.ServeHTTP)
-	rootMux.Handle("/api/v1/mcp", s.mcpAuth(mcpHandler))
-	rootMux.Handle("/api/v1/mcp/terminal/", s.mcpAuth(http.HandlerFunc(s.mcpTerminalStream)))
+	// Host and Origin are checked before authentication so a forbidden browser
+	// origin always receives 403, never an OAuth challenge.
+	rootMux.Handle("/api/v1/mcp", s.mcpLocalhostProtection(s.mcpOriginProtection(s.mcpAuth(mcpHandler))))
+	rootMux.Handle("/api/v1/mcp/terminal/", s.mcpLocalhostProtection(s.mcpOriginProtection(s.mcpAuth(http.HandlerFunc(s.mcpTerminalStream)))))
 	rootMux.Handle("/api/v1/", machineMux)
 	rootMux.Handle("/install/", mux)
 	rootMux.Handle("/downloads/", mux)
@@ -894,8 +896,9 @@ func (s *Server) withSecurityHeaders(next http.Handler) http.Handler {
 		if origin := r.Header.Get("Origin"); origin != "" && s.originAllowed(r, origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Headers", "authorization,content-type")
+			w.Header().Set("Access-Control-Allow-Headers", "authorization,content-type,mcp-protocol-version,mcp-session-id,last-event-id")
 			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
+			w.Header().Set("Access-Control-Expose-Headers", "WWW-Authenticate,Mcp-Session-Id,Mcp-Protocol-Version")
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

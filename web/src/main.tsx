@@ -340,6 +340,21 @@ function appPath(path: string) {
   return `${appBasePath}${suffix}` || '/'
 }
 
+// pendingOAuthReturn is the same-origin OAuth authorization request the
+// Controller sent an unauthenticated browser here from. Anything else is
+// ignored so the parameter cannot become an open redirect.
+function pendingOAuthReturn() {
+  const raw = new URLSearchParams(window.location.search).get('oauth_return')
+  if (!raw) return ''
+  try {
+    const target = new URL(raw, window.location.origin)
+    if (target.origin !== window.location.origin || target.pathname !== appPath('/oauth/authorize')) return ''
+    return `${target.pathname}${target.search}`
+  } catch {
+    return ''
+  }
+}
+
 function appControllerURL() {
   return `${window.location.origin}${appBasePath}`
 }
@@ -1719,6 +1734,11 @@ export function App() {
         sessionStorage.setItem('oboard.token', 'cookie')
         sessionStorage.setItem('oboard.user', JSON.stringify(result.user))
         sessionStorage.setItem('oboard.csrf', result.csrf_token)
+        const oauthReturn = pendingOAuthReturn()
+        if (oauthReturn) {
+          window.location.replace(oauthReturn)
+          return
+        }
         setSessionUser(result.user)
         setShowPortalLoader(true)
         setToken('cookie')
@@ -2230,6 +2250,11 @@ export function App() {
   if (restoringSession) return <PortalLoader loading={false} />
 
   if (!token) return <><TopToast toast={toast} onClose={id => setToast(current => current?.id === id ? null : current)} /><Login theme={theme} onThemeChange={changeTheme} initialError={restoreError} onToast={(message, kind) => showToast(setToast, message, kind)} onToken={(v, user, csrfToken) => {
+    const oauthReturn = pendingOAuthReturn()
+    if (oauthReturn) {
+      window.location.replace(oauthReturn)
+      return
+    }
     clearLatencyWindowCache()
     advanceSession()
     activeTokenRef.current = v

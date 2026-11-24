@@ -1106,6 +1106,7 @@ table latency_probe_tasks
     province TEXT notnull=1 default=- pk=0
     carrier TEXT notnull=1 default=- pk=0
     method TEXT notnull=1 default='tcp' pk=0
+    family TEXT notnull=1 default='auto' pk=0
     address TEXT notnull=1 default='' pk=0
     port INTEGER notnull=1 default=80 pk=0
     interval_seconds INTEGER notnull=1 default=60 pk=0
@@ -1406,6 +1407,13 @@ table oauth_clients
     enabled INTEGER notnull=1 default=1 pk=0
     created_at TEXT notnull=1 default=- pk=0
     updated_at TEXT notnull=1 default=- pk=0
+table oauth_consumed_codes
+    code_hash TEXT notnull=0 default=- pk=1
+    grant_id TEXT notnull=1 default=- pk=0
+    access_token_hash TEXT notnull=1 default='' pk=0
+    refresh_family_id TEXT notnull=1 default='' pk=0
+    replayed_at TEXT notnull=0 default=- pk=0
+    expires_at TEXT notnull=1 default=- pk=0
 table oauth_grants
     id TEXT notnull=0 default=- pk=1
     client_id TEXT notnull=1 default=- pk=0
