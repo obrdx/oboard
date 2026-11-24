@@ -5,7 +5,7 @@ go 1.27.4
 require (
 	github.com/dop251/goja v0.0.0-20260906210903-70ad66ec7ce4
 	github.com/go-webauthn/webauthn v0.17.4
-	github.com/gorilla/websocket v1.5.3
+	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/klauspost/pgzip v1.2.6
 	github.com/lionsoul2014/ip2region/binding/golang v0.0.0-20260709160242-cd40e3a1d532
 	github.com/metacubex/age v0.0.0-20260603010618-28d156b4ea78
