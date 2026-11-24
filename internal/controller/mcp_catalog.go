@@ -79,6 +79,8 @@ Controller update success means the new Controller binary is available. It does 
 
 Fast Path intent ` + "`servers.runtime.refresh`" + ` maps “刷新全部节点配置 / 清理 Agent 配置” to ` + "`servers.runtime.refresh`" + ` (` + "`confirm: true`" + `). It force-rebuilds Agent runtime config, restarts the kernel, and re-pushes authorization and runtime users. Do not substitute ` + "`deployments.apply`" + ` or loop ` + "`servers.delivery.retry`" + `.`
 
+const mcpMaxRequestBodyBytes = 1 << 20
+
 var (
 	mcpSingletonMu sync.Mutex
 	mcpSingletons  = map[*Server]*mcp.Server{}
@@ -102,7 +104,7 @@ func (s *Server) newMCPHandler() http.Handler {
 		Stateless:                    false,
 		JSONResponse:                 true,
 		DisableLocalhostProtection:   true,
-		MaxRequestBodyBytes:          1 << 20,
+		MaxRequestBodyBytes:          mcpMaxRequestBodyBytes,
 		PropagateRequestCancellation: true,
 	})
 	// The SDK binds each Mcp-Session-Id to TokenInfo.UserID so a session cannot

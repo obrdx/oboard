@@ -66,18 +66,19 @@ func (s *Server) renderOAuthConsent(w http.ResponseWriter, r *http.Request, requ
 		role = effective
 	}
 	_, offline, _ := normalizeRequestedScopes(request.Scope)
-	accessLevel := mcpAccessLevelForRole(role)
+	accessLevel := mcpRequestedAccessLevel(request.Scope, role)
 	if user != nil {
 		if err := s.validateOAuthUserGrant(r.Context(), user, request.Scope); err != nil {
 			oauthError(w, http.StatusForbidden, "access_denied", err.Error())
 			return
 		}
 	}
-	permissionLabel := "继承只读权限"
-	if role == model.RoleAdmin {
-		permissionLabel = "继承管理员权限"
-	} else if role == model.RoleOperator {
-		permissionLabel = "继承操作员权限"
+	permissionLabel := "只读：查看资源、生成与校验计划"
+	if accessLevel == mcpauth.AccessOperate {
+		permissionLabel = "读写：可提交变更并执行工作流"
+	}
+	if mcpauth.RequestsOperate(request.Scope) && accessLevel != mcpauth.AccessOperate {
+		permissionLabel += "（客户端申请了读写，当前账号角色只允许只读）"
 	}
 	view := oauthConsentView{
 		ClientName:      client.Name,
@@ -161,9 +162,9 @@ button.ghost:hover{background:var(--primary-soft)}
       <div class="resource">{{.ClientID}} · {{.RedirectURI}} · {{.MetadataSource}}</div>
     </div>
     <div class="row">
-      <div class="row-label">继承当前账号权限</div>
+      <div class="row-label">授予的访问级别</div>
       <div class="resource">{{.PermissionLabel}}</div>
-      <p class="security-note">MCP 与当前账号使用同一套角色权限，不再单独限制读写或资源范围。账号角色变更会立即生效，无需重新授权。</p>
+      <p class="security-note">访问级别取客户端申请的范围与当前账号角色中较低的一方。账号降权会立即收窄；账号升权不会自动放大此授权，需要客户端重新申请。</p>
       <p class="security-note">所有写操作仍通过 Changeset、版本校验、风险审批和 Workflow 执行，不会绕过现有安全规则。</p>
     </div>
     {{if .OfflineAccess}}<div class="row">

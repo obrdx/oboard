@@ -1,9 +1,12 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/netip"
 	"strconv"
@@ -69,7 +72,7 @@ func (s *Server) mcpAuth(next http.Handler) http.Handler {
 				return
 			}
 		}
-		accessLevel := mcpAccessLevelForRole(effectiveRole)
+		accessLevel := mcpGrantAccessLevel(grant.AccessLevel, effectiveRole)
 		boundary := s.oauthRoleBoundary(effectiveRole)
 		grantPolicy := mcpauth.GrantPolicy{
 			GrantID: grant.ID, ClientID: grant.ClientID, UserID: strconv.FormatInt(grant.UserID, 10),
@@ -102,6 +105,12 @@ func (s *Server) mcpAuth(next http.Handler) http.Handler {
 				principal.Scopes = s.capabilities.ScopesForGrant(principal)
 			}
 		}
+		if accessLevel == mcpauth.AccessRead && mcpAccessLevelForRole(effectiveRole) == mcpauth.AccessOperate {
+			if tool, ok := s.mcpOperateOnlyToolCall(r, principal); ok {
+				s.writeMCPInsufficientScope(w, r, tool)
+				return
+			}
+		}
 		ctx := context.WithValue(r.Context(), apiPrincipalContextKey{}, principal)
 		ctx = context.WithValue(ctx, mcpGrantPrincipalContextKey{}, grantPrincipal)
 		ctx = context.WithValue(ctx, mcpTokenInfoContextKey{}, &auth.TokenInfo{
@@ -110,6 +119,73 @@ func (s *Server) mcpAuth(next http.Handler) http.Handler {
 		})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// mcpOperateOnlyToolCall reports a tools/call in the request body that the
+// read-scoped grant cannot use but the same user could after re-authorizing
+// with oboard:operate. The body is restored for the transport.
+func (s *Server) mcpOperateOnlyToolCall(r *http.Request, principal application.Principal) (string, bool) {
+	if r.Method != http.MethodPost || r.Body == nil {
+		return "", false
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, mcpMaxRequestBodyBytes+1))
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if err != nil || len(body) > mcpMaxRequestBodyBytes {
+		return "", false
+	}
+	type call struct {
+		Method string `json:"method"`
+		Params struct {
+			Name string `json:"name"`
+		} `json:"params"`
+	}
+	var calls []call
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		if json.Unmarshal(trimmed, &calls) != nil {
+			return "", false
+		}
+	} else {
+		var single call
+		if json.Unmarshal(trimmed, &single) != nil {
+			return "", false
+		}
+		calls = []call{single}
+	}
+	var allowed, operate map[string]bool
+	for _, item := range calls {
+		if item.Method != "tools/call" || item.Params.Name == "" {
+			continue
+		}
+		if allowed == nil {
+			allowed = s.mcpAllowedToolNames(principal)
+			elevated := principal
+			elevated.AccessLevel = mcpauth.AccessOperate
+			if principal.GrantPolicy != nil {
+				policy := *principal.GrantPolicy
+				policy.AccessLevel = mcpauth.AccessOperate
+				elevated.GrantPolicy = &policy
+			}
+			elevated.Scopes = s.capabilities.ScopesForGrant(elevated)
+			operate = s.mcpAllowedToolNames(elevated)
+		}
+		if !allowed[item.Params.Name] && operate[item.Params.Name] {
+			return item.Params.Name, true
+		}
+	}
+	return "", false
+}
+
+// writeMCPInsufficientScope asks the client to step up to oboard:operate
+// (MCP authorization, scope challenge handling).
+func (s *Server) writeMCPInsufficientScope(w http.ResponseWriter, r *http.Request, tool string) {
+	base, err := s.publicBaseURL(r.Context())
+	if err != nil {
+		v2Error(w, r, http.StatusServiceUnavailable, "oauth_metadata_unavailable", err.Error())
+		return
+	}
+	w.Header().Set("WWW-Authenticate", `Bearer error="insufficient_scope", scope=`+strconv.Quote(mcpChallengeScope)+`, resource_metadata=`+strconv.Quote(oauthProtectedResourceMetadataURL(base))+`, error_description=`+strconv.Quote("Tool "+tool+" requires oboard:operate"))
+	v2Error(w, r, http.StatusForbidden, "insufficient_scope", "当前授权为只读，调用 "+tool+" 需要重新授权 oboard:operate")
 }
 
 func grantApprovalMaxRisk(_ *model.OAuthGrant) int {

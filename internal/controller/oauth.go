@@ -223,7 +223,7 @@ func (s *Server) oauthGrants(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		items[index].EffectiveRole = role
-		items[index].AccessLevel = string(mcpAccessLevelForRole(role))
+		items[index].AccessLevel = string(mcpGrantAccessLevel(items[index].AccessLevel, role))
 		if boundary, marshalErr := json.Marshal(s.oauthRoleBoundary(role)); marshalErr == nil {
 			items[index].ResourceBoundaryJSON = boundary
 		}
@@ -678,8 +678,8 @@ func canonicalOAuthResource(raw string) string {
 }
 
 // normalizeRequestedScopes canonicalizes the client's coarse scope request.
-// operate implies read; the server never silently drops operate to read — it
-// fails the authorization instead.
+// operate implies read. A request above the user's role is narrowed to the
+// role, and the token response's scope reports what was actually granted.
 func normalizeRequestedScopes(requested []string) (mcpauth.AccessLevel, bool, error) {
 	operate := mcpauth.RequestsOperate(requested)
 	offline := mcpauth.RequestsOffline(requested)
@@ -706,7 +706,7 @@ func (s *Server) buildOAuthGrantMaterial(r *http.Request, user model.User, clien
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	accessLevel := mcpAccessLevelForRole(role)
+	accessLevel := mcpRequestedAccessLevel(scopes, role)
 	if accessLevel == "" {
 		return nil, nil, nil, nil, errors.New("the current role does not permit MCP access")
 	}
@@ -752,9 +752,8 @@ func (s *Server) buildOAuthGrantMaterial(r *http.Request, user model.User, clien
 	return grant, appPrincipal, profile, policies, nil
 }
 
-// createOAuthGrantV2 creates an OAuth identity whose business permissions are
-// inherited from the consenting user's current role. OAuth scopes only control
-// protocol features such as offline refresh; they never reduce or expand RBAC.
+// createOAuthGrantV2 creates an OAuth identity whose access is the requested
+// scope capped by the consenting user's role; RBAC still applies per call.
 func (s *Server) createOAuthGrantV2(r *http.Request, user model.User, client model.OAuthClient, scopes []string) (*model.OAuthGrant, *model.APIPrincipal, error) {
 	grant, principal, profile, policies, err := s.buildOAuthGrantMaterial(r, user, client, scopes)
 	if err != nil {
@@ -772,6 +771,29 @@ func mustEffectiveRole(ctx context.Context, db *store.Store, user model.User) mo
 		return user.Role
 	}
 	return role
+}
+
+// mcpGrantAccessLevel is the access a grant actually has: the level its OAuth
+// scope requested, capped by what the owning user's current role allows. A role
+// downgrade narrows it at once; a role upgrade never widens a read grant.
+func mcpGrantAccessLevel(grantLevel string, role model.Role) mcpauth.AccessLevel {
+	roleLevel := mcpAccessLevelForRole(role)
+	if roleLevel == "" {
+		return ""
+	}
+	if mcpauth.ParseAccessLevel(grantLevel) == mcpauth.AccessOperate && roleLevel == mcpauth.AccessOperate {
+		return mcpauth.AccessOperate
+	}
+	return mcpauth.AccessRead
+}
+
+// mcpRequestedAccessLevel caps the requested scope by the consenting role.
+func mcpRequestedAccessLevel(scopes []string, role model.Role) mcpauth.AccessLevel {
+	requested := mcpauth.AccessRead
+	if mcpauth.RequestsOperate(scopes) {
+		requested = mcpauth.AccessOperate
+	}
+	return mcpGrantAccessLevel(string(requested), role)
 }
 
 func mcpAccessLevelForRole(role model.Role) mcpauth.AccessLevel {
@@ -1080,7 +1102,7 @@ func (s *Server) issueOAuthTokens(w http.ResponseWriter, r *http.Request, issue 
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
-	scopes := mcpAccessLevelForRole(effectiveRole).NormalizedScopes(grant.OfflineAccess)
+	scopes := mcpGrantAccessLevel(grant.AccessLevel, effectiveRole).NormalizedScopes(grant.OfflineAccess)
 	response := map[string]any{"access_token": accessPlain, "token_type": "Bearer", "expires_in": int(oauthAccessTokenTTL.Seconds()), "scope": strings.Join(scopes, " "), "resource": resource}
 	if refreshPlain != "" {
 		response["refresh_token"] = refreshPlain

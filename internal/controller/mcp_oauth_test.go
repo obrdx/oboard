@@ -254,7 +254,7 @@ func TestMCPReadGrantDoesNotListOperateTools(t *testing.T) {
 	}
 }
 
-func TestMCPExistingReadGrantImmediatelyInheritsAdminRole(t *testing.T) {
+func TestMCPReadGrantStaysReadForAdmin(t *testing.T) {
 	_, _, session, _, closeServer := newMCPTestEnvironment(t, "legacy-read-admin", []string{"oboard:read"})
 	defer closeServer()
 
@@ -264,14 +264,42 @@ func TestMCPExistingReadGrantImmediatelyInheritsAdminRole(t *testing.T) {
 	}
 	for _, tool := range tools.Tools {
 		if tool.Name == "oboard_commit_task" {
-			return
+			t.Fatal("a read-scoped grant must not list operate tools even for an admin")
 		}
 	}
-	t.Fatal("existing persisted read grant did not inherit the admin user's operate permission")
+}
+
+func TestMCPReadTokenGetsInsufficientScopeForOperateTool(t *testing.T) {
+	db, server, handler, _ := newOAuthEndpointTestServer(t)
+	user, err := db.GetUserByUsername(context.Background(), "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := testOAuthClient(t, db, "oc_stepup", "Step-up client", []string{"https://client.example/callback"})
+	grant, principal := createTestGrant(t, server, *user, client, []string{"oboard:read"})
+	plain := "oba_step-up-token"
+	issueTestMCPToken(t, db, grant, principal, client, user.ID, "https://panel.example.com/api/v1/mcp", plain)
+	call := func(tool string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"`+tool+`","arguments":{}}}`))
+		req.Header.Set("Authorization", "Bearer "+plain)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(out, req)
+		return out
+	}
+	out := call("oboard_commit_task")
+	challenge := out.Header().Get("WWW-Authenticate")
+	if out.Code != http.StatusForbidden || !strings.Contains(challenge, `error="insufficient_scope"`) || !strings.Contains(challenge, `scope="oboard:read oboard:operate"`) {
+		t.Fatalf("operate tool with read token status=%d challenge=%q body=%s", out.Code, challenge, out.Body.String())
+	}
+	if out := call("oboard_task"); out.Code == http.StatusForbidden {
+		t.Fatalf("read tool was refused with 403: %s", out.Body.String())
+	}
 }
 
 func TestMCPRoleDowngradeTakesEffectWithoutReauthorization(t *testing.T) {
-	db, _, session, principal, closeServer := newMCPTestEnvironment(t, "operator", []string{"oboard:read"})
+	db, _, session, principal, closeServer := newMCPTestEnvironment(t, "operator", []string{"oboard:read", "oboard:operate"})
 	defer closeServer()
 
 	hasTool := func(name string) bool {
@@ -404,7 +432,7 @@ func TestMCPAuthRejectsApiKeyAndSessionAndWrongAudience(t *testing.T) {
 	}
 }
 
-func TestMCPAdminInheritsOperateWhenClientRequestsReadScope(t *testing.T) {
+func TestMCPAdminReadScopeStaysRead(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -423,14 +451,14 @@ func TestMCPAdminInheritsOperateWhenClientRequestsReadScope(t *testing.T) {
 	client := testOAuthClient(t, db, "oc_operate", "Operate client", []string{"https://client.example/callback"})
 
 	grant, principal := createTestGrant(t, server, *user, client, []string{"oboard:read", "offline_access"})
-	if grant.AccessLevel != "operate" {
-		t.Fatalf("grant access level = %q, want operate", grant.AccessLevel)
+	if grant.AccessLevel != "read" {
+		t.Fatalf("grant access level = %q, want read", grant.AccessLevel)
 	}
 	if !grant.OfflineAccess {
 		t.Fatal("grant did not record offline_access")
 	}
-	if !slices.Contains(principal.Scopes, "oboard:operate") {
-		t.Fatalf("principal scopes = %#v, want oboard:operate", principal.Scopes)
+	if slices.Contains(principal.Scopes, "oboard:operate") {
+		t.Fatalf("principal scopes = %#v, must not include oboard:operate", principal.Scopes)
 	}
 	var boundary mcpauth.ResourceBoundary
 	if err := json.Unmarshal(grant.ResourceBoundaryJSON, &boundary); err != nil {
@@ -458,7 +486,7 @@ func TestMCPAdminInheritsOperateWhenClientRequestsReadScope(t *testing.T) {
 		t.Fatalf("grant list data = %#v", listed["data"])
 	}
 	item, _ := items[0].(map[string]any)
-	if item["effective_role"] != "admin" || item["access_level"] != "operate" {
+	if item["effective_role"] != "admin" || item["access_level"] != "read" {
 		t.Fatalf("grant list did not project the current user role: %#v", item)
 	}
 
@@ -1062,7 +1090,7 @@ func TestOAuthAuthorizationCodePKCESingleUseAndCoarseScopes(t *testing.T) {
 		return out
 	}
 	first := exchange()
-	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), `"access_token":"oba_`) || !strings.Contains(first.Body.String(), `"refresh_token":"obr_`) || !strings.Contains(first.Body.String(), `"scope":"oboard:read oboard:operate offline_access"`) {
+	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), `"access_token":"oba_`) || !strings.Contains(first.Body.String(), `"refresh_token":"obr_`) || !strings.Contains(first.Body.String(), `"scope":"oboard:read offline_access"`) {
 		t.Fatalf("first exchange status=%d body=%s", first.Code, first.Body.String())
 	}
 	var firstTokens struct {
@@ -1085,7 +1113,7 @@ func TestOAuthAuthorizationCodePKCESingleUseAndCoarseScopes(t *testing.T) {
 	if err != nil || len(grants) != 1 {
 		t.Fatalf("grants=%#v err=%v", grants, err)
 	}
-	if grants[0].AccessLevel != "operate" || !grants[0].OfflineAccess || grants[0].ConsentVersion != 2 {
+	if grants[0].AccessLevel != "read" || !grants[0].OfflineAccess || grants[0].ConsentVersion != 2 {
 		t.Fatalf("grant v2 fields missing: %#v", grants[0])
 	}
 	audits, err := db.ListAuditPage(context.Background(), 100, 0, "")
@@ -1250,7 +1278,7 @@ func TestOAuthConsentPageRendersWithPreview(t *testing.T) {
 		t.Fatalf("consent status=%d body=%s", response.Code, response.Body.String())
 	}
 	body := response.Body.String()
-	for _, fragment := range []string{"继承当前账号权限", "继承管理员权限", "账号角色变更会立即生效", "Changeset", "Workflow", "实际能力预览", "servers.onboard"} {
+	for _, fragment := range []string{"授予的访问级别", "读写：可提交变更并执行工作流", "账号降权会立即收窄", "Changeset", "Workflow", "实际能力预览", "servers.onboard"} {
 		if !strings.Contains(body, fragment) {
 			t.Fatalf("consent page missing %q", fragment)
 		}

@@ -149,7 +149,7 @@ func (s *Server) mcpPrincipalFromRequest(ctx context.Context, req mcp.Request) (
 						if client != nil {
 							clientName = client.Name
 						}
-						accessLevel := mcpAccessLevelForRole(effectiveRole)
+						accessLevel := mcpGrantAccessLevel(grant.AccessLevel, effectiveRole)
 						boundary := s.oauthRoleBoundary(effectiveRole)
 						grantPolicy := mcpauth.GrantPolicy{
 							GrantID: grant.ID, ClientID: grant.ClientID, UserID: fmt.Sprint(grant.UserID),
@@ -219,7 +219,7 @@ func (s *Server) mcpGrantPrincipalFromRequest(ctx context.Context, req mcp.Reque
 						boundary := s.oauthRoleBoundary(effectiveRole)
 						grantPolicy := mcpauth.GrantPolicy{
 							GrantID: grant.ID, ClientID: grant.ClientID, UserID: fmt.Sprint(grant.UserID),
-							PrincipalID: grant.PrincipalID, AccessLevel: mcpAccessLevelForRole(effectiveRole),
+							PrincipalID: grant.PrincipalID, AccessLevel: mcpGrantAccessLevel(grant.AccessLevel, effectiveRole),
 							ResourceBoundary: boundary, ApprovalProfile: grant.ApprovalProfileID,
 							PolicyVersion: grant.PolicyVersion, RoleVersion: grant.RoleVersion,
 							ConsentVersion: grant.ConsentVersion, IssuedAt: grant.CreatedAt,

@@ -349,7 +349,7 @@ func (h *pluginHost) ResolveCaller(ctx context.Context, ref plugin.CallerRef) (a
 			}
 		}
 		boundary := s.oauthRoleBoundary(role)
-		policy := &mcpauth.GrantPolicy{GrantID: grant.ID, ClientID: grant.ClientID, UserID: strconv.FormatInt(grant.UserID, 10), PrincipalID: grant.PrincipalID, AccessLevel: mcpAccessLevelForRole(role), ResourceBoundary: boundary, ApprovalProfile: grant.ApprovalProfileID, ApprovalMaxRisk: grantApprovalMaxRisk(grant), OfflineAccess: grant.OfflineAccess, PolicyVersion: grant.PolicyVersion, RoleVersion: grant.RoleVersion, ConsentVersion: grant.ConsentVersion, IssuedAt: grant.CreatedAt, ExpiresAt: grant.ExpiresAt, RevokedAt: grant.RevokedAt}
+		policy := &mcpauth.GrantPolicy{GrantID: grant.ID, ClientID: grant.ClientID, UserID: strconv.FormatInt(grant.UserID, 10), PrincipalID: grant.PrincipalID, AccessLevel: mcpGrantAccessLevel(grant.AccessLevel, role), ResourceBoundary: boundary, ApprovalProfile: grant.ApprovalProfileID, ApprovalMaxRisk: grantApprovalMaxRisk(grant), OfflineAccess: grant.OfflineAccess, PolicyVersion: grant.PolicyVersion, RoleVersion: grant.RoleVersion, ConsentVersion: grant.ConsentVersion, IssuedAt: grant.CreatedAt, ExpiresAt: grant.ExpiresAt, RevokedAt: grant.RevokedAt}
 		caller := application.Principal{ID: grant.PrincipalID, GrantID: grant.ID, UserID: &grant.UserID, Type: model.APIPrincipalOAuth, Role: role, AccessLevel: policy.AccessLevel, GrantPolicy: policy, ResourceFilter: application.ResourceFilterFromBoundary(boundary), SourceIP: ip, ClientName: client.Name}
 		caller.Scopes = s.capabilities.ScopesForGrant(caller)
 		return caller, nil
