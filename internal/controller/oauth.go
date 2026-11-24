@@ -329,8 +329,8 @@ func (s *Server) writeMCPAuthenticationRequired(w http.ResponseWriter, r *http.R
 }
 
 // mcpChallengeScope is the scope set an unauthenticated MCP request is asked to
-// obtain. offline_access is deliberately absent: it is an authorization-server
-// scope the client requests on its own, not a resource requirement.
+// obtain. offline_access is deliberately absent: it is not a resource
+// requirement, and grants carry offline access without it.
 const mcpChallengeScope = mcpauth.ScopeRead + " " + mcpauth.ScopeOperate
 
 type oauthAuthorizationRequest struct {
@@ -478,8 +478,7 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		RedirectURI: request.RedirectURI, Resource: request.Resource, CodeChallenge: request.CodeChallenge,
 		Scopes: request.Scope, ExpiresAt: time.Now().UTC().Add(oauthAuthorizationCodeTTL),
 	}
-	_, offline, scopeErr := normalizeRequestedScopes(request.Scope)
-	if scopeErr != nil {
+	if _, scopeErr := normalizeRequestedScopes(request.Scope); scopeErr != nil {
 		s.auditOAuthEvent(r, &user.ID, "oauth_authorization_denied", "oauth_client", client.ID, map[string]any{"reason": "invalid_consent", "scopes": request.Scope})
 		oauthRedirectError(w, r, request, "invalid_scope", scopeErr.Error())
 		return
@@ -487,7 +486,7 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 	boundary := s.oauthRoleBoundary(mustEffectiveRole(r.Context(), s.store, *user))
 	grant, principal, err = s.store.AuthorizeOAuthClient(r.Context(), store.OAuthAuthorizeRequest{
 		ClientID: client.ID, UserID: user.ID, ResourceKey: model.OAuthResourceKeyMCP, ResourceURL: request.Resource,
-		RequestedScopes: request.Scope, RequestOffline: offline, AccessLevel: grant.AccessLevel,
+		RequestedScopes: request.Scope, RequestOffline: true, AccessLevel: grant.AccessLevel,
 		BoundaryJSON: grant.ResourceBoundaryJSON, PrincipalResourceFilter: application.ResourceFilterFromBoundary(boundary),
 		NewGrant: grant, NewPrincipal: principal, NewProfile: profile, NewPolicies: policies, Code: code,
 	})
@@ -680,28 +679,35 @@ func canonicalOAuthResource(raw string) string {
 // normalizeRequestedScopes canonicalizes the client's coarse scope request.
 // operate implies read. A request above the user's role is narrowed to the
 // role, and the token response's scope reports what was actually granted.
-func normalizeRequestedScopes(requested []string) (mcpauth.AccessLevel, bool, error) {
-	operate := mcpauth.RequestsOperate(requested)
-	offline := mcpauth.RequestsOffline(requested)
+// offline_access is accepted but not required: every authorization-code grant
+// carries offline access (see oauthGrantOfflineAccess).
+func normalizeRequestedScopes(requested []string) (mcpauth.AccessLevel, error) {
 	for _, scope := range requested {
 		if !mcpauth.KnownScope(scope) {
-			return "", false, errors.New("unsupported OAuth scope: " + scope)
+			return "", errors.New("unsupported OAuth scope: " + scope)
 		}
 	}
-	level := mcpauth.AccessRead
-	if operate {
-		level = mcpauth.AccessOperate
+	if mcpauth.RequestsOperate(requested) {
+		return mcpauth.AccessOperate, nil
 	}
-	return level, offline, nil
+	return mcpauth.AccessRead, nil
 }
+
+// oauthGrantOfflineAccess is the authorization server's refresh-token policy:
+// every authorization-code grant is issued a rotating refresh token whether or
+// not the client asked for offline_access (RFC 6749 §6 / OAuth 2.1 leave this to
+// the server). MCP clients such as ChatGPT request only the challenged scopes,
+// and without a refresh token their session ends when the 15-minute access
+// token expires. Rotation, reuse detection, and grant revocation bound the risk.
+const oauthGrantOfflineAccess = true
 
 // buildOAuthGrantMaterial prepares a new grant bundle for first-time authorization.
 // AuthorizeOAuthClient reuses an existing live grant instead of creating duplicates.
 func (s *Server) buildOAuthGrantMaterial(r *http.Request, user model.User, client model.OAuthClient, scopes []string) (*model.OAuthGrant, *model.APIPrincipal, *model.OAuthApprovalProfile, []model.ApprovalPolicy, error) {
-	_, offline, err := normalizeRequestedScopes(scopes)
-	if err != nil {
+	if _, err := normalizeRequestedScopes(scopes); err != nil {
 		return nil, nil, nil, nil, err
 	}
+	offline := oauthGrantOfflineAccess
 	role, err := s.store.EffectiveUserRole(r.Context(), user)
 	if err != nil {
 		return nil, nil, nil, nil, err
@@ -869,7 +875,7 @@ func (s *Server) oauthExchangeCode(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "authorization code is invalid")
 		return
 	}
-	s.issueOAuthTokens(w, r, oauthTokenIssue{flow: "authorization_code", grantID: code.GrantID, principalID: code.PrincipalID, clientID: code.ClientID, userID: code.UserID, resource: code.Resource, requestOffline: mcpauth.RequestsOffline(code.Scopes), codeHash: codeHash})
+	s.issueOAuthTokens(w, r, oauthTokenIssue{flow: "authorization_code", grantID: code.GrantID, principalID: code.PrincipalID, clientID: code.ClientID, userID: code.UserID, resource: code.Resource, codeHash: codeHash})
 }
 
 // oauthResourceMatches accepts an omitted resource parameter on the token
@@ -992,7 +998,7 @@ func (s *Server) oauthExchangeRefresh(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "refresh token is invalid")
 		return
 	}
-	s.issueOAuthTokens(w, r, oauthTokenIssue{flow: "refresh_token", grantID: refresh.GrantID, principalID: refresh.PrincipalID, clientID: refresh.ClientID, userID: refresh.UserID, resource: refresh.Resource, familyID: refresh.FamilyID, parentTokenHash: refresh.TokenHash, requestOffline: true})
+	s.issueOAuthTokens(w, r, oauthTokenIssue{flow: "refresh_token", grantID: refresh.GrantID, principalID: refresh.PrincipalID, clientID: refresh.ClientID, userID: refresh.UserID, resource: refresh.Resource, familyID: refresh.FamilyID, parentTokenHash: refresh.TokenHash})
 }
 
 // oauthReplayRefresh answers a refresh token that was already rotated inside the
@@ -1029,13 +1035,12 @@ type oauthTokenIssue struct {
 	flow, grantID, principalID, clientID string
 	userID                               int64
 	resource, familyID, parentTokenHash  string
-	requestOffline                       bool
 	codeHash                             string
 }
 
 func (s *Server) issueOAuthTokens(w http.ResponseWriter, r *http.Request, issue oauthTokenIssue) {
 	flow, grantID, principalID, clientID, userID := issue.flow, issue.grantID, issue.principalID, issue.clientID, issue.userID
-	resource, familyID, parentTokenHash, requestOffline := issue.resource, issue.familyID, issue.parentTokenHash, issue.requestOffline
+	resource, familyID, parentTokenHash := issue.resource, issue.familyID, issue.parentTokenHash
 	grant, err := s.store.GetOAuthGrant(r.Context(), grantID)
 	if err != nil || grant.RevokedAt != nil || grant.Status != model.OAuthGrantActive || grant.ExpiresAt != nil && !grant.ExpiresAt.After(time.Now().UTC()) || grant.PrincipalID != principalID || grant.ClientID != clientID || grant.UserID != userID {
 		s.auditOAuthEvent(r, &userID, "oauth_token_denied", "oauth_grant", grantID, map[string]any{"client_id": clientID, "flow": flow, "reason": "inactive_grant"})
@@ -1070,7 +1075,7 @@ func (s *Server) issueOAuthTokens(w http.ResponseWriter, r *http.Request, issue 
 	access := &model.OAuthToken{TokenHash: security.HashAPISecret(s.sessionSecret, accessPlain), GrantID: grantID, PrincipalID: principalID, ClientID: clientID, UserID: userID, Resource: resource, ExpiresAt: now.Add(oauthAccessTokenTTL)}
 	var refresh *model.OAuthToken
 	refreshPlain := ""
-	issueRefresh := grant.OfflineAccess && (flow == "refresh_token" || requestOffline)
+	issueRefresh := grant.OfflineAccess
 	if issueRefresh {
 		refreshRaw, randomErr := security.RandomToken(32)
 		if randomErr != nil {
@@ -1173,7 +1178,7 @@ func (s *Server) validateOAuthUserGrant(ctx context.Context, user *model.User, s
 	if err != nil {
 		return err
 	}
-	if _, _, err := normalizeRequestedScopes(scopes); err != nil {
+	if _, err := normalizeRequestedScopes(scopes); err != nil {
 		return err
 	}
 	if mcpAccessLevelForRole(role) == "" {

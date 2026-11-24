@@ -65,7 +65,6 @@ func (s *Server) renderOAuthConsent(w http.ResponseWriter, r *http.Request, requ
 		}
 		role = effective
 	}
-	_, offline, _ := normalizeRequestedScopes(request.Scope)
 	accessLevel := mcpRequestedAccessLevel(request.Scope, role)
 	if user != nil {
 		if err := s.validateOAuthUserGrant(r.Context(), user, request.Scope); err != nil {
@@ -87,7 +86,6 @@ func (s *Server) renderOAuthConsent(w http.ResponseWriter, r *http.Request, requ
 		MetadataSource:  s.clientMetadataSource(client),
 		Resource:        request.Resource,
 		PermissionLabel: permissionLabel,
-		OfflineAccess:   offline,
 		Username:        "",
 		Preview:         s.oauthConsentPreview(role, accessLevel),
 		Hidden:          []map[string]string{{"Key": "client_id", "Value": request.ClientID}, {"Key": "redirect_uri", "Value": request.RedirectURI}, {"Key": "response_type", "Value": "code"}, {"Key": "scope", "Value": strings.Join(request.Scope, " ")}, {"Key": "state", "Value": request.State}, {"Key": "resource", "Value": request.Resource}, {"Key": "code_challenge", "Value": request.CodeChallenge}, {"Key": "code_challenge_method", "Value": "S256"}},
@@ -167,10 +165,10 @@ button.ghost:hover{background:var(--primary-soft)}
       <p class="security-note">访问级别取客户端申请的范围与当前账号角色中较低的一方。账号降权会立即收窄；账号升权不会自动放大此授权，需要客户端重新申请。</p>
       <p class="security-note">所有写操作仍通过 Changeset、版本校验、风险审批和 Workflow 执行，不会绕过现有安全规则。</p>
     </div>
-    {{if .OfflineAccess}}<div class="row">
+    <div class="row">
       <div class="row-label">离线访问</div>
-      <p class="security-note">客户端申请了刷新令牌，可在你离线时续期访问；吊销此授权后会立即失效。</p>
-    </div>{{end}}
+      <p class="security-note">授权后客户端会获得刷新令牌，可在你离线时自动续期访问（每次续期都会更换令牌）；吊销此授权后会立即失效。</p>
+    </div>
     <div class="row">
       <div class="row-label">实际能力预览</div>
       <div class="preview">{{range .Preview}}<div class="preview-item"><div class="preview-main"><code class="preview-cap">{{.Capability}}</code><span class="preview-desc">{{.Description}}</span></div>{{if eq .Status "allowed"}}<span class="badge ok">可执行/可读</span>{{else if eq .Status "requires_approval"}}<span class="badge warn">需审批</span>{{else}}<span class="badge deny">{{.Reason}}</span>{{end}}</div>{{end}}</div>
@@ -212,7 +210,6 @@ type oauthConsentView struct {
 	MetadataSource  string
 	Resource        string
 	PermissionLabel string
-	OfflineAccess   bool
 	Username        string
 	Preview         []consentPreviewItem
 	Hidden          []map[string]string

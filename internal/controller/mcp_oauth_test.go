@@ -1006,7 +1006,7 @@ func TestOAuthGrantRevocationInvalidatesTokens(t *testing.T) {
 	}
 }
 
-func TestOAuthWithoutOfflineAccessDoesNotIssueRefreshToken(t *testing.T) {
+func TestOAuthWithoutOfflineAccessStillIssuesRefreshToken(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -1041,11 +1041,23 @@ func TestOAuthWithoutOfflineAccessDoesNotIssueRefreshToken(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := payload["refresh_token"]; ok {
-		t.Fatalf("online-only grant received refresh token: %s", response.Body.String())
+	refreshPlain, _ := payload["refresh_token"].(string)
+	if !strings.HasPrefix(refreshPlain, "obr_") {
+		t.Fatalf("grant without offline_access request received no refresh token: %s", response.Body.String())
 	}
 	if value, _ := payload["access_token"].(string); !strings.HasPrefix(value, "oba_") {
-		t.Fatalf("online-only grant did not receive an access token: %s", response.Body.String())
+		t.Fatalf("grant did not receive an access token: %s", response.Body.String())
+	}
+	if scope, _ := payload["scope"].(string); scope != "oboard:read offline_access" {
+		t.Fatalf("token scope = %q; want granted offline_access reported", scope)
+	}
+	refreshValues := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refreshPlain}, "client_id": {client.ID}, "resource": {"https://panel.example.com/api/v1/mcp"}}
+	refreshReq := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(refreshValues.Encode()))
+	refreshReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	refreshed := httptest.NewRecorder()
+	server.Handler().ServeHTTP(refreshed, refreshReq)
+	if refreshed.Code != http.StatusOK || !strings.Contains(refreshed.Body.String(), `"refresh_token":"obr_`) {
+		t.Fatalf("refresh without offline_access request failed: status=%d body=%s", refreshed.Code, refreshed.Body.String())
 	}
 }
 
@@ -1352,7 +1364,7 @@ func TestOAuthGrantReuseKeepsSingleLiveGrant(t *testing.T) {
 	}
 }
 
-func TestOAuthReauthorizeWithoutOfflineDoesNotIssueRefresh(t *testing.T) {
+func TestOAuthReauthorizeWithoutOfflineStillIssuesRefresh(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -1400,8 +1412,8 @@ func TestOAuthReauthorizeWithoutOfflineDoesNotIssueRefresh(t *testing.T) {
 	_ = json.Unmarshal(first.Body.Bytes(), &firstPayload)
 	refreshPlain, _ := firstPayload["refresh_token"].(string)
 	second := exchange(authorize("oboard:read"))
-	if second.Code != http.StatusOK || strings.Contains(second.Body.String(), `"refresh_token"`) {
-		t.Fatalf("online-only reauthorize should not return refresh token: %s", second.Body.String())
+	if second.Code != http.StatusOK || !strings.Contains(second.Body.String(), `"refresh_token":"obr_`) {
+		t.Fatalf("reauthorize without offline_access should still return a refresh token: %s", second.Body.String())
 	}
 	values := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refreshPlain}, "client_id": {client.ID}, "resource": {"https://panel.example.com/api/v1/mcp"}}
 	req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(values.Encode()))
