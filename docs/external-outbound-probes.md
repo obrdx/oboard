@@ -1,7 +1,15 @@
 # Third-party node checks
 
 `POST /api/v1/external-outbounds/{id}/check` and MCP `external_outbounds.check`
-execute on the Controller host. No Agent, deployed path or `server_id` is required.
+execute on the Controller host first. No deployed path or `server_id` is required.
+When the Controller cannot get an exit IP (many proxies accept only the servers'
+addresses), the same rendered outbound is re-checked once by the Agent of the
+first online server, ordered by ID, that reports Agent `external_outbound_check_v1`
+and kernel `external_outbound_probe_v1`: a server-scoped node uses only its own
+server, and MCP callers only servers inside their `server_ids` boundary. A server
+busy with another network diagnostic is skipped. The Controller waits up to 30
+seconds for the callback, and the result carries `server_id` / `server_name` for
+the server that ran it.
 The Controller renders one outbound and invokes its bundled signed-release kernel
 resource `downloads/oboard-sb-<os>-<arch> -check-outbound`. Controller never imports
 or links sing-box. Linux amd64/arm64 packages and the updater preserve executable
@@ -33,5 +41,5 @@ Existing and newly created paths reuse the node result; deployment does not prob
 each path. Explicit deployed-path `/probe-egress` diagnostics remain separate.
 
 The Agent's signed `probe_external_egress` standalone form and Unix-only kernel
-`/outbounds/check` endpoint retain their bounded validation contract; the node
-management check no longer dispatches that Agent task.
+`/outbounds/check` endpoint keep their bounded validation contract and are used
+only for that fallback; the Agent result replaces the stored Controller failure.

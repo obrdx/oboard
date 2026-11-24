@@ -10,6 +10,8 @@ import type { ExternalOutbound, Server } from './types'
 export type ExternalOutboundCheck = {
   external_outbound_id: number
   status: 'reachable' | 'unreachable' | 'failed' | 'skipped'
+  server_id?: number
+  server_name?: string
   target: string
   exit_ip?: string
   region_code?: string
@@ -126,7 +128,7 @@ export function thirdPartyFormIssue(draft: ThirdPartyNodeDraft): string {
 
 function checkText(check: ExternalOutboundCheck) {
   switch (check.status) {
-    case 'reachable': return `可用 · ${Math.round(check.connect_ms || 0)} ms`
+    case 'reachable': return `可用${check.server_name ? `（经 ${check.server_name}）` : ''} · ${Math.round(check.connect_ms || 0)} ms`
     case 'unreachable': return `不可达 · ${check.error || '连接失败'}`
     case 'skipped': return '仅服务器可达 · 主控不检测，部署后由路径探测出口'
     default: return check.error ? `检测失败 · ${check.error}` : '检测失败'
@@ -136,7 +138,8 @@ function checkText(check: ExternalOutboundCheck) {
 function CheckBadge({ check, busy }: { check?: ExternalOutboundCheck; busy: boolean }) {
   if (busy) return <span className="third-party-check is-busy">检测中…</span>
   if (!check) return null
-  const title = ['检测位置：主控', check.exit_ip ? `实际出口 IP：${check.exit_ip}` : '', checkText(check)].filter(Boolean).join('\n')
+  const where = check.server_name ? `检测位置：主控失败后由服务器 ${check.server_name} 复检` : '检测位置：主控'
+  const title = [where, check.exit_ip ? `实际出口 IP：${check.exit_ip}` : '', checkText(check)].filter(Boolean).join('\n')
   const regionText = check.region_code ? `出口 ${check.region_code}` : check.status === 'reachable' ? '出口地区未识别' : ''
   return <span className={`third-party-check is-${check.status}`} title={title || undefined}>{checkText(check)}{regionText && ` · ${regionText}`}</span>
 }

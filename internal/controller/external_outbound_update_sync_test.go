@@ -157,7 +157,7 @@ func TestControllerExternalCheckDoesNotRequireOnlineAgent(t *testing.T) {
 	if err := f.db.UpdateServer(context.Background(), f.server); err != nil {
 		t.Fatal(err)
 	}
-	result, status, err := f.srv.checkExternalOutbound(context.Background(), *f.external)
+	result, status, err := f.srv.checkExternalOutbound(context.Background(), *f.external, nil)
 	if err != nil || status != 200 || result.Status != "reachable" {
 		t.Fatalf("%#v %d %v", result, status, err)
 	}

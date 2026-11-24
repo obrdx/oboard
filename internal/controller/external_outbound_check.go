@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -13,12 +14,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
+	"github.com/OboardProject/oboard/internal/store"
 )
 
 var errControllerProbeUnavailable = errors.New("controller probe executable unavailable")
@@ -26,6 +30,8 @@ var errControllerProbeUnavailable = errors.New("controller probe executable unav
 type externalOutboundCheck struct {
 	ExternalOutboundID int64     `json:"external_outbound_id"`
 	Status             string    `json:"status"`
+	ServerID           int64     `json:"server_id,omitempty"`
+	ServerName         string    `json:"server_name,omitempty"`
 	Target             string    `json:"target"`
 	ExitIP             string    `json:"exit_ip,omitempty"`
 	RegionCode         string    `json:"region_code,omitempty"`
@@ -59,7 +65,7 @@ func (s *Server) checkExternalOutboundHTTP(w http.ResponseWriter, r *http.Reques
 		fail(w, err, http.StatusNotFound)
 		return
 	}
-	result, status, err := s.checkExternalOutbound(r.Context(), *external)
+	result, status, err := s.checkExternalOutbound(r.Context(), *external, nil)
 	if err != nil {
 		fail(w, err, status)
 		return
@@ -68,7 +74,12 @@ func (s *Server) checkExternalOutboundHTTP(w http.ResponseWriter, r *http.Reques
 	write(w, http.StatusOK, map[string]any{"check": result})
 }
 
-func (s *Server) checkExternalOutbound(ctx context.Context, external model.ExternalOutbound) (externalOutboundCheck, int, error) {
+// checkExternalOutbound probes a third-party node from the Controller first.
+// When that fails, the probe is repeated by the Agent of an online server
+// (the node's own server for a server-scoped node): many proxies only accept
+// the servers' addresses, so a Controller failure alone is not conclusive.
+// allow restricts which servers may run the fallback; nil allows all.
+func (s *Server) checkExternalOutbound(ctx context.Context, external model.ExternalOutbound, allow func(int64) bool) (externalOutboundCheck, int, error) {
 	result := externalOutboundCheck{ExternalOutboundID: external.ID, Target: net.JoinHostPort(strings.Trim(external.TargetAddress, "[]"), strconv.Itoa(external.TargetPort)), CheckedAt: time.Now().UTC(), Status: "failed"}
 	if !s.externalCheckMu.TryLock() {
 		return result, http.StatusConflict, errors.New("主控正在检测第三方节点，请稍后再试")
@@ -125,7 +136,138 @@ func (s *Server) checkExternalOutbound(ctx context.Context, external model.Exter
 	if err := s.store.CompleteExternalOutboundProbe(saveCtx, external.ID, fingerprint, 0, result.RegionStatus, result.ExitIP, result.RegionCode, result.Error); err != nil {
 		return result, 500, err
 	}
-	return result, http.StatusOK, nil
+	if result.Status == "reachable" {
+		return result, http.StatusOK, nil
+	}
+	controllerError := result.Error
+	agentResult, err := s.checkExternalOutboundViaAgent(ctx, external, fingerprint, outbound, allow)
+	if err != nil {
+		result.Error = controllerError + "；" + err.Error()
+		return result, http.StatusOK, nil
+	}
+	return agentResult, http.StatusOK, nil
+}
+
+const externalOutboundCheckWait = 30 * time.Second
+
+// checkExternalOutboundViaAgent runs the signed standalone probe on the first
+// ready server and waits for its callback. The error explains why no server
+// could run it; a probe that ran and failed is reported in the result.
+func (s *Server) checkExternalOutboundViaAgent(ctx context.Context, external model.ExternalOutbound, fingerprint string, outbound json.RawMessage, allow func(int64) bool) (externalOutboundCheck, error) {
+	result := externalOutboundCheck{ExternalOutboundID: external.ID, Target: net.JoinHostPort(strings.Trim(external.TargetAddress, "[]"), strconv.Itoa(external.TargetPort)), CheckedAt: time.Now().UTC(), Status: "unreachable", RegionStatus: "failed"}
+	servers, err := s.externalOutboundCheckServers(ctx, external, allow)
+	if err != nil {
+		return result, err
+	}
+	plan := model.ExternalEgressProbePlan{TimeoutMS: 10000, Standalone: &model.ExternalOutboundProbe{ExternalOutboundID: external.ID, Fingerprint: fingerprint, Outbound: outbound}}
+	raw, _ := json.Marshal(plan)
+	var task model.AgentTask
+	var server model.Server
+	busy := false
+	for _, candidate := range servers {
+		nonce, err := security.RandomToken(12)
+		if err != nil {
+			return result, err
+		}
+		task = model.AgentTask{ServerID: candidate.ID, Type: model.AgentTaskTypeProbeExternalEgress, PayloadJSON: string(raw), Status: "pending", ResultJSON: "{}", Nonce: nonce}
+		if err := s.store.CreateExternalOutboundCheckTask(ctx, candidate, &task); err != nil {
+			if errors.Is(err, store.ErrNetworkDiagnosticBusy) {
+				busy = true
+				continue
+			}
+			return result, err
+		}
+		server = candidate
+		break
+	}
+	if task.ID == 0 {
+		if busy {
+			return result, errors.New("可用服务器正在执行其他网络诊断，请稍后重试")
+		}
+		return result, errors.New("没有可用于检测的在线服务器")
+	}
+	result.ServerID, result.ServerName = server.ID, server.Name
+	if s.tasks != nil {
+		s.tasks.wake(server.ID)
+	}
+	started := time.Now()
+	waitCtx, cancel := context.WithTimeout(ctx, externalOutboundCheckWait)
+	defer cancel()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		current, err := s.store.GetTask(waitCtx, task.ID)
+		if err == nil && (current.Status == "succeeded" || current.Status == "failed" || current.Status == "superseded" || current.Status == "rollback_failed") {
+			latest, err := s.store.GetExternalOutbound(ctx, external.ID)
+			if err != nil || core.ExternalOutboundFingerprint(*latest) != fingerprint {
+				result.Status, result.Error = "failed", "检测期间节点配置已修改，请重新检测"
+				return result, nil
+			}
+			if latest.ProbeTaskID == task.ID && latest.ProbeStatus != "pending" {
+				result.ExitIP, result.RegionCode, result.RegionStatus, result.Error = latest.ProbeExitIP, latest.ProbeRegionCode, latest.ProbeStatus, latest.ProbeError
+				if latest.ProbeExitIP != "" && current.Status == "succeeded" {
+					result.Status = "reachable"
+				} else {
+					result.Error = fmt.Sprintf("主控和服务器 %s 均未能通过代理获取出口 IP，请检查节点地址、凭证和 TLS 设置", server.Name)
+				}
+				result.ConnectMS = float64(time.Since(started).Milliseconds())
+				result.CheckedAt = time.Now().UTC()
+				return result, nil
+			}
+		}
+		select {
+		case <-waitCtx.Done():
+			result.Error = fmt.Sprintf("服务器 %s 未在 %d 秒内返回检测结果", server.Name, int(externalOutboundCheckWait/time.Second))
+			cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			defer stop()
+			_ = s.store.SupersedePendingTask(cleanup, task.ID, "节点检测已超时")
+			_ = s.store.CompleteExternalOutboundProbe(cleanup, external.ID, fingerprint, task.ID, "failed", "", "", result.Error)
+			result.CheckedAt = time.Now().UTC()
+			return result, nil
+		case <-ticker.C:
+		}
+	}
+}
+
+// externalOutboundCheckServers lists the online servers whose Agent and kernel
+// support the standalone probe, ordered by ID.
+func (s *Server) externalOutboundCheckServers(ctx context.Context, external model.ExternalOutbound, allow func(int64) bool) ([]model.Server, error) {
+	servers, err := s.store.ListServers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(servers, func(i, j int) bool { return servers[i].ID < servers[j].ID })
+	var ready []model.Server
+	var firstErr error
+	for _, server := range servers {
+		if external.ServerID != nil && *external.ServerID != 0 && *external.ServerID != server.ID || allow != nil && !allow(server.ID) {
+			continue
+		}
+		if err := externalOutboundCheckServerReady(server); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		ready = append(ready, server)
+	}
+	if len(ready) == 0 {
+		if firstErr != nil {
+			return nil, firstErr
+		}
+		return nil, errors.New("没有可用于检测的授权服务器")
+	}
+	return ready, nil
+}
+
+func externalOutboundCheckServerReady(server model.Server) error {
+	if reason := agentTaskImmediateFailure(&server); reason != "" {
+		return fmt.Errorf("服务器 %s：%s", server.Name, reason)
+	}
+	if !serverSupportsCapability(server, "external_outbound_probe_v1") || !serverSupportsCapability(server, "external_outbound_check_v1") {
+		return fmt.Errorf("服务器 %s 的 Agent/内核不支持独立代理出口检测，请先更新", server.Name)
+	}
+	return nil
 }
 
 const externalOutboundServerLocalMessage = "本机或内网地址只能从服务器访问，主控不检测；加入代理路径并部署后由路径出口探测确定地区"

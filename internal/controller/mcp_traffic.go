@@ -829,7 +829,7 @@ func (s *Server) registerExternalOutboundCheck() {
 		if err != nil {
 			return nil, err
 		}
-		result, _, err := s.checkExternalOutbound(ctx, *current)
+		result, _, err := s.checkExternalOutbound(ctx, *current, func(id int64) bool { return principal.AllowsInt64("server_ids", id) })
 		if err != nil {
 			return nil, err
 		}
