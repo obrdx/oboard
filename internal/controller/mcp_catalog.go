@@ -87,10 +87,24 @@ var (
 	mcpHandlers    = map[*Server]http.Handler{}
 )
 
+// mcpModernProtocolVersion is the first MCP revision (SEP-2575) that drops the
+// initialize handshake and sessions. go-sdk serves it only from a stateless
+// Streamable HTTP transport.
+const mcpModernProtocolVersion = "2026-07-28"
+
+// mcpModernProtocolRequest reports whether a request speaks the session-less
+// protocol. SEP-2575 requires every such request to carry the version in the
+// Mcp-Protocol-Version header, so the header alone selects the transport.
+func mcpModernProtocolRequest(req *http.Request) bool {
+	return req.Header.Get("Mcp-Protocol-Version") >= mcpModernProtocolVersion
+}
+
 // newMCPHandler builds the /api/v1/mcp HTTP handler with explicit
-// tools/resources/prompts listChanged capabilities. POST, GET, and DELETE all
-// enter the same stateful Streamable HTTP transport so one MCP session owns its
-// initialize request, event stream, and teardown.
+// tools/resources/prompts listChanged capabilities. Requests for the
+// session-less 2026-07-28 protocol go to a stateless Streamable HTTP transport;
+// every older protocol keeps the stateful transport, where POST, GET, and
+// DELETE share one MCP session that owns its initialize request, event stream,
+// and teardown. Both transports serve the same singleton server.
 func (s *Server) newMCPHandler() http.Handler {
 	mcpSingletonMu.Lock()
 	defer mcpSingletonMu.Unlock()
@@ -98,14 +112,24 @@ func (s *Server) newMCPHandler() http.Handler {
 		return h
 	}
 	server := s.mcpSingletonServerLocked()
-	handler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
-		return server
-	}, &mcp.StreamableHTTPOptions{
-		Stateless:                    false,
-		JSONResponse:                 true,
-		DisableLocalhostProtection:   true,
-		MaxRequestBodyBytes:          mcpMaxRequestBodyBytes,
-		PropagateRequestCancellation: true,
+	getServer := func(*http.Request) *mcp.Server { return server }
+	options := func(stateless bool) *mcp.StreamableHTTPOptions {
+		return &mcp.StreamableHTTPOptions{
+			Stateless:                    stateless,
+			JSONResponse:                 true,
+			DisableLocalhostProtection:   true,
+			MaxRequestBodyBytes:          mcpMaxRequestBodyBytes,
+			PropagateRequestCancellation: true,
+		}
+	}
+	stateful := mcp.NewStreamableHTTPHandler(getServer, options(false))
+	stateless := mcp.NewStreamableHTTPHandler(getServer, options(true))
+	handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if mcpModernProtocolRequest(req) {
+			stateless.ServeHTTP(w, req)
+			return
+		}
+		stateful.ServeHTTP(w, req)
 	})
 	// The SDK binds each Mcp-Session-Id to TokenInfo.UserID so a session cannot
 	// be continued with another user's token. mcpAuth has already verified the
