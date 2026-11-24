@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { externalProtocolChainOnly, externalProtocolLabel, newThirdPartyNodeDraft, thirdPartyFormIssue, thirdPartyFormPayload } from './ThirdPartyNodes'
+import { describeImportContent, externalProtocolChainOnly, externalProtocolLabel, newThirdPartyNodeDraft, thirdPartyFormIssue, thirdPartyFormPayload } from './ThirdPartyNodes'
 
 describe('third-party node form', () => {
   it('maps HTTPS to an http outbound with TLS and never exposes it to subscriptions', () => {
@@ -35,5 +35,13 @@ describe('third-party node form', () => {
     expect(JSON.parse(payload.config_json)).toEqual({ private_key: key, address: ['172.16.0.2/32', 'fd00::2/128'], peer_public_key: key, reserved: [1, 2, 3], mtu: 1280 })
     expect(externalProtocolChainOnly('wireguard')).toBe(true)
     expect(externalProtocolLabel({ protocol: 'wireguard', config_json: '{}' })).toBe('WireGuard')
+  })
+
+  it('describes pasted import content before it is submitted', () => {
+    expect(describeImportContent('')).toEqual({ summary: '', unknown: 0 })
+    expect(describeImportContent('socks5://u:p@a:1\nss://x@b:2\nss://y@c:3\n# note\nhello').summary).toBe('识别到 3 个节点：SOCKS5、Shadowsocks ×2')
+    expect(describeImportContent('socks5://u:p@a:1\nhello').unknown).toBe(1)
+    expect(describeImportContent('# provider\n[Interface]\nPrivateKey = x').summary).toContain('WireGuard 配置文件')
+    expect(describeImportContent('{"type":"vless"}').summary).toContain('JSON')
   })
 })
