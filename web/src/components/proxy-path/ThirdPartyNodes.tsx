@@ -23,7 +23,12 @@ export type ExternalOutboundCheck = {
 
 type RequestFn = (path: string, init?: RequestInit) => Promise<unknown>
 
-export type ThirdPartyFormProtocol = 'socks' | 'http' | 'https' | 'shadowsocks'
+export type ThirdPartyFormProtocol = 'socks' | 'http' | 'https' | 'shadowsocks' | 'wireguard'
+
+// Protocols that are only proxy-path exits and never reach a user subscription.
+export function externalProtocolChainOnly(protocol: string) {
+  return protocol === 'http' || protocol === 'https' || protocol === 'wireguard'
+}
 
 export type ThirdPartyNodeDraft = {
   mode: 'form' | 'link'
@@ -40,12 +45,18 @@ export type ThirdPartyNodeDraft = {
   method: string
   server_name: string
   insecure: boolean
+  private_key: string
+  wg_address: string
+  public_key: string
+  pre_shared_key: string
+  reserved: string
+  mtu: number | undefined
 }
 
 export const SHADOWSOCKS_METHODS = ['2022-blake3-aes-128-gcm', '2022-blake3-aes-256-gcm', '2022-blake3-chacha20-poly1305', 'aes-128-gcm', 'aes-256-gcm', 'chacha20-ietf-poly1305']
 
 export function newThirdPartyNodeDraft(serverID: number): ThirdPartyNodeDraft {
-  return { mode: 'form', scope: 'global', server_id: serverID, expose_to_users: false, content: '', name: '', protocol: 'socks', address: '', port: 1080, username: '', password: '', method: '2022-blake3-aes-128-gcm', server_name: '', insecure: false }
+  return { mode: 'form', scope: 'global', server_id: serverID, expose_to_users: false, content: '', name: '', protocol: 'socks', address: '', port: 1080, username: '', password: '', method: '2022-blake3-aes-128-gcm', server_name: '', insecure: false, private_key: '', wg_address: '', public_key: '', pre_shared_key: '', reserved: '', mtu: undefined }
 }
 
 export function externalOutboundIsHTTPS(node: Pick<ExternalOutbound, 'protocol' | 'config_json'>) {
@@ -68,6 +79,7 @@ export function externalProtocolLabel(node: Pick<ExternalOutbound, 'protocol' | 
     case 'vless': return 'VLESS'
     case 'socks': return 'SOCKS'
     case 'snell': return 'Snell'
+    case 'wireguard': return 'WireGuard'
     default: return String(node.protocol)
   }
 }
@@ -85,6 +97,14 @@ export function thirdPartyFormPayload(draft: ThirdPartyNodeDraft) {
   if (draft.protocol === 'shadowsocks') {
     config.method = draft.method
     config.password = draft.password
+  } else if (draft.protocol === 'wireguard') {
+    config.private_key = draft.private_key.trim()
+    config.address = splitList(draft.wg_address)
+    config.peer_public_key = draft.public_key.trim()
+    if (draft.pre_shared_key.trim()) config.pre_shared_key = draft.pre_shared_key.trim()
+    const reserved = splitList(draft.reserved).map(Number)
+    if (reserved.length) config.reserved = reserved
+    if (draft.mtu) config.mtu = draft.mtu
   } else {
     if (draft.username.trim()) config.username = draft.username.trim()
     if (draft.password) config.password = draft.password
@@ -101,8 +121,9 @@ export function thirdPartyFormPayload(draft: ThirdPartyNodeDraft) {
   }
   const address = draft.address.trim()
   const port = draft.port || 0
+  const label = draft.protocol === 'wireguard' ? 'WireGuard' : draft.protocol.toUpperCase()
   return {
-    name: draft.name.trim() || `${draft.protocol.toUpperCase()} ${address}`,
+    name: draft.name.trim() || `${label} ${address}`,
     protocol,
     scope: draft.scope,
     server_id: draft.scope === 'server' && draft.server_id ? draft.server_id : undefined,
@@ -111,7 +132,7 @@ export function thirdPartyFormPayload(draft: ThirdPartyNodeDraft) {
     config_json: JSON.stringify(config),
     region_mode: 'auto',
     region_code: '',
-    expose_to_users: protocol === 'http' ? false : draft.expose_to_users,
+    expose_to_users: externalProtocolChainOnly(protocol) ? false : draft.expose_to_users,
     enabled: true,
   }
 }
@@ -122,8 +143,24 @@ export function thirdPartyFormIssue(draft: ThirdPartyNodeDraft): string {
   if (!draft.address.trim()) return '请填写节点地址'
   if (!draft.port || draft.port < 1 || draft.port > 65535) return '端口需在 1-65535 之间'
   if (draft.protocol === 'shadowsocks' && !draft.password) return 'Shadowsocks 需要密码'
+  if (draft.protocol === 'wireguard') {
+    if (!WIREGUARD_KEY.test(draft.private_key.trim())) return '请填写 Base64 格式的本地私钥'
+    if (!WIREGUARD_KEY.test(draft.public_key.trim())) return '请填写 Base64 格式的对端公钥'
+    if (draft.pre_shared_key.trim() && !WIREGUARD_KEY.test(draft.pre_shared_key.trim())) return '预共享密钥格式无效'
+    if (!splitList(draft.wg_address).length) return '请填写隧道本地地址'
+    const reserved = splitList(draft.reserved)
+    if (reserved.length && (reserved.length !== 3 || reserved.some(item => !/^\d{1,3}$/.test(item) || Number(item) > 255))) return 'Reserved 需为 3 个 0-255 的整数'
+    if (draft.mtu && (draft.mtu < 576 || draft.mtu > 9000)) return 'MTU 需在 576-9000 之间'
+    return ''
+  }
   if (draft.username.includes(':')) return '用户名不能包含冒号'
   return ''
+}
+
+const WIREGUARD_KEY = /^[A-Za-z0-9+/]{43}=$/
+
+function splitList(value: string) {
+  return value.split(',').map(item => item.trim()).filter(Boolean)
 }
 
 function checkText(check: ExternalOutboundCheck) {
@@ -240,11 +277,11 @@ export function AddThirdPartyNodeDialog({ draft, setDraft, servers, submitting, 
 }) {
   const update = (patch: Partial<ThirdPartyNodeDraft>) => setDraft(old => old ? { ...old, ...patch } : old)
   const issue = thirdPartyFormIssue(draft)
-  const isHTTP = draft.mode === 'form' && (draft.protocol === 'http' || draft.protocol === 'https')
+  const chainOnly = draft.mode === 'form' && externalProtocolChainOnly(draft.protocol)
   const changeProtocol = (protocol: ThirdPartyFormProtocol) => {
-    const defaults: Record<ThirdPartyFormProtocol, number> = { socks: 1080, http: 8080, https: 443, shadowsocks: 8388 }
+    const defaults: Record<ThirdPartyFormProtocol, number> = { socks: 1080, http: 8080, https: 443, shadowsocks: 8388, wireguard: 51820 }
     const knownDefault = Object.values(defaults).includes(draft.port || 0)
-    update({ protocol, port: !draft.port || knownDefault ? defaults[protocol] : draft.port, expose_to_users: protocol === 'http' || protocol === 'https' ? false : draft.expose_to_users })
+    update({ protocol, port: !draft.port || knownDefault ? defaults[protocol] : draft.port, expose_to_users: externalProtocolChainOnly(protocol) ? false : draft.expose_to_users })
   }
   return <MotionDialogPanel onCancel={onCancel} className="graph-form-dialog" aria-labelledby="add-third-party-title">
     <header className="dialog-head">
@@ -255,7 +292,7 @@ export function AddThirdPartyNodeDialog({ draft, setDraft, servers, submitting, 
       <div className="form graph-dialog-form">
         <FormField label="添加方式"><Select variant="segmented" value={draft.mode} onChange={e => update({ mode: e.target.value as ThirdPartyNodeDraft['mode'] })} aria-label="添加方式"><option value="form">表单填写</option><option value="link">链接导入</option></Select></FormField>
         {draft.mode === 'form' ? <>
-          <FormField label="协议"><Select value={draft.protocol} onChange={e => changeProtocol(e.target.value as ThirdPartyFormProtocol)} aria-label="协议"><option value="socks">SOCKS5</option><option value="http">HTTP</option><option value="https">HTTPS</option><option value="shadowsocks">Shadowsocks</option></Select></FormField>
+          <FormField label="协议"><Select value={draft.protocol} onChange={e => changeProtocol(e.target.value as ThirdPartyFormProtocol)} aria-label="协议"><option value="socks">SOCKS5</option><option value="http">HTTP</option><option value="https">HTTPS</option><option value="shadowsocks">Shadowsocks</option><option value="wireguard">WireGuard</option></Select></FormField>
           <FormField label="名称" hint="留空时按协议和地址命名。"><input value={draft.name} onChange={e => update({ name: e.target.value })} placeholder="例如 香港 HTTP" maxLength={128} /></FormField>
           <div className="third-party-address-row">
             <FormField label="地址" required><input value={draft.address} onChange={e => update({ address: e.target.value })} placeholder="proxy.example.com" autoComplete="off" spellCheck={false} /></FormField>
@@ -264,6 +301,15 @@ export function AddThirdPartyNodeDialog({ draft, setDraft, servers, submitting, 
           {draft.protocol === 'shadowsocks' ? <>
             <FormField label="加密方式"><Select value={draft.method} onChange={e => update({ method: e.target.value })} aria-label="加密方式">{SHADOWSOCKS_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</Select></FormField>
             <FormField label="密码" required><input value={draft.password} onChange={e => update({ password: e.target.value })} autoComplete="off" spellCheck={false} /></FormField>
+          </> : draft.protocol === 'wireguard' ? <>
+            <FormField label="本地私钥" required hint="对应配置文件 [Interface] 的 PrivateKey。"><input value={draft.private_key} onChange={e => update({ private_key: e.target.value })} autoComplete="off" spellCheck={false} /></FormField>
+            <FormField label="隧道本地地址" required hint="对应 Address，多个用逗号分隔。"><input value={draft.wg_address} onChange={e => update({ wg_address: e.target.value })} placeholder="172.16.0.2/32, fd00::2/128" autoComplete="off" spellCheck={false} /></FormField>
+            <FormField label="对端公钥" required hint="对应 [Peer] 的 PublicKey。"><input value={draft.public_key} onChange={e => update({ public_key: e.target.value })} autoComplete="off" spellCheck={false} /></FormField>
+            <FormField label="预共享密钥" hint="没有 PresharedKey 时留空。"><input value={draft.pre_shared_key} onChange={e => update({ pre_shared_key: e.target.value })} autoComplete="off" spellCheck={false} /></FormField>
+            <div className="third-party-address-row">
+              <FormField label="Reserved" hint="可选，例如 1,2,3。"><input value={draft.reserved} onChange={e => update({ reserved: e.target.value })} autoComplete="off" spellCheck={false} /></FormField>
+              <FormField label="MTU" hint="留空为 1408。"><NumericInput value={draft.mtu} onValueChange={mtu => update({ mtu })} max={9000} aria-label="MTU" /></FormField>
+            </div>
           </> : <>
             <FormField label="用户名" hint="无认证时留空。"><input value={draft.username} onChange={e => update({ username: e.target.value })} autoComplete="off" spellCheck={false} /></FormField>
             <FormField label="密码"><input value={draft.password} onChange={e => update({ password: e.target.value })} autoComplete="off" spellCheck={false} /></FormField>
@@ -272,12 +318,12 @@ export function AddThirdPartyNodeDialog({ draft, setDraft, servers, submitting, 
             <FormField label="TLS 服务器名称（SNI）" hint="留空时使用节点域名。"><input value={draft.server_name} onChange={e => update({ server_name: e.target.value })} placeholder={draft.address || 'proxy.example.com'} spellCheck={false} /></FormField>
             <FormField label="证书校验" hint="仅在节点使用自签证书时跳过。"><Select variant="segmented" value={String(draft.insecure)} onChange={e => update({ insecure: e.target.value === 'true' })} aria-label="证书校验"><option value="false">校验证书</option><option value="true">跳过校验</option></Select></FormField>
           </>}
-        </> : <FormField label="链接或 JSON" required hint="每行一个链接，支持 ss://、socks5://、http://、https://、vless://、mierus:// 和 sing-box 出站 JSON。"><textarea value={draft.content} onChange={e => update({ content: e.target.value })} rows={8} placeholder={'socks5://user:password@example.com:1080#SOCKS-A\nhttp://user:password@proxy.example.com:8080#HTTP-A'} spellCheck={false} /></FormField>}
+        </> : <FormField label="链接或 JSON" required hint="每行一个链接，支持 ss://、socks5://、http://、https://、vless://、mierus://、wireguard:// 和 sing-box 出站 JSON；也可直接粘贴一份 WireGuard 配置文件（[Interface] + 一个 [Peer]）。"><textarea value={draft.content} onChange={e => update({ content: e.target.value })} rows={8} placeholder={'socks5://user:password@example.com:1080#SOCKS-A\nhttp://user:password@proxy.example.com:8080#HTTP-A'} spellCheck={false} /></FormField>}
         <FormField label="使用范围"><Select variant="segmented" value={draft.scope} onChange={e => update({ scope: e.target.value as 'global' | 'server' })} aria-label="使用范围"><option value="global">全部服务器</option><option value="server">指定服务器</option></Select></FormField>
         {draft.scope === 'server' && <FormField label="服务器" required><Select value={draft.server_id} onChange={e => update({ server_id: Number(e.target.value) })} aria-label="服务器"><option value={0}>选择服务器</option>{servers.map(s => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField>}
-        {isHTTP
-          ? <p className="muted third-party-note">HTTP / HTTPS 节点只能作为代理链路出口，不会下发到用户订阅。</p>
-          : <FormField label="订阅展示" hint="链接导入的 HTTP / HTTPS 节点会忽略此项。"><Select variant="segmented" value={String(draft.expose_to_users)} onChange={e => update({ expose_to_users: e.target.value === 'true' })} aria-label="订阅展示"><option value="false">隐藏</option><option value="true">允许授权</option></Select></FormField>}
+        {chainOnly
+          ? <p className="muted third-party-note">{draft.protocol === 'wireguard' ? 'WireGuard' : 'HTTP / HTTPS'} 节点只能作为代理链路出口，不会下发到用户订阅。</p>
+          : <FormField label="订阅展示" hint="链接导入的 HTTP / HTTPS / WireGuard 节点会忽略此项。"><Select variant="segmented" value={String(draft.expose_to_users)} onChange={e => update({ expose_to_users: e.target.value === 'true' })} aria-label="订阅展示"><option value="false">隐藏</option><option value="true">允许授权</option></Select></FormField>}
         {issue && <p className="muted" aria-live="polite">{issue}</p>}
       </div>
     </div>

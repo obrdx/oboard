@@ -63,7 +63,7 @@ import type {
 import { TransportDialog } from './components/proxy-path/TransportDialog'
 import { NextHopFamilyDialog } from './components/proxy-path/NextHopFamilyDialog'
 import { nextHopSteps, sharedStepGroup, stepAddressFamily, summarizeAddressFamily, withAddressFamily, type NextHopNode } from './components/proxy-path/next-hop-family'
-import { AddThirdPartyNodeDialog, ThirdPartyNodesDialog, checkThirdPartyNode, externalProtocolLabel, newThirdPartyNodeDraft, submitThirdPartyNode, type ExternalOutboundCheck, type ThirdPartyNodeDraft } from './components/proxy-path/ThirdPartyNodes'
+import { AddThirdPartyNodeDialog, ThirdPartyNodesDialog, checkThirdPartyNode, externalProtocolChainOnly, externalProtocolLabel, newThirdPartyNodeDraft, submitThirdPartyNode, type ExternalOutboundCheck, type ThirdPartyNodeDraft } from './components/proxy-path/ThirdPartyNodes'
 import { FamilySplitTemplateEditor } from './components/proxy-path/FamilySplitTemplateEditor'
 import { TrafficForwardingPage } from './components/traffic-forwarding/TrafficForwardingPage'
 import {
@@ -13785,7 +13785,7 @@ export function ImportedNodeConfigDialog({ node, data, client, load, onClose }: 
       await client.request(`/external-outbounds/${node.id}`, { method: 'PATCH', body: JSON.stringify({
         ...draft, name: draft.name.trim(), target_address: draft.target_address.trim(),
         config_json: JSON.stringify(config), region_code: draft.region_mode === 'manual' ? draft.region_code : '',
-        expose_to_users: draft.protocol === 'http' ? false : draft.expose_to_users,
+        expose_to_users: externalProtocolChainOnly(draft.protocol) ? false : draft.expose_to_users,
       }) })
     } catch (error: any) {
       setError(localizeErrorMessage(error.message || error)); setSaving(false); return
@@ -13808,15 +13808,15 @@ export function ImportedNodeConfigDialog({ node, data, client, load, onClose }: 
           <h3>连接配置</h3>
           <div className="imported-node-form-grid">
             <FormField label="名称" required><input aria-label="名称" value={draft.name} onChange={e => update({ name: e.target.value })} /></FormField>
-            <FormField label="协议" required><Select aria-label="协议" value={draft.protocol} onChange={e => update({ protocol: e.target.value as ExternalProtocol })}>{([...externalProtocols, 'http'] as ExternalProtocol[]).map(protocol => <option key={protocol} value={protocol}>{labelProtocol(protocol)}</option>)}</Select></FormField>
+            <FormField label="协议" required><Select aria-label="协议" value={draft.protocol} onChange={e => update({ protocol: e.target.value as ExternalProtocol })}>{([...externalProtocols, 'http', 'wireguard'] as ExternalProtocol[]).map(protocol => <option key={protocol} value={protocol}>{labelProtocol(protocol)}</option>)}</Select></FormField>
             <FormField label="目标地址" required><input aria-label="目标地址" value={draft.target_address} onChange={e => update({ target_address: e.target.value })} /></FormField>
             <FormField label="目标端口" required><input aria-label="目标端口" type="number" min={1} max={65535} value={draft.target_port} onChange={e => update({ target_port: Number(e.target.value) })} /></FormField>
           </div>
-          <FormField label="协议配置（JSON）" hint={draft.protocol === 'http' ? 'HTTP CONNECT 使用 http 协议；HTTPS 通过 tls.enabled 开启。可修改用户名、密码、TLS 等配置。' : '可修改认证信息及协议参数；保存前会校验配置。'}>
+          <FormField label="协议配置（JSON）" hint={draft.protocol === 'http' ? 'HTTP CONNECT 使用 http 协议；HTTPS 通过 tls.enabled 开启。可修改用户名、密码、TLS 等配置。' : draft.protocol === 'wireguard' ? '可修改 private_key、address、peer_public_key、pre_shared_key、reserved、mtu、persistent_keepalive_interval、allowed_ips；对端地址和端口在上方填写。' : '可修改认证信息及协议参数；保存前会校验配置。'}>
             <textarea aria-label="协议配置（JSON）" className="imported-node-config-input" spellCheck={false} rows={7} value={draft.config_json} onChange={e => update({ config_json: e.target.value })} />
           </FormField>
           <FormField label="状态"><Select aria-label="状态" variant="segmented" value={String(draft.enabled)} onChange={e => update({ enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select></FormField>
-          {draft.protocol === 'http' ? <p className="muted">HTTP / HTTPS 节点仅用于链路出站，不直接加入订阅。</p> : <FormField label="订阅展示"><Select aria-label="订阅展示" variant="segmented" value={String(draft.expose_to_users)} onChange={e => update({ expose_to_users: e.target.value === 'true' })}><option value="false">默认隐藏</option><option value="true">允许订阅授权</option></Select></FormField>}
+          {externalProtocolChainOnly(draft.protocol) ? <p className="muted">{draft.protocol === 'wireguard' ? 'WireGuard' : 'HTTP / HTTPS'} 节点仅用于链路出站，不直接加入订阅。</p> : <FormField label="订阅展示"><Select aria-label="订阅展示" variant="segmented" value={String(draft.expose_to_users)} onChange={e => update({ expose_to_users: e.target.value === 'true' })}><option value="false">默认隐藏</option><option value="true">允许订阅授权</option></Select></FormField>}
         </section>
         <section className="imported-node-section imported-region-panel">
           <div><h3>出口地区</h3><p className="muted">自动模式使用节点可用性检测确认的出口地区；分支手动设置优先。</p></div>
@@ -20999,6 +20999,7 @@ function labelProtocol(p: Protocol | string) {
 	if (p === 'ssh') return 'SSH'
 	if (p === 'socks') return 'SOCKS'
 	if (p === 'http') return 'HTTP'
+	if (p === 'wireguard') return 'WireGuard'
 	return String(p)
 }
 function humanLabel(k: string) {

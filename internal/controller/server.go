@@ -9367,6 +9367,13 @@ func (s *Server) validateExternalOutbound(ctx context.Context, v *model.External
 		if err := validateSocksExternalConfig(v.ConfigJSON); err != nil {
 			return err
 		}
+	} else if v.Protocol == model.ProtocolWireGuard {
+		if v.ExposeToUsers {
+			return errors.New("WireGuard 第三方节点只能作为代理链路出口，不能直接下发到订阅")
+		}
+		if err := normalizeWireGuardExternal(v); err != nil {
+			return err
+		}
 	} else if v.Protocol == model.ProtocolHTTP {
 		if v.ExposeToUsers {
 			return errors.New("HTTP/HTTPS 第三方节点只能作为代理链路出口，不能直接下发到订阅")
@@ -9465,7 +9472,7 @@ func (s *Server) importExternalOutbounds(w http.ResponseWriter, r *http.Request)
 		if item.Scope == "" {
 			item.Scope = model.ExternalOutboundScopeGlobal
 		}
-		item.ExposeToUsers = req.ExposeToUsers && item.Protocol != model.ProtocolHTTP
+		item.ExposeToUsers = req.ExposeToUsers && !core.ExternalProtocolChainOnly(item.Protocol)
 		item.Enabled = true
 		if err := s.validateExternalOutbound(r.Context(), &item); err != nil {
 			fail(w, err, 400)
@@ -9498,6 +9505,13 @@ func parseExternalOutboundImport(content string) ([]model.ExternalOutbound, erro
 	}
 	if len(content) > 256*1024 {
 		return nil, errors.New("import content is too large")
+	}
+	if isWireGuardINI(content) {
+		item, err := parseWireGuardINIImport(content)
+		if err != nil {
+			return nil, err
+		}
+		return []model.ExternalOutbound{item}, nil
 	}
 	if !strings.HasPrefix(content, "{") && !strings.HasPrefix(content, "[") {
 		lines := strings.Split(content, "\n")
@@ -9552,6 +9566,10 @@ func parseExternalOutboundLine(line string) ([]model.ExternalOutbound, error) {
 		item, err := externalOutboundFromRawMap(raw, "imported-1")
 		return []model.ExternalOutbound{item}, err
 	}
+	if scheme, _, ok := strings.Cut(line, "://"); ok && (strings.EqualFold(scheme, "wireguard") || strings.EqualFold(scheme, "wg")) {
+		item, err := parseWireGuardImportURI(line)
+		return []model.ExternalOutbound{item}, err
+	}
 	u, err := url.Parse(line)
 	if err != nil {
 		return nil, err
@@ -9597,7 +9615,7 @@ func externalOutboundFromRawMap(raw map[string]any, fallbackName string) (model.
 		proto = string(model.ProtocolSS)
 	}
 	switch model.Protocol(proto) {
-	case model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS, model.ProtocolMieru, model.ProtocolSnell, model.ProtocolSocks, model.ProtocolHTTP:
+	case model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS, model.ProtocolMieru, model.ProtocolSnell, model.ProtocolSocks, model.ProtocolHTTP, model.ProtocolWireGuard:
 	default:
 		return model.ExternalOutbound{}, fmt.Errorf("unsupported outbound type %q", proto)
 	}

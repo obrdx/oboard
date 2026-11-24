@@ -48,6 +48,7 @@ const (
 	NativeMuxMieruLevel    NativeMuxKind = "mieru_level"
 	NativeMuxSnellReuse    NativeMuxKind = "snell_reuse"
 	NativeMuxSSH           NativeMuxKind = "ssh"
+	NativeMuxWireGuard     NativeMuxKind = "wireguard_tunnel"
 )
 
 type TFOSupport string
@@ -94,6 +95,7 @@ var protocolTransportCapabilities = map[model.Protocol]TransportCapability{
 	model.ProtocolSnell:  {GenericMux: GenericMuxNone, NativeMux: NativeMuxSnellReuse, TFO: TFOTCP},
 	model.ProtocolSocks:  {GenericMux: GenericMuxNone, NativeMux: NativeMuxNone, TFO: TFOTCP},
 	model.ProtocolHTTP:   {GenericMux: GenericMuxNone, NativeMux: NativeMuxNone, TFO: TFOTCP},
+	model.ProtocolWireGuard: {GenericMux: GenericMuxNone, NativeMux: NativeMuxWireGuard, TFO: TFOUnsupported},
 	model.ProtocolSSH:    {GenericMux: GenericMuxNone, NativeMux: NativeMuxSSH, TFO: TFOUnsupported},
 }
 
@@ -210,6 +212,8 @@ func nativeMuxDescription(kind NativeMuxKind) string {
 		return "Snell uses its own connection reuse"
 	case NativeMuxSSH:
 		return "SSH multiplexes channels over its own transport"
+	case NativeMuxWireGuard:
+		return "WireGuard carries every flow inside one UDP tunnel"
 	default:
 		return "the protocol has no connection reuse layer"
 	}
@@ -219,6 +223,9 @@ func tfoRejectionReason(protocol model.Protocol, capability TransportCapability)
 	if capability.TFO == TFOUnsupported {
 		if protocol == model.ProtocolHY2 {
 			return "the Hysteria2 data path is QUIC over UDP"
+		}
+		if protocol == model.ProtocolWireGuard {
+			return "the WireGuard data path is UDP"
 		}
 		return "the data path does not run over TCP"
 	}

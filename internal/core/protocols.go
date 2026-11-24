@@ -782,6 +782,7 @@ func buildServerConfig(server model.Server, inbounds []model.Inbound, outbounds 
 			*opts.RuntimeUsersOut = pkg
 		}
 	}
+	relocateWireGuardOutbounds(&config)
 	applyPhysicalDialResolvers(&config, server)
 	return config, nil
 }
@@ -971,6 +972,9 @@ func externalOutboundToSingBox(v model.ExternalOutbound, server model.Server, us
 func externalOutboundToSingBoxWithTag(v model.ExternalOutbound, server model.Server, user *model.User, outboundTag string) (map[string]any, error) {
 	if v.Protocol == model.ProtocolHTTP {
 		return httpExternalOutboundToSingBox(v, server, outboundTag)
+	}
+	if v.Protocol == model.ProtocolWireGuard {
+		return wireGuardExternalToSingBox(v, server, outboundTag)
 	}
 	if strings.TrimSpace(v.ConfigJSON) != "" && strings.TrimSpace(v.ConfigJSON) != "{}" {
 		var raw map[string]any
@@ -3734,6 +3738,8 @@ func protocolFromKernelOutboundType(typ string) model.Protocol {
 		return model.ProtocolSocks
 	case "http":
 		return model.ProtocolHTTP
+	case "wireguard":
+		return model.ProtocolWireGuard
 	default:
 		return ""
 	}

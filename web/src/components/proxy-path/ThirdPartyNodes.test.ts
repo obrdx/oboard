@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { externalProtocolLabel, newThirdPartyNodeDraft, thirdPartyFormIssue, thirdPartyFormPayload } from './ThirdPartyNodes'
+import { externalProtocolChainOnly, externalProtocolLabel, newThirdPartyNodeDraft, thirdPartyFormIssue, thirdPartyFormPayload } from './ThirdPartyNodes'
 
 describe('third-party node form', () => {
   it('maps HTTPS to an http outbound with TLS and never exposes it to subscriptions', () => {
@@ -19,5 +19,21 @@ describe('third-party node form', () => {
     expect(thirdPartyFormIssue(ss)).toContain('密码')
     expect(JSON.parse(thirdPartyFormPayload({ ...ss, password: 'secret' }).config_json)).toEqual({ method: '2022-blake3-aes-128-gcm', password: 'secret' })
     expect(thirdPartyFormIssue({ ...newThirdPartyNodeDraft(0), address: 'x', port: 70000 })).toContain('端口')
+  })
+
+  it('builds a chain-only WireGuard peer config and validates keys', () => {
+    const key = 'YNXtAzepDqRv9H52osJVDQnznT5AL11IUmHwhGvYPXE='
+    const draft = { ...newThirdPartyNodeDraft(0), protocol: 'wireguard' as const, address: 'wg.example.com', port: 51820, expose_to_users: true }
+    expect(thirdPartyFormIssue(draft)).toContain('私钥')
+    const filled = { ...draft, private_key: key, public_key: key, wg_address: '172.16.0.2/32, fd00::2/128', reserved: '1,2,3', mtu: 1280 }
+    expect(thirdPartyFormIssue(filled)).toBe('')
+    expect(thirdPartyFormIssue({ ...filled, reserved: '1,2' })).toContain('Reserved')
+    const payload = thirdPartyFormPayload(filled)
+    expect(payload.protocol).toBe('wireguard')
+    expect(payload.expose_to_users).toBe(false)
+    expect(payload.name).toBe('WireGuard wg.example.com')
+    expect(JSON.parse(payload.config_json)).toEqual({ private_key: key, address: ['172.16.0.2/32', 'fd00::2/128'], peer_public_key: key, reserved: [1, 2, 3], mtu: 1280 })
+    expect(externalProtocolChainOnly('wireguard')).toBe(true)
+    expect(externalProtocolLabel({ protocol: 'wireguard', config_json: '{}' })).toBe('WireGuard')
   })
 })

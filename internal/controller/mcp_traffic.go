@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/application"
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
 )
@@ -876,7 +877,7 @@ func (s *Server) externalOutboundAutomationValidate(ctx context.Context, princip
 		for index := range items {
 			items[index].ServerID = request.ServerID
 			items[index].Scope = scope
-			items[index].ExposeToUsers = request.ExposeToUsers && items[index].Protocol != model.ProtocolHTTP
+			items[index].ExposeToUsers = request.ExposeToUsers && !core.ExternalProtocolChainOnly(items[index].Protocol)
 			items[index].Enabled = true
 			if err := s.validateExternalOutbound(ctx, &items[index]); err != nil {
 				return nil, err
@@ -1077,7 +1078,7 @@ func (s *Server) applyExternalOutboundOperation(ctx context.Context, principal a
 		for index := range items {
 			items[index].ServerID = request.ServerID
 			items[index].Scope = scope
-			items[index].ExposeToUsers = request.ExposeToUsers && items[index].Protocol != model.ProtocolHTTP
+			items[index].ExposeToUsers = request.ExposeToUsers && !core.ExternalProtocolChainOnly(items[index].Protocol)
 			items[index].Enabled = true
 			if err := s.validateExternalOutbound(ctx, &items[index]); err != nil {
 				return nil, err

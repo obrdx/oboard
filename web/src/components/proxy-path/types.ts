@@ -4,7 +4,7 @@ import type { MonitoringDisplay } from '../../server-monitoring'
 // oboard/internal/model/types.go.
 
 export type Protocol = 'vless' | 'hy2' | 'anytls' | 'shadowsocks' | 'mieru' | 'snell' | 'socks' | 'ssh'
-export type ExternalProtocol = Exclude<Protocol, 'ssh'> | 'http'
+export type ExternalProtocol = Exclude<Protocol, 'ssh'> | 'http' | 'wireguard'
 // 'ddns' is server-only: the server's default entry is one of its DDNS records.
 export type EntryIPMode = 'auto' | 'ipv4' | 'ipv6' | 'custom' | 'ddns'
 export type RegionMode = 'auto' | 'manual'

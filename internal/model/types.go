@@ -48,6 +48,10 @@ const (
 	// third-party (external outbound) dial target: OBoard never runs an HTTP
 	// proxy inbound and never renders it into a user subscription.
 	ProtocolHTTP Protocol = "http"
+	// ProtocolWireGuard is an imported single-peer WireGuard server. Like HTTP
+	// it is only a third-party proxy-path exit: the kernel renders it as a
+	// WireGuard endpoint and it never enters a user subscription.
+	ProtocolWireGuard Protocol = "wireguard"
 	// ProtocolSSH is a managed, password-authenticated SSH proxy entry. It is run by
 	// the Agent rather than sing-box, so it is intentionally kept out of the
 	// generic proxy protocol adapters.

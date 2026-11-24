@@ -22,7 +22,7 @@ func externalOutboundDescriptors(positiveID map[string]any, stringValue, boolVal
 	})
 	fields := closedObject(map[string]any{
 		"name":            map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-		"protocol":        map[string]any{"type": "string", "enum": []string{"vless", "hysteria2", "anytls", "shadowsocks", "mieru", "socks", "http"}},
+		"protocol":        map[string]any{"type": "string", "enum": []string{"vless", "hysteria2", "anytls", "shadowsocks", "mieru", "socks", "http", "wireguard"}},
 		"scope":           map[string]any{"type": "string", "enum": []string{"global", "server"}},
 		"server_id":       nullableInteger(),
 		"target_address":  map[string]any{"type": "string", "maxLength": 255},
@@ -42,7 +42,7 @@ func externalOutboundDescriptors(positiveID map[string]any, stringValue, boolVal
 		risk              int
 		destructive       bool
 	}{
-		{"external_outbounds.import", "从订阅文本或节点 URI 批量导入第三方节点", schemaObject(map[string]any{"content": map[string]any{"type": "string", "minLength": 1, "maxLength": 262144}, "scope": map[string]any{"type": "string", "enum": []string{"global", "server"}}, "server_id": nullableInteger(), "expose_to_users": boolValue}, "content"), schemaObject(map[string]any{"external_outbounds": arrayOf(externalOutbound), "created_count": map[string]any{"type": "integer"}}, "created_count"), 2, false},
+		{"external_outbounds.import", "从订阅文本、节点 URI（含 wireguard:// / wg://）或单个 WireGuard 配置文件（[Interface] + 一个 [Peer]）批量导入第三方节点；HTTP/HTTPS 与 WireGuard 节点只能作为代理链路出口，不会下发到订阅", schemaObject(map[string]any{"content": map[string]any{"type": "string", "minLength": 1, "maxLength": 262144}, "scope": map[string]any{"type": "string", "enum": []string{"global", "server"}}, "server_id": nullableInteger(), "expose_to_users": boolValue}, "content"), schemaObject(map[string]any{"external_outbounds": arrayOf(externalOutbound), "created_count": map[string]any{"type": "integer"}}, "created_count"), 2, false},
 		{"external_outbounds.create", "手动创建导入节点", schemaObject(map[string]any{"external_outbound": fields}, "external_outbound"), schemaObject(map[string]any{"external_outbound": externalOutbound}, "external_outbound"), 2, false},
 		{"external_outbounds.update", "修改导入节点", schemaObject(map[string]any{"external_outbound_id": positiveID, "changes": fields}, "external_outbound_id", "changes"), schemaObject(map[string]any{"external_outbound": externalOutbound, "changed_fields": stringArray(1, 32)}, "external_outbound"), 2, false},
 		{"external_outbounds.check", "通过第三方代理访问固定 HTTPS IP 查询服务，一次验证代理凭证、可用性和真实出口地区；无需创建或部署链路。结果按节点配置保存，已有和新建链路复用地区；修改连接配置后失效。先在主控本机检测；主控失败时由一台在线且支持独立检测的服务器 Agent 复检（服务器级节点只用其所属服务器，MCP 调用只使用授权范围内的服务器），返回 server_id/server_name 表示检测位置。本机或内网地址（如 127.0.0.1）的节点只能从服务器访问，返回 status=skipped 且不保存结果，地区由已部署路径的出口探测确定", schemaObject(map[string]any{"external_outbound_id": positiveID}, "external_outbound_id"), schemaObject(map[string]any{"check": closedObject(map[string]any{"external_outbound_id": positiveID, "status": map[string]any{"type": "string", "enum": []string{"reachable", "unreachable", "failed", "skipped"}}, "server_id": positiveID, "server_name": stringValue, "target": stringValue, "exit_ip": stringValue, "region_code": stringValue, "region_status": stringValue, "connect_ms": map[string]any{"type": "number"}, "error": stringValue, "checked_at": stringValue})}, "check"), 1, false},

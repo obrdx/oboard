@@ -5,7 +5,8 @@ execute on the Controller host first. No deployed path or `server_id` is require
 When the Controller cannot get an exit IP (many proxies accept only the servers'
 addresses), the same rendered outbound is re-checked once by the Agent of the
 first online server, ordered by ID, that reports Agent `external_outbound_check_v1`
-and kernel `external_outbound_probe_v1`: a server-scoped node uses only its own
+and kernel `external_outbound_probe_v1` (an imported WireGuard node additionally
+needs kernel `external_wireguard_probe_v1`): a server-scoped node uses only its own
 server, and MCP callers only servers inside their `server_ids` boundary. A server
 busy with another network diagnostic is skipped. The Controller waits up to 30
 seconds for the callback, and the result carries `server_id` / `server_name` for
