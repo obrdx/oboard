@@ -20,40 +20,40 @@
 
 </div>
 
-OBoard 是一个轻量级的 Linux 多节点代理控制面板，用来集中管理自己的服务器、代理链路、订阅、证书和域名解析。搭配节点端的 [oboard-agent](https://github.com/obrdx/oboard-agent) 使用，面向个人和小范围自用，不做商业售卖面板。
+OBoard 是面向个人及小范围分发的 Linux 多节点代理控制面板，用于集中管理服务器、代理链路、用户订阅、TLS 证书与域名解析，并与节点侧的 [oboard-agent](https://github.com/obrdx/oboard-agent) 配合完成配置下发与状态维护。该项目定位于自托管使用，不适用于商业运营场景。
 
-## 为什么用 OBoard
+## 核心特性
 
-- **部署省事**：二进制直接运行，内置 SQLite，所有文件都在 `/opt/oboard` 下，不用配外部数据库。
-- **链路清晰**：可视化配置多跳代理，支持端口转发、中转链式代理、WARP、VPNGate 和规则分流。
-- **变更无感**：配置和安装包带签名校验，修改用户权限和流量配额支持热生效，不用重启代理内核。
-- **管理顺手**：提供 Web 面板、REST API 和原生 MCP 接口，支持 Passkey / 二步验证。
-- **状态可见**：自带节点监控、延迟和路由探针、DDNS、流量统计以及按需开启的审计功能。
+- **轻量单目录部署**：基于原生 Go 二进制与内置 SQLite 运行，默认部署于 `/opt/oboard`，无需外部数据库依赖。
+- **拓扑化链路编排**：提供可视化多跳代理路径配置，支持端口转发、链式转发、透明中转、WARP、VPNGate 及规则分流。
+- **签名下发与热更新**：配置文件与发行包均经过签名校验；用户权限与流量配额变更支持运行时热生效，无需重启代理内核。
+- **多端统一管理**：同时提供 Web 面板、REST API 与原生 MCP 接口，支持 Passkey 与 TOTP 二步验证。
+- **监控、探测与审计**：内置节点状态监控、延迟与路由探测、DDNS、流量统计及按需启用的连接审计功能。
 
-## 支持内容
+## 支持范围
 
 | 分类 | 支持项 |
 | :--- | :--- |
 | **入站协议** | VLESS (TLS / Reality)、Hysteria2、AnyTLS、Shadowsocks、Snell (v4 / v5 / v6)、Mieru、SOCKS5、SSH |
-| **转发与出口** | 端口转发、透明中转、WireGuard / SSH 隧道、WARP、VPNGate、第三方节点导入 |
+| **转发与出口** | 端口转发、透明中转、WireGuard / SSH 隧道、WARP、VPNGate、外部节点导入 |
 | **订阅格式** | Mihomo (Clash Meta)、sing-box、Surge、Stash、Shadowrocket、Loon、Egern、Quantumult X、Surfboard、V2Ray / URI |
-| **DNS 与证书** | ACME 自动签发续期 · Cloudflare、阿里云 DNS、DNSPod、腾讯云 ESA、华为云 DNS |
-| **系统平台** | Linux (`amd64` / `arm64`) · `systemd` / `OpenRC` |
+| **DNS 与证书** | ACME 自动签发与续期 · Cloudflare、阿里云 DNS、DNSPod、腾讯云 ESA、华为云 DNS |
+| **运行平台** | Linux (`amd64` / `arm64`) · `systemd` / `OpenRC` |
 
 ## 安装
 
-OBoard 以二进制方式运行，完整安装、更新与卸载方式见官方页面：
+OBoard 以独立二进制方式运行。安装、升级与卸载步骤请参阅官方文档：
 
 - [安装指南](https://obrdx.github.io/)
 
-默认安装目录为 `/opt/oboard`，默认端口为 `2787`。
+默认安装根目录为 `/opt/oboard`，默认监听端口为 `2787`。
 
 ## 相关仓库
 
-- [obrdx/oboard-agent](https://github.com/obrdx/oboard-agent)：节点端 Agent 与精简代理内核 `oboard-sb`
+- [obrdx/oboard-agent](https://github.com/obrdx/oboard-agent)：节点侧 Agent 与内置精简代理内核 `oboard-sb`
 
 ## 许可证
 
 Copyright 2026 OBoard contributors.
 
-`oboard` 基于 [GNU GPL v3](LICENSE) 开源。
+`oboard` 遵循 [GNU GPL v3](LICENSE) 许可证发布。

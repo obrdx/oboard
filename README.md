@@ -2,7 +2,7 @@
 
 # OBoard
 
-A lightweight multi-node proxy control panel for personal Linux servers.
+A self-hosted Linux control panel for personal multi-node proxy networks.
 
 **English** · [简体中文](README.zh-CN.md)
 
@@ -20,35 +20,35 @@ A lightweight multi-node proxy control panel for personal Linux servers.
 
 </div>
 
-OBoard is a self-hosted Linux control panel for managing personal multi-node proxy networks. It handles servers, proxy chains, subscriptions, TLS certificates, and DNS in one place, working together with [oboard-agent](https://github.com/obrdx/oboard-agent) on each node. Designed for personal and small-group use, not commercial resale.
+OBoard is a self-hosted Linux control panel for personal and small-group multi-node proxy networks. It centrally manages servers, proxy paths, subscriptions, TLS certificates, and DNS records, working with [oboard-agent](https://github.com/obrdx/oboard-agent) for signed configuration delivery and node maintenance. It is designed for private deployment rather than commercial operation.
 
-## Why OBoard
+## Features
 
-- **Simple setup**: Runs as a single Go binary with built-in SQLite under `/opt/oboard` — no external database to maintain.
-- **Visual routing**: Build multi-hop proxy paths with port forwarding, chained relays, WARP, VPNGate, and rule-based routing.
-- **Safe, smooth updates**: Signed configs and releases with hot user/quota updates that do not restart the proxy kernel.
-- **Flexible control**: Manage everything from the Web UI, REST API, or native MCP, secured with Passkeys and 2FA.
-- **Built-in visibility**: Server health, latency and route probes, DDNS, traffic stats, and optional connection auditing.
+- **Single-root deployment**: Runs as a native Go binary with embedded SQLite under `/opt/oboard`, requiring no external database.
+- **Topology-based routing**: Visual multi-hop proxy path configuration supporting port forwarding, chained proxies, transparent relays, WARP, VPNGate, and rule-based routing.
+- **Signed delivery and hot updates**: Signed configurations and release verification, with runtime user and quota updates applied without restarting the proxy kernel.
+- **Unified management interfaces**: Provides a Web panel, REST API, and native MCP endpoint, secured with Passkeys and TOTP 2FA.
+- **Monitoring, probing, and auditing**: Built-in node telemetry, latency and route probes, DDNS, traffic accounting, and optional connection auditing.
 
-## What's Supported
+## Compatibility
 
 | Category | Supported |
 | :--- | :--- |
-| **Protocols** | VLESS (TLS / Reality), Hysteria2, AnyTLS, Shadowsocks, Snell (v4 / v5 / v6), Mieru, SOCKS5, SSH |
-| **Forwarding & Exits** | Port forwarding, transparent relays, WireGuard / SSH tunnels, WARP, VPNGate, imported third-party nodes |
+| **Inbounds** | VLESS (TLS / Reality), Hysteria2, AnyTLS, Shadowsocks, Snell (v4 / v5 / v6), Mieru, SOCKS5, SSH |
+| **Forwarding & Exits** | Port forwarding, transparent relays, WireGuard / SSH tunnels, WARP, VPNGate, external node imports |
 | **Subscriptions** | Mihomo (Clash Meta), sing-box, Surge, Stash, Shadowrocket, Loon, Egern, Quantumult X, Surfboard, V2Ray / URI |
-| **DNS & TLS** | Automatic ACME certificates · Cloudflare, AliDNS, DNSPod, Tencent ESA, Huawei Cloud DNS |
+| **DNS & Certificates** | Automated ACME issuance and renewal · Cloudflare, AliDNS, DNSPod, Tencent ESA, Huawei Cloud DNS |
 | **Platforms** | Linux (`amd64` / `arm64`) · `systemd` / `OpenRC` |
 
 ## Installation
 
-OBoard runs as a native binary. See the official guide for installation, updates, and uninstall:
+OBoard runs as a standalone binary. Refer to the official documentation for installation, upgrades, and uninstallation:
 
-- [Install Guide](https://obrdx.github.io/)
+- [Installation Guide](https://obrdx.github.io/)
 
-Default install directory: `/opt/oboard` · Default port: `2787`
+Default installation root: `/opt/oboard` · Default listen port: `2787`
 
-## Related
+## Related Repositories
 
 - [obrdx/oboard-agent](https://github.com/obrdx/oboard-agent) — Node-side Agent and the slim `oboard-sb` proxy kernel
 
