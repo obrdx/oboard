@@ -521,7 +521,7 @@ func (s *Server) prepareServerManageRecipe(ctx context.Context, principal applic
 	}
 	if deleting {
 		if !taskBoolParam(input.Params, false, "confirm") {
-			return &mcpPreparedRecipe{Status: "needs_input", Intent: "server.manage", Questions: []map[string]any{{"field": "confirm", "type": "boolean", "reason": fmt.Sprintf("将删除 %s 的服务器注册及其全部入口、以它为入口的链路、端口转发、隧道与遥测，经过它的其他链路会被截断并停用。确认后不可恢复；只想从某个拓扑移除请用 topology.detach", serverDisplayLabel(model.Server{ID: resolved.Value.ID, Name: resolved.Value.Name}))}}}, nil
+			return &mcpPreparedRecipe{Status: "needs_input", Intent: "server.manage", Questions: []map[string]any{{"field": "confirm", "type": "boolean", "reason": fmt.Sprintf("将删除 %s 的服务器注册及其全部入口、以它为入口的链路、端口转发、隧道与遥测，经过它的其他链路会一并删除。确认后不可恢复；只想从某个拓扑移除请用 topology.detach", serverDisplayLabel(model.Server{ID: resolved.Value.ID, Name: resolved.Value.Name}))}}}, nil
 		}
 		operation := mcpOperationRef{Capability: "servers.delete", Input: map[string]any{"server_id": resolved.Value.ID, "confirm": true, "confirm_name": serverDeleteConfirmationName(model.Server{ID: resolved.Value.ID, Name: resolved.Value.Name})}}
 		return &mcpPreparedRecipe{Status: "ready", Intent: "server.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "delete_server", "server": resolved.Value.Label, "server_ref": resolved.Value.Ref, "server_id": resolved.Value.ID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "server_absent"}}}, nil

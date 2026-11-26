@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -5201,6 +5202,11 @@ func queryInt64sTx(ctx context.Context, tx *sql.Tx, query string, args ...any) (
 }
 
 func cascadeDeleteProxyPathBranchesTx(ctx context.Context, tx *sql.Tx, deletedStepIDs []int64, deletedPathIDs []int64) error {
+	_, err := cascadeDeleteProxyPathBranchesCollectTx(ctx, tx, deletedStepIDs, deletedPathIDs)
+	return err
+}
+
+func cascadeDeleteProxyPathBranchesCollectTx(ctx context.Context, tx *sql.Tx, deletedStepIDs []int64, deletedPathIDs []int64) ([]int64, error) {
 	stepSet := make(map[int64]struct{})
 	for _, sid := range deletedStepIDs {
 		if sid > 0 {
@@ -5224,7 +5230,7 @@ func cascadeDeleteProxyPathBranchesTx(ctx context.Context, tx *sql.Tx, deletedSt
 		for _, sid := range currentStepIDs {
 			childIDs, err := queryInt64sTx(ctx, tx, `select id from proxy_paths where branch_source_step_id=?`, sid)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			for _, childID := range childIDs {
 				if _, seen := pathSet[childID]; seen {
@@ -5233,7 +5239,7 @@ func cascadeDeleteProxyPathBranchesTx(ctx context.Context, tx *sql.Tx, deletedSt
 				pathSet[childID] = struct{}{}
 				childStepIDs, err := queryInt64sTx(ctx, tx, `select id from proxy_path_steps where path_id=?`, childID)
 				if err != nil {
-					return err
+					return nil, err
 				}
 				for _, childStepID := range childStepIDs {
 					stepSet[childStepID] = struct{}{}
@@ -5246,21 +5252,30 @@ func cascadeDeleteProxyPathBranchesTx(ctx context.Context, tx *sql.Tx, deletedSt
 	for pathID := range pathSet {
 		pathIDs = append(pathIDs, pathID)
 	}
+	sort.Slice(pathIDs, func(i, j int) bool { return pathIDs[i] < pathIDs[j] })
 	if _, err := removeAssignableNodeFromPlansTx(ctx, tx, model.AssignableNodeProxyPath, pathIDs...); err != nil {
-		return err
+		return nil, err
 	}
-	for childID := range pathSet {
+	if len(pathIDs) > 0 {
+		args := append([]any{string(model.AssignableNodeProxyPath)}, int64Args(pathIDs)...)
+		if _, err := tx.ExecContext(ctx, `delete from assignable_node_metadata where node_type=? and node_id in (`+int64Placeholders(len(pathIDs))+`)`, args...); err != nil {
+			return nil, err
+		}
+	}
+	for _, childID := range pathIDs {
 		if _, err := tx.ExecContext(ctx, `delete from proxy_path_steps where path_id=?`, childID); err != nil {
-			return err
+			return nil, err
 		}
 		if _, err := tx.ExecContext(ctx, `delete from proxy_paths where id=?`, childID); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	if len(pathSet) > 0 {
-		return pruneDanglingUserNodeExceptionsTx(ctx, tx)
+	if len(pathIDs) > 0 {
+		if err := pruneDanglingUserNodeExceptionsTx(ctx, tx); err != nil {
+			return nil, err
+		}
 	}
-	return nil
+	return pathIDs, nil
 }
 
 func (s *Store) ClearProxyPathBranchSourcesFromPosition(ctx context.Context, pathID int64, position int) error {
@@ -5346,11 +5361,15 @@ func (s *Store) DeleteProxyPath(ctx context.Context, id int64) error {
 		return err
 	}
 
-	if err := cascadeDeleteProxyPathBranchesTx(ctx, tx, deletedStepIDs, []int64{id}); err != nil {
+	deletedPathIDs, err := cascadeDeleteProxyPathBranchesCollectTx(ctx, tx, deletedStepIDs, []int64{id})
+	if err != nil {
 		return err
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.detachConnectionAuditHistory(ctx, "path_id", "proxy_path", deletedPathIDs)
 }
 
 // ListProxyPathPortAllocations returns every persisted generated-listener port.
@@ -5430,15 +5449,18 @@ func rewriteServerPortAllocationsTx(ctx context.Context, tx *sql.Tx, serverID in
 	return nil
 }
 
-// truncateProxyPathStepsTx cuts every path at its first step returned by the
-// match query, which must select (path_id, min(position)). Proxy path steps are
-// an ordered chain, so deleting only the matched row would leave later steps in
-// place and silently reconnect a different topology than the operator selected.
-// Paths left without any step are removed as well.
-func truncateProxyPathStepsTx(ctx context.Context, tx *sql.Tx, matchQuery string, args ...any) error {
+// truncateProxyPathStepsTx handles every path whose step matched the query,
+// which must select (path_id, min(position)). Ordinary proxy paths losing a
+// dependency cannot remain silently shortened and cannot be repaired once
+// disabled, so they are deleted together with their plan membership, access
+// exceptions, metadata, and branches attached at or after the broken hop;
+// unaffected branches copied from an earlier prefix hop are detached and kept.
+// Template-owned family_branch rows keep their row and only drop steps from
+// the broken hop onward.
+func truncateProxyPathStepsTx(ctx context.Context, tx *sql.Tx, matchQuery string, args ...any) ([]int64, error) {
 	rows, err := tx.QueryContext(ctx, matchQuery, args...)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	type cut struct {
 		pathID   int64
@@ -5448,118 +5470,113 @@ func truncateProxyPathStepsTx(ctx context.Context, tx *sql.Tx, matchQuery string
 	for rows.Next() {
 		var item cut
 		if err := rows.Scan(&item.pathID, &item.position); err != nil {
-			return errors.Join(err, rows.Close())
+			return nil, errors.Join(err, rows.Close())
 		}
 		cuts = append(cuts, item)
 	}
 	if err := rows.Err(); err != nil {
-		return errors.Join(err, rows.Close())
+		return nil, errors.Join(err, rows.Close())
 	}
 	if err := rows.Close(); err != nil {
-		return err
+		return nil, err
 	}
-	for _, item := range cuts {
-		result, err := tx.ExecContext(ctx, `update proxy_paths set enabled=0,updated_at=? where id=? and enabled=1`, now(), item.pathID)
-		if err != nil {
-			return err
-		}
-		count, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if count > 0 {
-			if _, err := tx.ExecContext(ctx, `insert into audit_logs(action,target,detail,ip,created_at) values('dependency_invalidated','proxy_path',?,'',?)`, fmt.Sprintf("path_id=%d dependency removed at step position=%d; path disabled", item.pathID, item.position), now()); err != nil {
-				return err
-			}
-		}
+	if len(cuts) == 0 {
+		return nil, nil
 	}
-	var deletedStepIDs []int64
+
+	familyCuts := make([]cut, 0)
+	ordinaryCuts := make([]cut, 0, len(cuts))
+	invalidatedPathIDs := make([]int64, 0, len(cuts))
+	var cascadeStepIDs []int64
+	ts := now()
+
 	for _, item := range cuts {
+		var kind string
+		var hasTemplate int
+		err := tx.QueryRowContext(ctx, `select coalesce(kind,'chain'), template_id is not null from proxy_paths where id=?`, item.pathID).Scan(&kind, &hasTemplate)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
 		stepIDs, err := queryInt64sTx(ctx, tx, `select id from proxy_path_steps where path_id=? and position>=?`, item.pathID, item.position)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		deletedStepIDs = append(deletedStepIDs, stepIDs...)
+		cascadeStepIDs = append(cascadeStepIDs, stepIDs...)
+		if model.ProxyPathKind(kind) == model.ProxyPathKindFamilyBranch || hasTemplate != 0 {
+			familyCuts = append(familyCuts, item)
+			if _, err := tx.ExecContext(ctx, `insert into audit_logs(action,target,detail,ip,created_at) values('dependency_invalidated','proxy_path',?,'',?)`, fmt.Sprintf("path_id=%d family_branch dependency removed at step position=%d; steps truncated", item.pathID, item.position), ts); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		ordinaryCuts = append(ordinaryCuts, item)
+		invalidatedPathIDs = append(invalidatedPathIDs, item.pathID)
+		if _, err := tx.ExecContext(ctx, `insert into audit_logs(action,target,detail,ip,created_at) values('dependency_invalidated','proxy_path',?,'',?)`, fmt.Sprintf("path_id=%d dependency removed at step position=%d; path deleted", item.pathID, item.position), ts); err != nil {
+			return nil, err
+		}
 	}
-	if err := cascadeDeleteProxyPathBranchesTx(ctx, tx, deletedStepIDs, nil); err != nil {
-		return err
+
+	// Detach branches copied from surviving prefix hops before deleting the
+	// invalidated path's steps, so healthy branches that never touched the
+	// removed dependency remain intact.
+	for _, item := range ordinaryCuts {
+		if _, err := tx.ExecContext(ctx, `update proxy_paths set branch_source_step_id=null,updated_at=? where branch_source_step_id in (select id from proxy_path_steps where path_id=? and position<?)`, ts, item.pathID, item.position); err != nil {
+			return nil, err
+		}
 	}
-	for _, item := range cuts {
+
+	deletedPathIDs, err := cascadeDeleteProxyPathBranchesCollectTx(ctx, tx, cascadeStepIDs, invalidatedPathIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, item := range familyCuts {
 		if _, err := tx.ExecContext(ctx, `delete from proxy_path_steps where path_id=? and position>=?`, item.pathID, item.position); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	emptyPathIDs := make([]int64, 0, len(cuts))
-	for _, item := range cuts {
-		var empty int
-		if err := tx.QueryRowContext(ctx, `select not exists(select 1 from proxy_path_steps where path_id=?)`, item.pathID).Scan(&empty); err != nil {
-			return err
-		}
-		if empty != 0 {
-			emptyPathIDs = append(emptyPathIDs, item.pathID)
-		}
-	}
-	if _, err := removeAssignableNodeFromPlansTx(ctx, tx, model.AssignableNodeProxyPath, emptyPathIDs...); err != nil {
-		return err
-	}
-	for _, item := range cuts {
-		if _, err := tx.ExecContext(ctx, `delete from proxy_paths where id=? and not exists (select 1 from proxy_path_steps s where s.path_id=proxy_paths.id)`, item.pathID); err != nil {
-			return err
-		}
-	}
-	if len(emptyPathIDs) > 0 {
-		return pruneDanglingUserNodeExceptionsTx(ctx, tx)
-	}
-	return nil
+	return deletedPathIDs, nil
 }
 
 func (s *Store) DeleteProxyPathsForInbound(ctx context.Context, inboundID int64) error {
-	rootPathIDs, err := queryInt64sDB(ctx, s.db, `select id from proxy_paths where inbound_id=?`, inboundID)
-	if err != nil {
-		return err
-	}
-	if len(rootPathIDs) > 0 {
-		history, err := s.historyDB()
-		if err == nil {
-			_, err = history.ExecContext(ctx, `update connection_audit_reports set path_id=null where path_id in (`+inClause(len(rootPathIDs))+`)`, seenAny(rootPathIDs)...)
-		}
-		if err != nil {
-			for _, pathID := range rootPathIDs {
-				if queueErr := s.QueueHistoryCleanup(ctx, "proxy_path", pathID); queueErr != nil {
-					return err
-				}
-			}
-		}
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if err := deleteProxyPathsForInboundTx(ctx, tx, inboundID); err != nil {
+	deletedPathIDs, err := deleteProxyPathsForInboundTx(ctx, tx, inboundID)
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.detachConnectionAuditHistory(ctx, "path_id", "proxy_path", deletedPathIDs)
 }
 
-func deleteProxyPathsForInboundTx(ctx context.Context, tx *sql.Tx, inboundID int64) error {
+func deleteProxyPathsForInboundTx(ctx context.Context, tx *sql.Tx, inboundID int64) ([]int64, error) {
 	// A path rooted at this inbound loses its entry point entirely.
 	rootPathIDs, err := queryInt64sTx(ctx, tx, `select id from proxy_paths where inbound_id=?`, inboundID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	rootStepIDs, err := queryInt64sTx(ctx, tx, `select s.id from proxy_path_steps s join proxy_paths p on p.id=s.path_id where p.inbound_id=?`, inboundID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := cascadeDeleteProxyPathBranchesTx(ctx, tx, rootStepIDs, rootPathIDs); err != nil {
-		return err
+	deletedRoot, err := cascadeDeleteProxyPathBranchesCollectTx(ctx, tx, rootStepIDs, rootPathIDs)
+	if err != nil {
+		return nil, err
 	}
-	// A path that only traverses this inbound as a hop is cut at that hop.
-	if err := truncateProxyPathStepsTx(ctx, tx, `select path_id,min(position) from proxy_path_steps where inbound_id=? group by path_id`, inboundID); err != nil {
-		return err
+	// A path that traverses this inbound as a hop is invalidated and removed.
+	deletedHop, err := truncateProxyPathStepsTx(ctx, tx, `select path_id,min(position) from proxy_path_steps where inbound_id=? group by path_id`, inboundID)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	return uniqueSortedInt64s(deletedRoot, deletedHop), nil
 }
 
 func (s *Store) DeleteProxyPathStepsForExternal(ctx context.Context, externalID int64) error {
@@ -5568,30 +5585,39 @@ func (s *Store) DeleteProxyPathStepsForExternal(ctx context.Context, externalID 
 		return err
 	}
 	defer tx.Rollback()
-	if err := truncateProxyPathStepsTx(ctx, tx, `select path_id,min(position) from proxy_path_steps where external_outbound_id=? group by path_id`, externalID); err != nil {
+	deletedPathIDs, err := truncateProxyPathStepsTx(ctx, tx, `select path_id,min(position) from proxy_path_steps where external_outbound_id=? group by path_id`, externalID)
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.detachConnectionAuditHistory(ctx, "path_id", "proxy_path", deletedPathIDs)
 }
 
 // CleanupRoutingForServer removes topology edges owned by or targeting a
-// server. A path losing a dependency is disabled before its invalid suffix is
-// removed; the surviving prefix requires an explicit operator repair.
+// server. Ordinary paths that lose a dependency are deleted together with
+// their plan references and access exceptions.
 func (s *Store) CleanupRoutingForServer(ctx context.Context, serverID int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if err := cleanupRoutingForServerTx(ctx, tx, serverID); err != nil {
+	deletedPathIDs, err := cleanupRoutingForServerTx(ctx, tx, serverID)
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.detachConnectionAuditHistory(ctx, "path_id", "proxy_path", deletedPathIDs)
 }
 
-func cleanupRoutingForServerTx(ctx context.Context, tx *sql.Tx, serverID int64) error {
-	if err := truncateProxyPathStepsTx(ctx, tx, `select s.path_id,min(s.position) from proxy_path_steps s left join inbounds i on i.id=s.inbound_id where s.server_id=? or i.server_id=? group by s.path_id`, serverID, serverID); err != nil {
-		return err
+func cleanupRoutingForServerTx(ctx context.Context, tx *sql.Tx, serverID int64) ([]int64, error) {
+	deletedPathIDs, err := truncateProxyPathStepsTx(ctx, tx, `select s.path_id,min(s.position) from proxy_path_steps s left join inbounds i on i.id=s.inbound_id where s.server_id=? or i.server_id=? group by s.path_id`, serverID, serverID)
+	if err != nil {
+		return nil, err
 	}
 	statements := []struct {
 		query string
@@ -5606,24 +5632,28 @@ func cleanupRoutingForServerTx(ctx context.Context, tx *sql.Tx, serverID int64) 
 	}
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement.query, statement.args...); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return deletedPathIDs, nil
 }
 
 // PruneOrphanedProxyPathSteps repairs topology left by older Controller builds
-// that allowed a server or target inbound to be deleted without cutting paths.
+// that allowed a server or target inbound to be deleted without removing paths.
 func (s *Store) PruneOrphanedProxyPathSteps(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if err := truncateProxyPathStepsTx(ctx, tx, `select s.path_id,min(s.position) from proxy_path_steps s left join servers sv on sv.id=s.server_id left join inbounds i on i.id=s.inbound_id where (s.server_id is not null and sv.id is null) or (s.inbound_id is not null and i.id is null) group by s.path_id`); err != nil {
+	deletedPathIDs, err := truncateProxyPathStepsTx(ctx, tx, `select s.path_id,min(s.position) from proxy_path_steps s left join servers sv on sv.id=s.server_id left join inbounds i on i.id=s.inbound_id where (s.server_id is not null and sv.id is null) or (s.inbound_id is not null and i.id is null) group by s.path_id`)
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.detachConnectionAuditHistory(ctx, "path_id", "proxy_path", deletedPathIDs)
 }
 
 // A sibling must share the entire prefix and continue through a different

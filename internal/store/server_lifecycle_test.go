@@ -306,52 +306,105 @@ func TestServerUpdateExpectedRevisionRejectsStaleFieldsAndEffects(t *testing.T) 
 	}
 }
 
-func TestDeletedExitCannotLeaveEnabledPathPrefix(t *testing.T) {
+func TestDeletedExitRemovesInvalidatedPathAndKeepsPrefixBranch(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	pathID, _, _, exitStepID := proxyPathTruncationFixture(t, db)
+	pathID, _, midStepID, exitStepID := proxyPathTruncationFixture(t, db)
+	path, err := db.GetProxyPath(ctx, pathID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	steps, err := db.ListProxyPathStepsForPath(ctx, pathID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var exitServer int64
+	var midServer, exitServer int64
 	for _, step := range steps {
+		if step.ID == midStepID && step.ServerID != nil {
+			midServer = *step.ServerID
+		}
 		if step.ID == exitStepID && step.ServerID != nil {
 			exitServer = *step.ServerID
 		}
 	}
-	if exitServer == 0 {
-		t.Fatal("missing exit")
+	if midServer == 0 || exitServer == 0 {
+		t.Fatal("missing mid or exit server")
 	}
+	// A direct branch copied from the surviving prefix hop does not use exitServer
+	// and must survive with branch_source_step_id cleared; a branch copied from
+	// exitStepID must cascade-delete with the broken hop.
+	prefixBranch := &model.ProxyPath{Kind: model.ProxyPathKindDirect, BranchSourceStepID: &midStepID, InboundID: path.InboundID, Secret: "prefix-direct", Enabled: true}
+	if err := db.CreateProxyPath(ctx, prefixBranch); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateProxyPathStep(ctx, &model.ProxyPathStep{PathID: prefixBranch.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &midServer, ConfigJSON: "{}"}); err != nil {
+		t.Fatal(err)
+	}
+	brokenBranch := &model.ProxyPath{Kind: model.ProxyPathKindDirect, BranchSourceStepID: &exitStepID, InboundID: path.InboundID, Secret: "exit-direct", Enabled: true}
+	if err := db.CreateProxyPath(ctx, brokenBranch); err != nil {
+		t.Fatal(err)
+	}
+	// Attach the invalidated path to a plan, user exception, and node metadata.
+	user := &model.User{Username: "dep-user", PasswordHash: "unused", Role: model.RoleViewer, Status: "active", ProxyUUID: "44444444-4444-4444-8444-444444444444", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	plan := &model.SubscriptionPlan{Name: "dep-plan", Enabled: true}
+	if err := db.CreateSubscriptionPlan(ctx, plan, []model.SubscriptionPlanNode{
+		{NodeType: model.AssignableNodeProxyPath, NodeID: pathID, Enabled: true},
+		{NodeType: model.AssignableNodeProxyPath, NodeID: prefixBranch.ID, Enabled: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateUserNodeException(ctx, &model.UserNodeException{UserID: user.ID, NodeType: model.AssignableNodeProxyPath, NodeID: pathID, Effect: model.UserNodeExceptionAllow, Status: model.UserNodeExceptionActive}); err != nil {
+		t.Fatal(err)
+	}
+	override := "custom-name"
+	if _, err := db.UpsertNodeMetadata(ctx, model.AssignableNodeProxyPath, pathID, &override, 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	// A template-owned family_branch referencing exitServer keeps its row and
+	// only truncates steps from the broken hop onward.
+	tpl := &model.FamilySplitTemplate{Name: "dep-tpl"}
+	if err := db.CreateFamilySplitTemplate(ctx, tpl, "v4-secret", "v6-secret"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateProxyPathStep(ctx, &model.ProxyPathStep{PathID: tpl.IPv4PathID, Position: 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &exitServer, ConfigJSON: "{}"}); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := db.CleanupRoutingForServer(ctx, exitServer); err != nil {
 		t.Fatal(err)
 	}
-	paths, err := db.ListProxyPaths(ctx)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := db.GetProxyPath(ctx, pathID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("invalidated path %d should be deleted, got err=%v", pathID, err)
 	}
-	found := false
-	for _, path := range paths {
-		if path.ID == pathID {
-			found = true
-			if path.Enabled {
-				t.Fatal("deleted exit silently left a live shortened path")
-			}
-		}
+	if _, err := db.GetProxyPath(ctx, brokenBranch.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("branch copied from broken hop should be deleted, got err=%v", err)
 	}
-	if !found {
-		t.Fatal("surviving path prefix should remain available for repair")
+	kept, err := db.GetProxyPath(ctx, prefixBranch.ID)
+	if err != nil || !kept.Enabled || kept.BranchSourceStepID != nil {
+		t.Fatalf("unaffected prefix branch should survive detached: %#v err=%v", kept, err)
 	}
-	steps, err = db.ListProxyPathStepsForPath(ctx, pathID)
-	if err != nil || len(steps) != 1 {
-		t.Fatalf("prefix=%+v err=%v", steps, err)
+	if familyPath, err := db.GetProxyPath(ctx, tpl.IPv4PathID); err != nil || familyPath.Kind != model.ProxyPathKindFamilyBranch {
+		t.Fatalf("family_branch row must remain after hop removal: %#v err=%v", familyPath, err)
+	}
+	if familySteps, err := db.ListProxyPathStepsForPath(ctx, tpl.IPv4PathID); err != nil || len(familySteps) != 0 {
+		t.Fatalf("family_branch broken step was not truncated: %#v err=%v", familySteps, err)
+	}
+	refs, err := db.PlanNodeReferences(ctx, model.AssignableNodeProxyPath, pathID)
+	if err != nil || len(refs.Active) != 0 || len(refs.Draft) != 0 || refs.Exceptions != 0 {
+		t.Fatalf("deleted path retained plan/exception references: %#v err=%v", refs, err)
+	}
+	if meta, err := db.GetNodeMetadata(ctx, model.AssignableNodeProxyPath, pathID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("deleted path retained node metadata: %#v err=%v", meta, err)
 	}
 	var audits int
-	if err := db.db.QueryRowContext(ctx, `select count(*) from audit_logs where action='dependency_invalidated' and target='proxy_path'`).Scan(&audits); err != nil || audits != 1 {
-		t.Fatalf("diagnostic audits=%d err=%v", audits, err)
+	if err := db.db.QueryRowContext(ctx, `select count(*) from audit_logs where action='dependency_invalidated' and target='proxy_path'`).Scan(&audits); err != nil || audits != 2 {
+		t.Fatalf("diagnostic audits=%d err=%v, want 2 (ordinary path + family branch)", audits, err)
 	}
 }

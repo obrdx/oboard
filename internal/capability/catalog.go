@@ -474,7 +474,7 @@ func defaultDescriptors() []Descriptor {
 	})
 	deleteInput, deleteOutput, _ := executableSchemas("servers.delete")
 	descriptors = append(descriptors, Descriptor{
-		Name: "servers.delete", Description: "删除服务器注册及其全部入口、以它为入口的链路、端口转发、隧道、路由规则与遥测；经过它的其他入口服务器链路在它这一跳被截断并停用。confirm_name 必须等于服务器名称（无名称时为 #ID）。校验结果的 impact 列出将删除和截断的链路及离开的套餐。只想从某个拓扑移除服务器请用 topology.detach。清理完成后 Server ID 可被新服务器复用，旧服务器的指定授权不会继承",
+		Name: "servers.delete", Description: "删除服务器注册及其全部入口、以它为入口的链路、端口转发、隧道、路由规则与遥测；经过它的其他入口服务器链路会一并删除并从订阅套餐移除。confirm_name 必须等于服务器名称（无名称时为 #ID）。校验结果的 impact 列出将删除的链路及离开的套餐。只想从某个拓扑移除服务器请用 topology.detach。清理完成后 Server ID 可被新服务器复用，旧服务器的指定授权不会继承",
 		InputSchema: deleteInput, OutputSchema: deleteOutput, RequiredScopes: []string{"servers:write"},
 		ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", RiskClass: 3, ApprovalPolicy: "required",
 		Idempotent: true, DataClassification: DataInternal, Destructive: true, MCPEnabled: true, Executable: true,

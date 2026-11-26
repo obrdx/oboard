@@ -60,7 +60,7 @@ func (c *collector) checkProxyPathRoot(path model.ProxyPath) {
 			ServerID:     inbound.ServerID,
 			Title:        "链路已启用但入口处于停用状态",
 			Detail:       fmt.Sprintf("入口「%s」(#%d) 已停用，这条链路不会有任何流量", inbound.Name, inbound.ID),
-			Remedy:       Remedy{Kind: RemedyDisable, Summary: "同步停用这条链路，避免拓扑显示为可用"},
+			Remedy:       Remedy{Kind: RemedyNone, Summary: "请重新启用该入口，或在代理拓扑中删除不再需要的链路"},
 		})
 	}
 }
@@ -110,7 +110,7 @@ func (c *collector) checkProxyPathShape(path model.ProxyPath) {
 			ResourceName: path.Name,
 			Title:        "链路已启用但没有任何中转节点",
 			Detail:       "这条链路等同于直连，拓扑显示与实际行为不一致",
-			Remedy:       Remedy{Kind: RemedyDisable, Summary: "停用这条空链路"},
+			Remedy:       Remedy{Kind: RemedyDelete, Summary: "删除这条没有中转节点的空链路", Destructive: true},
 		})
 	}
 }
@@ -146,7 +146,9 @@ func (c *collector) checkProxyPathSteps() {
 }
 
 func (c *collector) checkProxyPathStepTargets(path model.ProxyPath, step model.ProxyPathStep) {
-	report := func(code, title, detail string, severity string) {
+	deleteRemedy := Remedy{Kind: RemedyDelete, Summary: "删除这条依赖已丢失的链路", Destructive: true}
+	disabledInboundRemedy := Remedy{Kind: RemedyNone, Summary: "请重新启用该入口，或在代理拓扑中调整或删除这条链路"}
+	report := func(code, title, detail string, severity string, remedy Remedy) {
 		c.add(Finding{
 			Code:         code,
 			Severity:     severity,
@@ -156,13 +158,13 @@ func (c *collector) checkProxyPathStepTargets(path model.ProxyPath, step model.P
 			Title:        title,
 			Detail:       detail,
 			Path:         fmt.Sprintf("steps[%d]", step.Position),
-			Remedy:       Remedy{Kind: RemedyDisable, Summary: "先停用这条链路，再修复或移除该节点"},
+			Remedy:       remedy,
 		})
 	}
 	if step.ServerID != nil && *step.ServerID > 0 {
 		if _, ok := c.serverByID[*step.ServerID]; !ok {
 			report("proxy_path.step.server_missing", "链路节点指向的服务器已不存在",
-				fmt.Sprintf("第 %d 跳引用的服务器 %d 已被删除", step.Position, *step.ServerID), SeverityBlocking)
+				fmt.Sprintf("第 %d 跳引用的服务器 %d 已被删除", step.Position, *step.ServerID), SeverityBlocking, deleteRemedy)
 		}
 	}
 	if step.InboundID != nil && *step.InboundID > 0 {
@@ -170,15 +172,15 @@ func (c *collector) checkProxyPathStepTargets(path model.ProxyPath, step model.P
 		switch {
 		case !ok:
 			report("proxy_path.step.inbound_missing", "链路节点指向的入口已不存在",
-				fmt.Sprintf("第 %d 跳引用的入口 %d 已被删除", step.Position, *step.InboundID), SeverityBlocking)
+				fmt.Sprintf("第 %d 跳引用的入口 %d 已被删除", step.Position, *step.InboundID), SeverityBlocking, deleteRemedy)
 		case path.Enabled && !inbound.Enabled:
 			report("proxy_path.step.inbound_disabled", "链路节点指向的入口已停用",
-				fmt.Sprintf("第 %d 跳的入口「%s」(#%d) 已停用，这条链路无法建立", step.Position, inbound.Name, inbound.ID), SeverityWarning)
+				fmt.Sprintf("第 %d 跳的入口「%s」(#%d) 已停用，这条链路无法建立", step.Position, inbound.Name, inbound.ID), SeverityWarning, disabledInboundRemedy)
 		}
 	}
 	if step.ExternalOutboundID != nil && *step.ExternalOutboundID > 0 && !c.externalIDs[*step.ExternalOutboundID] {
 		report("proxy_path.step.external_missing", "链路节点指向的外部节点已不存在",
-			fmt.Sprintf("第 %d 跳引用的外部节点 %d 已被删除", step.Position, *step.ExternalOutboundID), SeverityBlocking)
+			fmt.Sprintf("第 %d 跳引用的外部节点 %d 已被删除", step.Position, *step.ExternalOutboundID), SeverityBlocking, deleteRemedy)
 	}
 }
 

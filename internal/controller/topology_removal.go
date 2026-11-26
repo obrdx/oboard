@@ -219,6 +219,35 @@ func (b *topologyImpactBuilder) deletePath(pathID int64, reason string) {
 	b.cascade(ids)
 }
 
+// deletePathFromHop records a path deleted because a hop dependency at
+// fromPosition was removed. Only branches copied from steps at or after
+// fromPosition go with it; branches copied from an earlier surviving prefix
+// hop are detached and kept.
+func (b *topologyImpactBuilder) deletePathFromHop(pathID int64, fromPosition int, reason string) {
+	if _, ok := b.snap.paths[pathID]; !ok {
+		return
+	}
+	item := b.entry(pathID)
+	if item.Effect == topologyEffectDeleted {
+		return
+	}
+	if item.Effect == "" {
+		item.Reason = reason
+	}
+	item.Effect = topologyEffectDeleted
+	item.FromPosition = fromPosition
+	steps := b.snap.stepsByPath[pathID]
+	item.RemovedSteps = len(steps)
+	item.RemainingSteps = 0
+	ids := make([]int64, 0, len(steps))
+	for _, step := range steps {
+		if step.Position >= fromPosition {
+			ids = append(ids, step.ID)
+		}
+	}
+	b.cascade(ids)
+}
+
 // deleteLeafPath records the shared-prefix leaf deletion: the path goes, but
 // only branches copied from the removed leaf go with it; the prefix copies'
 // branch sources are cleared instead.
@@ -403,9 +432,10 @@ func forwardsForServer(snap *topologySnapshot, serverID int64) ([]topologyNamedR
 	return forwards, tunnels
 }
 
-// serverDeletionImpact mirrors store.DeleteServer: every path that traverses
-// the server anywhere is disabled and cut at its first step on it (an emptied
-// path is deleted), and every path rooted at one of its inbounds is deleted.
+// serverDeletionImpact mirrors store.DeleteServer: every ordinary path that
+// traverses the server anywhere is deleted (only branches attached at or after
+// the broken hop cascade), and every path rooted at one of its inbounds is
+// deleted.
 func (s *Server) serverDeletionImpact(ctx context.Context, serverID int64) (topologyRemovalImpact, error) {
 	snap, err := s.loadTopologySnapshot(ctx)
 	if err != nil {
@@ -413,9 +443,12 @@ func (s *Server) serverDeletionImpact(ctx context.Context, serverID int64) (topo
 	}
 	b := newTopologyImpactBuilder(snap)
 	for _, pathID := range snap.sortedPathIDs() {
+		if snap.paths[pathID].Kind == model.ProxyPathKindFamilyBranch {
+			continue
+		}
 		for _, step := range snap.stepsByPath[pathID] {
 			if snap.stepServerID(step) == serverID {
-				b.truncate(pathID, step.Position, topologyReasonHop, true, true)
+				b.deletePathFromHop(pathID, step.Position, topologyReasonHop)
 				break
 			}
 		}

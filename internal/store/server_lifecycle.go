@@ -21,17 +21,28 @@ func (s *Store) DeleteServer(ctx context.Context, serverID int64) error {
 	if _, err := removeAssignableNodeFromPlansTx(ctx, tx, model.AssignableNodeInbound, inboundIDs...); err != nil {
 		return err
 	}
-	if err := cleanupRoutingForServerTx(ctx, tx, serverID); err != nil {
-		return err
-	}
-	for _, inboundID := range inboundIDs {
-		if err := deleteProxyPathsForInboundTx(ctx, tx, inboundID); err != nil {
+	if len(inboundIDs) > 0 {
+		args := append([]any{string(model.AssignableNodeInbound)}, int64Args(inboundIDs)...)
+		if _, err := tx.ExecContext(ctx, `delete from assignable_node_metadata where node_type=? and node_id in (`+int64Placeholders(len(inboundIDs))+`)`, args...); err != nil {
 			return err
 		}
+	}
+	deletedHopPaths, err := cleanupRoutingForServerTx(ctx, tx, serverID)
+	if err != nil {
+		return err
+	}
+	var deletedRootPaths []int64
+	for _, inboundID := range inboundIDs {
+		deletedForInbound, err := deleteProxyPathsForInboundTx(ctx, tx, inboundID)
+		if err != nil {
+			return err
+		}
+		deletedRootPaths = append(deletedRootPaths, deletedForInbound...)
 		if _, err := tx.ExecContext(ctx, `delete from inbound_probe_results where inbound_id=?`, inboundID); err != nil {
 			return err
 		}
 	}
+	deletedPathIDs := uniqueSortedInt64s(deletedHopPaths, deletedRootPaths)
 	for _, statement := range []struct {
 		query string
 		args  []any
@@ -72,6 +83,9 @@ func (s *Store) DeleteServer(ctx context.Context, serverID int64) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return err
+	}
+	if err := s.detachConnectionAuditHistory(ctx, "path_id", "proxy_path", deletedPathIDs); err != nil {
+		log.Printf("detach audit history for paths removed with server %d: %v", serverID, err)
 	}
 	if s.HistoryAvailable() {
 		if err := s.bumpLatencyRollupGeneration(ctx); err != nil {

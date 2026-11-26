@@ -194,6 +194,18 @@ func TestEvaluateReportsEnabledPathOverDisabledInbound(t *testing.T) {
 	if finding.Severity != SeverityWarning {
 		t.Fatalf("expected warning, got %s", finding.Severity)
 	}
+	if finding.Remedy.Kind != RemedyNone {
+		t.Fatalf("paused inbound path must not offer disable remedy, got %+v", finding.Remedy)
+	}
+}
+
+func TestEvaluateReportsEmptyChainPathWithDeleteRemedy(t *testing.T) {
+	in := healthyInput()
+	in.ProxyPaths[0].Kind = model.ProxyPathKindChain
+	finding := findingByCode(t, Evaluate(in), "proxy_path.steps.empty")
+	if finding.Remedy.Kind != RemedyDelete || !finding.Remedy.Destructive {
+		t.Fatalf("empty chain path should offer delete remedy, got %+v", finding.Remedy)
+	}
 }
 
 func TestEvaluateReportsStepTargetsThatNoLongerExist(t *testing.T) {
@@ -204,8 +216,12 @@ func TestEvaluateReportsStepTargetsThatNoLongerExist(t *testing.T) {
 		ServerID: id(404), InboundID: id(405),
 	}}
 	report := Evaluate(in)
-	findingByCode(t, report, "proxy_path.step.server_missing")
-	findingByCode(t, report, "proxy_path.step.inbound_missing")
+	for _, code := range []string{"proxy_path.step.server_missing", "proxy_path.step.inbound_missing"} {
+		finding := findingByCode(t, report, code)
+		if finding.Remedy.Kind != RemedyDelete || !finding.Remedy.Destructive {
+			t.Fatalf("%s should offer delete remedy, got %+v", code, finding.Remedy)
+		}
+	}
 }
 
 func TestEvaluateReportsOrphanStep(t *testing.T) {

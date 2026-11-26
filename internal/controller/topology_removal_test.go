@@ -116,19 +116,26 @@ func TestServerDeletionPreviewIncludesDisabledAndForeignPaths(t *testing.T) {
 	if err := f.db.SetProxyPathEnabledForRepair(context.Background(), f.pathD, false); err != nil {
 		t.Fatal(err)
 	}
+	// A direct branch copied from C (step 1 of pathA) does not traverse B and
+	// must survive deleting B, while pathA (A->C->B) and disabled pathD (D->B)
+	// are both deleted completely instead of leaving disabled prefixes.
+	prefixBranch := request(t, f.h, http.MethodPost, "/api/v1/ui/proxy-paths/direct-branches", f.token, map[string]any{"source_step_id": f.pathAFirst}, http.StatusCreated)["proxy_path"].(map[string]any)
+	prefixBranchID := int64(prefixBranch["id"].(float64))
+
 	preview := request(t, f.h, http.MethodGet, "/api/v1/ui/servers/"+itoa(f.serverB)+"/deletion-preview", f.token, nil, http.StatusOK)
 	if preview["confirm_name"] != "B" {
 		t.Fatalf("confirm_name = %#v", preview["confirm_name"])
 	}
 	paths := impactPaths(t, preview)
 	a, d := paths[f.pathA], paths[f.pathD]
-	if a == nil || a["effect"] != topologyEffectTruncated || a["disabled"] != true {
+	if a == nil || a["effect"] != topologyEffectDeleted {
 		t.Fatalf("path A impact = %#v", a)
 	}
-	// D's only step is on B, so the store deletes the emptied path even though
-	// it is disabled; the old browser preview skipped disabled paths entirely.
 	if d == nil || d["effect"] != topologyEffectDeleted || d["enabled"] != false {
 		t.Fatalf("disabled path D impact = %#v", d)
+	}
+	if paths[prefixBranchID] != nil {
+		t.Fatalf("unaffected prefix branch should not be impacted: %#v", paths[prefixBranchID])
 	}
 	if preview["impact"].(map[string]any)["other_root_path_count"].(float64) != 2 {
 		t.Fatalf("other_root_path_count = %#v", preview["impact"])
@@ -136,9 +143,87 @@ func TestServerDeletionPreviewIncludesDisabledAndForeignPaths(t *testing.T) {
 
 	deleteServerConfirmed(t, f.h, f.token, f.serverB, http.StatusOK)
 	request(t, f.h, http.MethodGet, "/api/v1/ui/proxy-paths/"+itoa(f.pathD), f.token, nil, http.StatusNotFound)
-	stored, err := f.db.GetProxyPath(context.Background(), f.pathA)
-	if err != nil || stored.Enabled {
-		t.Fatalf("path A should be cut and disabled as previewed: %#v %v", stored, err)
+	request(t, f.h, http.MethodGet, "/api/v1/ui/proxy-paths/"+itoa(f.pathA), f.token, nil, http.StatusNotFound)
+	kept, err := f.db.GetProxyPath(context.Background(), prefixBranchID)
+	if err != nil || !kept.Enabled || kept.BranchSourceStepID != nil {
+		t.Fatalf("unaffected prefix branch should survive detached: %#v err=%v", kept, err)
+	}
+}
+
+func TestControllerPruneDisabledProxyPathsCleansCatalogAndPlans(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	srv := newTestServer(db, "test-secret", "")
+	h := srv.Handler()
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	ctx := context.Background()
+
+	server := &model.Server{Name: "CDT", EntryAddress: "203.0.113.10", ListenIP: "0.0.0.0", PortRangeStart: 30000, PortRangeEnd: 30100, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "cdt-anytls", Protocol: model.ProtocolAnyTLS, ListenIP: "0.0.0.0", Port: 10777, ConfigJSON: `{}`, Enabled: true}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	live := &model.ProxyPath{InboundID: inbound.ID, Kind: model.ProxyPathKindDirect, Secret: "live", Enabled: true}
+	disabled := &model.ProxyPath{InboundID: inbound.ID, Kind: model.ProxyPathKindDirect, Secret: "disabled", Enabled: false}
+	if err := db.CreateProxyPath(ctx, live); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateProxyPath(ctx, disabled); err != nil {
+		t.Fatal(err)
+	}
+	tpl := &model.FamilySplitTemplate{Name: "keep-template"}
+	if err := db.CreateFamilySplitTemplate(ctx, tpl, "v4", "v6"); err != nil {
+		t.Fatal(err)
+	}
+	plan := &model.SubscriptionPlan{Name: "管理员", Enabled: true}
+	if err := db.CreateSubscriptionPlan(ctx, plan, []model.SubscriptionPlanNode{
+		{NodeType: model.AssignableNodeProxyPath, NodeID: live.ID, Enabled: true},
+		{NodeType: model.AssignableNodeProxyPath, NodeID: disabled.ID, Enabled: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{Username: "u1", PasswordHash: "unused", Role: model.RoleViewer, Status: "active", ProxyUUID: "66666666-6666-4666-8666-666666666666", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateUserNodeException(ctx, &model.UserNodeException{UserID: user.ID, NodeType: model.AssignableNodeProxyPath, NodeID: disabled.ID, Effect: model.UserNodeExceptionAllow, Status: model.UserNodeExceptionActive}); err != nil {
+		t.Fatal(err)
+	}
+
+	before := request(t, h, http.MethodGet, "/api/v1/ui/assignable-nodes?status=disabled", token, nil, http.StatusOK)["nodes"].([]any)
+	if len(before) != 1 {
+		t.Fatalf("expected 1 disabled node before prune, got %#v", before)
+	}
+
+	res, err := srv.PruneDisabledProxyPaths(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.DeletedPathIDs) != 1 || res.DeletedPathIDs[0] != disabled.ID {
+		t.Fatalf("pruned = %#v, want [%d]", res, disabled.ID)
+	}
+
+	after := request(t, h, http.MethodGet, "/api/v1/ui/assignable-nodes?status=disabled", token, nil, http.StatusOK)["nodes"].([]any)
+	if len(after) != 0 {
+		t.Fatalf("expected 0 disabled nodes after prune, got %#v", after)
+	}
+	nodes, err := db.ListActivePlanNodes(ctx, plan.ID)
+	if err != nil || len(nodes) != 1 || nodes[0].NodeID != live.ID {
+		t.Fatalf("plan nodes after prune = %#v err=%v", nodes, err)
+	}
+	exceptions, err := db.ListUserNodeExceptionsForUser(ctx, user.ID)
+	if err != nil || len(exceptions) != 0 {
+		t.Fatalf("exceptions after prune = %#v err=%v", exceptions, err)
+	}
+	if _, err := db.GetFamilySplitTemplate(ctx, tpl.ID); err != nil {
+		t.Fatalf("family split template affected: %v", err)
 	}
 }
 

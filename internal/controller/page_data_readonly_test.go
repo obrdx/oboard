@@ -133,16 +133,24 @@ func TestProxyPathsPageDataIsReadOnly(t *testing.T) {
 	if err := db.CreateInbound(ctx, inbound); err != nil {
 		t.Fatal(err)
 	}
-	path := &model.ProxyPath{InboundID: inbound.ID, Kind: model.ProxyPathKindChain, NameMode: model.ProxyPathNameCustom, NameTemplate: []model.ProxyPathNamePart{{Kind: model.ProxyPathNameServer, ServerID: 999999}}, Enabled: true}
-	if err := db.CreateProxyPath(ctx, path); err != nil {
+	orphanPath := &model.ProxyPath{InboundID: inbound.ID, Kind: model.ProxyPathKindChain, Enabled: true}
+	if err := db.CreateProxyPath(ctx, orphanPath); err != nil {
 		t.Fatal(err)
 	}
-	step := &model.ProxyPathStep{PathID: path.ID, Position: 0, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &server.ID, InboundID: &inbound.ID, ProcessingRole: false}
-	if err := db.CreateProxyPathStep(ctx, step); err != nil {
+	orphanPrefix := &model.ProxyPathStep{PathID: orphanPath.ID, Position: 0, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &server.ID, InboundID: &inbound.ID}
+	if err := db.CreateProxyPathStep(ctx, orphanPrefix); err != nil {
 		t.Fatal(err)
 	}
-	orphan := &model.ProxyPathStep{PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &server.ID, InboundID: &inbound.ID}
+	orphan := &model.ProxyPathStep{PathID: orphanPath.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &server.ID, InboundID: &inbound.ID}
 	if err := db.CreateProxyPathStep(ctx, orphan); err != nil {
+		t.Fatal(err)
+	}
+	intactPath := &model.ProxyPath{InboundID: inbound.ID, Kind: model.ProxyPathKindChain, NameMode: model.ProxyPathNameCustom, NameTemplate: []model.ProxyPathNamePart{{Kind: model.ProxyPathNameServer, ServerID: 999999}}, Enabled: true}
+	if err := db.CreateProxyPath(ctx, intactPath); err != nil {
+		t.Fatal(err)
+	}
+	step := &model.ProxyPathStep{PathID: intactPath.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &server.ID, InboundID: &inbound.ID, ProcessingRole: false}
+	if err := db.CreateProxyPathStep(ctx, step); err != nil {
 		t.Fatal(err)
 	}
 	// Seed the invariants the GET used to repair inline: an orphaned step
@@ -180,41 +188,22 @@ func TestProxyPathsPageDataIsReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, item := range steps {
-		if item.ID == orphan.ID {
-			t.Fatalf("orphaned step %d survived maintenance", orphan.ID)
+		if item.ID == orphan.ID || item.PathID == orphanPath.ID {
+			t.Fatalf("orphaned path step %d survived maintenance", item.ID)
+		}
+		if item.ID == step.ID && item.ProcessingRole {
+			t.Fatalf("processing role not normalized: %#v", item)
 		}
 	}
 	paths, err := db.ListProxyPaths(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(paths) != 1 || paths[0].NameMode != model.ProxyPathNameAuto {
-		t.Fatalf("invalid custom name mode not reconciled: %#v", paths)
-	}
-	// Losing a step to the orphan prune disables the path: the remaining
-	// prefix is a shorter route nobody chose, so it waits for an operator
-	// instead of silently carrying traffic.
-	if paths[0].Enabled {
-		t.Fatalf("path kept running after its dependency was pruned: %#v", paths[0])
-	}
-	// Processing roles are derived for paths that are actually deployed, so
-	// the normalization applies once the operator repairs and re-enables it.
-	repaired := paths[0]
-	repaired.Enabled = true
-	if err := db.UpdateProxyPath(ctx, &repaired); err != nil {
-		t.Fatal(err)
-	}
-	if err := srv.normalizeEnabledProxyPathProcessingRoles(ctx); err != nil {
-		t.Fatal(err)
-	}
-	steps, err = db.ListProxyPathSteps(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, item := range steps {
-		if item.ID == step.ID && item.ProcessingRole {
-			t.Fatalf("processing role not normalized: %#v", item)
-		}
+	// The path with the orphaned step is deleted completely instead of being
+	// left behind as a disabled stub; the intact path has its name template
+	// reset to auto.
+	if len(paths) != 1 || paths[0].ID != intactPath.ID || paths[0].NameMode != model.ProxyPathNameAuto {
+		t.Fatalf("paths after maintenance = %#v, want only reconciled intact path %d", paths, intactPath.ID)
 	}
 }
 

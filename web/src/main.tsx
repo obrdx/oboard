@@ -7341,7 +7341,7 @@ export function DeleteServerDialog({ server, client, busy, error, onCancel, onSu
       {impact ? <TopologyImpactDetail impact={impact} currentRootServerID={server.id} />
         : impactError ? <p className="error">无法计算影响：{impactError}</p>
           : <p className="muted"><Loader2 size={14} className="spin" aria-hidden="true" /> 正在计算影响…</p>}
-      {impact && impact.other_root_path_count > 0 && <p className="muted">经过它的其他入口服务器链路会在它这一跳截断并停用。只想从某个拓扑移除它，请在代理拓扑中使用「从此拓扑移除」。</p>}
+      {impact && impact.other_root_path_count > 0 && <p className="muted">经过它的其他入口服务器链路会一并删除并从订阅套餐移除。只想从某个拓扑移除它，请在代理拓扑中使用「从此拓扑移除」。</p>}
     </div>}
     <div className={`server-delete-option${uninstall ? ' is-checked' : ''}`}>
       <span className="server-delete-option-copy">

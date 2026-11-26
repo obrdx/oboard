@@ -117,6 +117,9 @@ func main() {
 	if err := app.ApplyRuntimeSettings(context.Background()); err != nil {
 		log.Printf("apply runtime settings: %v", err)
 	}
+	if _, err := app.PruneDisabledProxyPaths(context.Background(), 0); err != nil {
+		log.Printf("prune disabled proxy paths on startup: %v", err)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	listener, err := net.Listen("tcp", *addr)

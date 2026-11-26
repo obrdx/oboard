@@ -10,6 +10,38 @@ import (
 	"github.com/OboardProject/oboard/internal/store"
 )
 
+const disabledProxyPathGracePeriod = time.Minute
+
+// PruneDisabledProxyPaths removes abandoned disabled proxy paths (excluding
+// template-owned family_branch rows) along with their plan references, access
+// exceptions and node metadata. Callers running while HTTP requests are active
+// should pass a positive minAge so transient disabled drafts in flight are not
+// touched; startup calls before serving may pass 0.
+func (s *Server) PruneDisabledProxyPaths(ctx context.Context, minAge time.Duration) (store.PrunedDisabledProxyPathsResult, error) {
+	var cutoff time.Time
+	if minAge > 0 {
+		cutoff = time.Now().UTC().Add(-minAge)
+	}
+	res, err := s.store.PruneDisabledProxyPaths(ctx, cutoff)
+	if err != nil {
+		return res, err
+	}
+	if len(res.DeletedPathIDs) > 0 {
+		for _, templateID := range res.TemplateIDs {
+			_ = s.syncFamilySplitTemplateEnabled(ctx, templateID)
+		}
+		if err := s.reconcileProxyPathNameTemplates(ctx); err != nil {
+			log.Printf("reconcile proxy path name templates after disabled path cleanup: %v", err)
+		}
+		s.invalidateConfigHealth()
+		s.publishRealtime("topology")
+		log.Printf("pruned %d disabled proxy paths (ids=%v, skipped=%d)", len(res.DeletedPathIDs), res.DeletedPathIDs, len(res.SkippedPathIDs))
+	} else if len(res.SkippedPathIDs) > 0 {
+		log.Printf("deferred pruning %d disabled proxy paths while subscription plan changes are applying", len(res.SkippedPathIDs))
+	}
+	return res, nil
+}
+
 // StartAccessLifecycleWorker turns time-driven authorization state changes
 // into access changes: bindings whose window opens (fallback when no change
 // claimed them), bindings and exceptions that expired, and pending allow
@@ -19,8 +51,12 @@ import (
 // fallback interval when nothing is scheduled) and wakes early on
 // authorization mutations.
 func (s *Server) StartAccessLifecycleWorker(ctx context.Context) {
-	// Deletions now remove their access exceptions in the same transaction;
-	// rows left by earlier builds are swept once at start.
+	// Sweeps disabled proxy paths and dangling exceptions left by earlier builds
+	// or interrupted writes; also retried on each lifecycle tick if a plan was
+	// applying at start.
+	if _, err := s.PruneDisabledProxyPaths(ctx, disabledProxyPathGracePeriod); err != nil {
+		log.Printf("prune disabled proxy paths: %v", err)
+	}
 	if removed, err := s.store.PruneDanglingUserNodeExceptions(ctx); err != nil {
 		log.Printf("prune dangling user node exceptions: %v", err)
 	} else if removed > 0 {
@@ -70,6 +106,9 @@ func (s *Server) StartAccessLifecycleWorker(ctx context.Context) {
 }
 
 func (s *Server) reconcileAccessLifecycle(ctx context.Context) {
+	if _, err := s.PruneDisabledProxyPaths(ctx, disabledProxyPathGracePeriod); err != nil {
+		log.Printf("access lifecycle prune disabled proxy paths: %v", err)
+	}
 	now := time.Now()
 
 	// Bindings whose window is open but that no access change deployed yet.
