@@ -174,7 +174,7 @@ func normalizeSubscriptionProxyType(value string) string {
 		return "anytls"
 	case "shadowsocks", "ss":
 		return "ss"
-	case "socks", "socks5":
+	case "socks", "socks5", "socks5h":
 		return "socks5"
 	case "ssh":
 		return "ssh"

@@ -984,7 +984,7 @@ func proxyPathChainServiceLabel(key proxyPathChainServiceKey) string {
 	case model.ProtocolMieru:
 		return "Mieru TCP"
 	case model.ProtocolSocks:
-		return "SOCKS5"
+		return "SOCKS5H"
 	default:
 		return key.Profile
 	}
@@ -2120,7 +2120,7 @@ func proxyPathRuntimeProfile(config ProxyPathChainConfig) string {
 	case model.ProtocolMieru:
 		return "TCP"
 	case model.ProtocolSocks:
-		return "SOCKS5"
+		return "SOCKS5H"
 	default:
 		return ""
 	}

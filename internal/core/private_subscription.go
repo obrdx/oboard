@@ -169,7 +169,7 @@ func privateNodeFromMap(input map[string]any, index int) (ParsedPrivateNode, err
 	if typ == "ss" {
 		typ = "shadowsocks"
 	}
-	if typ == "socks" {
+	if typ == "socks" || typ == "socks5h" {
 		typ = "socks5"
 	}
 	if typ == "hy2" {
@@ -230,6 +230,9 @@ func parsePrivateURI(line string, index int) (ParsedPrivateNode, error) {
 	if strings.HasPrefix(strings.ToLower(line), "vmess://") {
 		return parseVMessURI(line, index)
 	}
+	if expanded := expandPrivateSocksShareLink(line); expanded != line {
+		line = expanded
+	}
 	u, err := url.Parse(line)
 	if err != nil || u.Scheme == "" {
 		return ParsedPrivateNode{}, errors.New("invalid node URI")
@@ -273,7 +276,9 @@ func parsePrivateURI(line string, index int) (ParsedPrivateNode, error) {
 		}
 	case "tuic":
 		raw["uuid"], raw["password"] = user, password
-	case "socks5":
+	case "socks", "socks5", "socks5h":
+		raw["type"] = "socks5"
+		raw["version"] = "5"
 		raw["username"], raw["password"] = user, password
 	case "mierus":
 		raw["type"] = "mieru"
@@ -282,6 +287,59 @@ func parsePrivateURI(line string, index int) (ParsedPrivateNode, error) {
 	}
 	applyPrivateURIOptions(raw, q)
 	return finalizePrivateNode(protocol, name, raw)
+}
+
+func expandPrivateSocksShareLink(line string) string {
+	scheme, rest, ok := strings.Cut(line, "://")
+	if !ok {
+		return line
+	}
+	switch strings.ToLower(scheme) {
+	case "socks", "socks5", "socks5h":
+	default:
+		return line
+	}
+	end := strings.IndexAny(rest, "?#")
+	if end < 0 {
+		end = len(rest)
+	}
+	authority, tail := strings.TrimSuffix(rest[:end], "/"), rest[end:]
+	userinfo, hostport := "", authority
+	decode := func(value string) (string, bool) {
+		for _, enc := range []*base64.Encoding{base64.RawURLEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.StdEncoding} {
+			if raw, err := enc.DecodeString(value); err == nil {
+				return string(raw), true
+			}
+		}
+		return "", false
+	}
+	if at := strings.LastIndex(authority, "@"); at >= 0 {
+		userinfo, hostport = authority[:at], authority[at+1:]
+		if userinfo == "" || strings.Contains(userinfo, ":") {
+			return line
+		}
+		decoded, ok := decode(userinfo)
+		if !ok || !strings.Contains(decoded, ":") {
+			return line
+		}
+		userinfo = decoded
+	} else {
+		decoded, ok := decode(authority)
+		if !ok {
+			return line
+		}
+		at := strings.LastIndex(decoded, "@")
+		if at < 0 {
+			return line
+		}
+		userinfo, hostport = decoded[:at], decoded[at+1:]
+	}
+	user, password, hasPassword := strings.Cut(userinfo, ":")
+	info := url.User(user)
+	if hasPassword {
+		info = url.UserPassword(user, password)
+	}
+	return scheme + "://" + info.String() + "@" + hostport + tail
 }
 
 func parseVMessURI(line string, index int) (ParsedPrivateNode, error) {
@@ -412,7 +470,7 @@ func privateProtocol(value string) (model.PrivateSubscriptionProtocol, error) {
 		return model.PrivateProtocolAnyTLS, nil
 	case "shadowsocks", "ss":
 		return model.PrivateProtocolShadowsocks, nil
-	case "socks", "socks5":
+	case "socks", "socks5", "socks5h":
 		return model.PrivateProtocolSOCKS5, nil
 	case "mieru", "mierus":
 		return model.PrivateProtocolMieru, nil

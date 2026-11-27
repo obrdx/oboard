@@ -651,6 +651,18 @@ func (v *configValidator) validateRemoteAdapter(path, typ string, item map[strin
 		v.validateSnellVersionFields(path, item, false)
 	case "socks":
 		// Username/password are optional for unauthenticated third-party SOCKS5.
+		version := strings.TrimSpace(stringFromAny(item["version"]))
+		if version != "" && version != "4" && version != "4a" && version != "5" {
+			v.addf("%s invalid socks version %q", path, version)
+		}
+		if raw, exists := item["remote_dns"]; exists && raw != nil {
+			remoteDNS, ok := raw.(bool)
+			if !ok {
+				v.addf("%s remote_dns must be a boolean", path)
+			} else if version == "4" && remoteDNS {
+				v.addf("%s socks4 does not support remote_dns", path)
+			}
+		}
 	case "http":
 		// Credentials are optional; the renderer emits only the closed field set.
 		if raw, ok := item["tls"]; ok {

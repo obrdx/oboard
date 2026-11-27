@@ -97,10 +97,10 @@ func TestWireGuardAgentCheckRequiresKernelCapability(t *testing.T) {
 	if reason := agentTaskImmediateFailure(&server); reason != "" {
 		t.Skipf("fixture server is not task-ready: %s", reason)
 	}
-	if err := externalOutboundCheckServerReady(server, model.ProtocolSocks); err != nil {
+	if err := externalOutboundCheckServerReady(server, model.ExternalOutbound{Protocol: model.ProtocolSocks}); err != nil {
 		t.Fatal(err)
 	}
-	if err := externalOutboundCheckServerReady(server, model.ProtocolWireGuard); err == nil {
+	if err := externalOutboundCheckServerReady(server, model.ExternalOutbound{Protocol: model.ProtocolWireGuard}); err == nil {
 		t.Fatal("kernel without WireGuard probe support selected")
 	}
 }

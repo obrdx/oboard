@@ -11,10 +11,17 @@ describe('third-party node form', () => {
     expect(externalProtocolLabel({ protocol: 'http', config_json: payload.config_json })).toBe('HTTPS')
   })
 
-  it('builds socks5 and shadowsocks configs and validates required fields', () => {
+  it('builds socks5h/socks5 and shadowsocks configs and validates required fields', () => {
     const socks = thirdPartyFormPayload({ ...newThirdPartyNodeDraft(0), address: '203.0.113.5', port: 1080 })
     expect(socks.protocol).toBe('socks')
-    expect(JSON.parse(socks.config_json)).toEqual({ version: '5' })
+    expect(socks.name).toBe('SOCKS5H 203.0.113.5')
+    expect(JSON.parse(socks.config_json)).toEqual({ version: '5', remote_dns: true })
+    expect(externalProtocolLabel({ protocol: 'socks', config_json: socks.config_json })).toBe('SOCKS5H')
+
+    const socksLocal = thirdPartyFormPayload({ ...newThirdPartyNodeDraft(0), address: '203.0.113.6', port: 1080, remote_dns: false })
+    expect(socksLocal.name).toBe('SOCKS5 203.0.113.6')
+    expect(JSON.parse(socksLocal.config_json)).toEqual({ version: '5', remote_dns: false })
+    expect(externalProtocolLabel({ protocol: 'socks', config_json: socksLocal.config_json })).toBe('SOCKS5')
     const ss = { ...newThirdPartyNodeDraft(0), protocol: 'shadowsocks' as const, address: 'ss.example.com', port: 8388 }
     expect(thirdPartyFormIssue(ss)).toContain('密码')
     expect(JSON.parse(thirdPartyFormPayload({ ...ss, password: 'secret' }).config_json)).toEqual({ method: '2022-blake3-aes-128-gcm', password: 'secret' })
@@ -39,7 +46,7 @@ describe('third-party node form', () => {
 
   it('describes pasted import content before it is submitted', () => {
     expect(describeImportContent('')).toEqual({ summary: '', unknown: 0 })
-    expect(describeImportContent('socks5://u:p@a:1\nss://x@b:2\nss://y@c:3\n# note\nhello').summary).toBe('识别到 3 个节点：SOCKS5、Shadowsocks ×2')
+    expect(describeImportContent('socks5h://u:p@a:1\nsocks5://u:p@a:2\nss://x@b:2\nss://y@c:3\n# note\nhello').summary).toBe('识别到 4 个节点：SOCKS5H ×2、Shadowsocks ×2')
     expect(describeImportContent('socks5://u:p@a:1\nhello').unknown).toBe(1)
     expect(describeImportContent('# provider\n[Interface]\nPrivateKey = x').summary).toContain('WireGuard 配置文件')
     expect(describeImportContent('{"type":"vless"}').summary).toContain('JSON')

@@ -49,7 +49,7 @@ var builtinNodePresets = []nodePresetSeed{
 	{Name: "SS 2022-128", Protocol: "shadowsocks", Kind: "ss-2022-128", DefaultPort: 8388, Remark: "AES-128-GCM，多用户", ConfigJSON: `{"method":"2022-blake3-aes-128-gcm","tcp_fast_open":true}`},
 	{Name: "SS 2022-256", Protocol: "shadowsocks", Kind: "ss-2022-256", DefaultPort: 8388, Remark: "AES-256-GCM，多用户", ConfigJSON: `{"method":"2022-blake3-aes-256-gcm","tcp_fast_open":true}`},
 	{Name: "Mieru", Protocol: "mieru", Kind: "mieru-basic", DefaultPort: 25250, Remark: "Mieru 多用户入口", ConfigJSON: `{"transport":"TCP","multiplexing":"MULTIPLEXING_DEFAULT","user_hint_is_mandatory":true,"tcp_fast_open":true}`},
-	{Name: "SOCKS5", Protocol: "socks", Kind: "socks5-auth", DefaultPort: 1080, Remark: "用户名密码认证，支持 TCP 与 UDP", ConfigJSON: `{"version":"5","tcp_fast_open":true}`},
+	{Name: "SOCKS5", Protocol: "socks", Kind: "socks5-auth", DefaultPort: 1080, Remark: "用户名密码认证，支持 TCP/UDP 与远端 DNS（SOCKS5H）", ConfigJSON: `{"version":"5","tcp_fast_open":true}`},
 }
 
 func mustNodePresetConfig(config map[string]any) string {

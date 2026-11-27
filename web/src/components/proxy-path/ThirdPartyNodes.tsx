@@ -42,6 +42,7 @@ export type ThirdPartyNodeDraft = {
   port: number | undefined
   username: string
   password: string
+  remote_dns: boolean
   method: string
   server_name: string
   insecure: boolean
@@ -56,7 +57,20 @@ export type ThirdPartyNodeDraft = {
 export const SHADOWSOCKS_METHODS = ['2022-blake3-aes-128-gcm', '2022-blake3-aes-256-gcm', '2022-blake3-chacha20-poly1305', 'aes-128-gcm', 'aes-256-gcm', 'chacha20-ietf-poly1305']
 
 export function newThirdPartyNodeDraft(serverID: number): ThirdPartyNodeDraft {
-  return { mode: 'form', scope: 'global', server_id: serverID, expose_to_users: false, content: '', name: '', protocol: 'socks', address: '', port: 1080, username: '', password: '', method: '2022-blake3-aes-128-gcm', server_name: '', insecure: false, private_key: '', wg_address: '', public_key: '', pre_shared_key: '', reserved: '', mtu: undefined }
+  return { mode: 'form', scope: 'global', server_id: serverID, expose_to_users: false, content: '', name: '', protocol: 'socks', address: '', port: 1080, username: '', password: '', remote_dns: true, method: '2022-blake3-aes-128-gcm', server_name: '', insecure: false, private_key: '', wg_address: '', public_key: '', pre_shared_key: '', reserved: '', mtu: undefined }
+}
+
+export function externalOutboundSocksRemoteDNS(node: Pick<ExternalOutbound, 'protocol' | 'config_json'>) {
+  if (node.protocol !== 'socks') return false
+  try {
+    const cfg = JSON.parse(node.config_json || '{}')
+    const version = String(cfg?.version || '5').trim()
+    if (version === '4') return false
+    if (typeof cfg?.remote_dns === 'boolean') return cfg.remote_dns
+    return true
+  } catch {
+    return true
+  }
 }
 
 export function externalOutboundIsHTTPS(node: Pick<ExternalOutbound, 'protocol' | 'config_json'>) {
@@ -77,7 +91,15 @@ export function externalProtocolLabel(node: Pick<ExternalOutbound, 'protocol' | 
     case 'anytls': return 'AnyTLS'
     case 'mieru': return 'Mieru'
     case 'vless': return 'VLESS'
-    case 'socks': return 'SOCKS'
+    case 'socks': {
+      try {
+        const cfg = JSON.parse(node.config_json || '{}')
+        const version = String(cfg?.version || '5').trim()
+        if (version === '4') return 'SOCKS4'
+        if (version === '4a') return 'SOCKS4a'
+      } catch { /* default SOCKS5H */ }
+      return externalOutboundSocksRemoteDNS(node) ? 'SOCKS5H' : 'SOCKS5'
+    }
     case 'snell': return 'Snell'
     case 'wireguard': return 'WireGuard'
     default: return String(node.protocol)
@@ -109,7 +131,10 @@ export function thirdPartyFormPayload(draft: ThirdPartyNodeDraft) {
     if (draft.username.trim()) config.username = draft.username.trim()
     if (draft.password) config.password = draft.password
   }
-  if (draft.protocol === 'socks') config.version = '5'
+  if (draft.protocol === 'socks') {
+    config.version = '5'
+    config.remote_dns = draft.remote_dns
+  }
   if (draft.protocol === 'http' || draft.protocol === 'https') {
     protocol = 'http'
     if (draft.protocol === 'https') {
@@ -121,7 +146,7 @@ export function thirdPartyFormPayload(draft: ThirdPartyNodeDraft) {
   }
   const address = draft.address.trim()
   const port = draft.port || 0
-  const label = draft.protocol === 'wireguard' ? 'WireGuard' : draft.protocol.toUpperCase()
+  const label = draft.protocol === 'wireguard' ? 'WireGuard' : draft.protocol === 'socks' ? (draft.remote_dns ? 'SOCKS5H' : 'SOCKS5') : draft.protocol.toUpperCase()
   return {
     name: draft.name.trim() || `${label} ${address}`,
     protocol,
@@ -268,7 +293,7 @@ export function ThirdPartyNodesDialog({
 }
 
 const PROTOCOL_CHOICES: { protocol: ThirdPartyFormProtocol; label: string; summary: string }[] = [
-  { protocol: 'socks', label: 'SOCKS5', summary: '通用代理' },
+  { protocol: 'socks', label: 'SOCKS5H', summary: '远端 DNS · 通用代理' },
   { protocol: 'http', label: 'HTTP', summary: 'CONNECT 代理' },
   { protocol: 'https', label: 'HTTPS', summary: 'TLS 加密' },
   { protocol: 'shadowsocks', label: 'Shadowsocks', summary: 'SS / SS2022' },
@@ -277,7 +302,7 @@ const PROTOCOL_CHOICES: { protocol: ThirdPartyFormProtocol; label: string; summa
 
 const IMPORT_FORMATS: { pattern: RegExp; label: string }[] = [
   { pattern: /^ss:\/\//i, label: 'Shadowsocks' },
-  { pattern: /^socks5?:\/\//i, label: 'SOCKS5' },
+  { pattern: /^socks(?:5h?)?:\/\//i, label: 'SOCKS5H' },
   { pattern: /^https:\/\//i, label: 'HTTPS' },
   { pattern: /^http:\/\//i, label: 'HTTP' },
   { pattern: /^vless:\/\//i, label: 'VLESS' },
@@ -310,6 +335,7 @@ export function describeImportContent(content: string): { summary: string; unkno
 }
 
 function advancedSummary(draft: ThirdPartyNodeDraft) {
+  if (draft.protocol === 'socks') return draft.remote_dns ? '远端 DNS（SOCKS5H）' : '本地 DNS（SOCKS5）'
   if (draft.protocol === 'https') return [draft.server_name.trim() && 'SNI', draft.insecure && '跳过证书校验'].filter(Boolean).join(' · ')
   if (draft.protocol === 'wireguard') return [draft.pre_shared_key.trim() && '预共享密钥', draft.reserved.trim() && 'Reserved', draft.mtu && `MTU ${draft.mtu}`].filter(Boolean).join(' · ')
   return ''
@@ -334,7 +360,7 @@ export function AddThirdPartyNodeDialog({ draft, setDraft, servers, submitting, 
     update({ protocol, port: !draft.port || knownDefault ? defaults[protocol] : draft.port, expose_to_users: externalProtocolChainOnly(protocol) ? false : draft.expose_to_users })
   }
   const choice = PROTOCOL_CHOICES.find(item => item.protocol === draft.protocol) || PROTOCOL_CHOICES[0]
-  const hasAdvanced = draft.protocol === 'https' || draft.protocol === 'wireguard'
+  const hasAdvanced = draft.protocol === 'socks' || draft.protocol === 'https' || draft.protocol === 'wireguard'
   const advanced = advancedSummary(draft)
   const secret = { autoComplete: 'off', spellCheck: false } as const
   return <MotionDialogPanel onCancel={onCancel} className="graph-form-dialog third-party-dialog" aria-labelledby="add-third-party-title">
@@ -393,7 +419,12 @@ export function AddThirdPartyNodeDialog({ draft, setDraft, servers, submitting, 
           {hasAdvanced && <details className="third-party-advanced">
             <summary><span>高级设置</span><small>{advanced || '可选'}</small><ChevronDown aria-hidden="true" /></summary>
             <div className="third-party-advanced-body">
-              {draft.protocol === 'https' ? <div className="third-party-grid">
+              {draft.protocol === 'socks' ? <FormField label="DNS 解析方式" hint="默认使用远端 DNS（SOCKS5H），将域名交给远端 SOCKS5 代理在出口侧解析；仅在第三方代理不支持域名目标时切回本地 DNS（需新版内核）。">
+                <Select variant="segmented" value={String(draft.remote_dns)} onChange={e => update({ remote_dns: e.target.value === 'true' })} aria-label="DNS 解析方式">
+                  <option value="true">远端 DNS（SOCKS5H）</option>
+                  <option value="false">本地 DNS（SOCKS5）</option>
+                </Select>
+              </FormField> : draft.protocol === 'https' ? <div className="third-party-grid">
                 <FormField label="TLS 服务器名称（SNI）" hint="留空时使用节点域名。"><input value={draft.server_name} onChange={e => update({ server_name: e.target.value })} placeholder={draft.address || 'proxy.example.com'} spellCheck={false} /></FormField>
                 <FormField label="证书校验" hint="仅在节点使用自签证书时跳过。"><Select variant="segmented" value={String(draft.insecure)} onChange={e => update({ insecure: e.target.value === 'true' })} aria-label="证书校验"><option value="false">校验</option><option value="true">跳过</option></Select></FormField>
               </div> : <>
@@ -407,10 +438,10 @@ export function AddThirdPartyNodeDialog({ draft, setDraft, servers, submitting, 
           </details>}
         </> : <section className="third-party-section" aria-labelledby="third-party-paste-title">
           <h3 id="third-party-paste-title">链接或配置</h3>
-          <textarea className="third-party-paste" value={draft.content} onChange={e => update({ content: e.target.value })} rows={9} aria-label="链接或配置" placeholder={'每行一个节点链接，例如：\nsocks5://user:password@example.com:1080#香港-SOCKS\nwireguard://私钥@wg.example.com:51820?publickey=…&address=10.0.0.2/32\n\n也可以直接粘贴完整的 WireGuard 配置文件或 sing-box 出站 JSON。'} spellCheck={false} />
+          <textarea className="third-party-paste" value={draft.content} onChange={e => update({ content: e.target.value })} rows={9} aria-label="链接或配置" placeholder={'每行一个节点链接，例如：\nsocks5h://user:password@example.com:1080#香港-SOCKS5H\nwireguard://私钥@wg.example.com:51820?publickey=…&address=10.0.0.2/32\n\n也可以直接粘贴完整的 WireGuard 配置文件或 sing-box 出站 JSON。'} spellCheck={false} />
           {detected.summary || detected.unknown
             ? <p className={`third-party-detect${detected.unknown ? ' is-warning' : ''}`} aria-live="polite">{detected.summary}{detected.unknown ? `${detected.summary ? '；' : ''}${detected.unknown} 行无法识别` : ''}</p>
-            : <div className="third-party-formats" aria-label="支持的格式">{['ss://', 'socks5://', 'http(s)://', 'vless://', 'mierus://', 'wireguard://', 'WireGuard 配置文件', 'sing-box JSON'].map(item => <span key={item}>{item}</span>)}</div>}
+            : <div className="third-party-formats" aria-label="支持的格式">{['ss://', 'socks5h://', 'socks5://', 'http(s)://', 'vless://', 'mierus://', 'wireguard://', 'WireGuard 配置文件', 'sing-box JSON'].map(item => <span key={item}>{item}</span>)}</div>}
         </section>}
 
         <section className="third-party-section" aria-labelledby="third-party-usage-title">

@@ -243,7 +243,7 @@ func (s *Server) externalOutboundCheckServers(ctx context.Context, external mode
 		if external.ServerID != nil && *external.ServerID != 0 && *external.ServerID != server.ID || allow != nil && !allow(server.ID) {
 			continue
 		}
-		if err := externalOutboundCheckServerReady(server, external.Protocol); err != nil {
+		if err := externalOutboundCheckServerReady(server, external); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -260,15 +260,18 @@ func (s *Server) externalOutboundCheckServers(ctx context.Context, external mode
 	return ready, nil
 }
 
-func externalOutboundCheckServerReady(server model.Server, protocol model.Protocol) error {
+func externalOutboundCheckServerReady(server model.Server, external model.ExternalOutbound) error {
 	if reason := agentTaskImmediateFailure(&server); reason != "" {
 		return fmt.Errorf("服务器 %s：%s", server.Name, reason)
 	}
 	if !serverSupportsCapability(server, "external_outbound_probe_v1") || !serverSupportsCapability(server, "external_outbound_check_v1") {
 		return fmt.Errorf("服务器 %s 的 Agent/内核不支持独立代理出口检测，请先更新", server.Name)
 	}
-	if protocol == model.ProtocolWireGuard && !serverSupportsCapability(server, core.KernelCapabilityExternalWireGuardProbe) {
+	if external.Protocol == model.ProtocolWireGuard && !serverSupportsCapability(server, core.KernelCapabilityExternalWireGuardProbe) {
 		return fmt.Errorf("服务器 %s 的内核不支持 WireGuard 节点检测，请先更新", server.Name)
+	}
+	if core.SocksExternalRequiresDNSModeCapability(external) && !serverSupportsCapability(server, core.KernelCapabilitySocks5DNSMode) {
+		return fmt.Errorf("服务器 %s 的内核不支持 SOCKS5 本地 DNS 模式（remote_dns=false），请先更新 Agent/内核或改用远端 DNS（SOCKS5H）", server.Name)
 	}
 	return nil
 }

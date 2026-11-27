@@ -326,7 +326,9 @@ func ResolveProxyPathExitRegions(paths []model.ProxyPath, steps []model.ProxyPat
 			target, targetOK := targetByPath[path.ID]
 			result, resultOK := resultByPath[path.ID]
 			if targetOK {
-				if reason := httpExitUnsupportedReason(externalByID[target.ExternalOutboundID], serverByID[target.OwnerServerID]); reason != "" {
+				external := externalByID[target.ExternalOutboundID]
+				owner := serverByID[target.OwnerServerID]
+				if reason := externalExitUnsupportedReason(external, owner); reason != "" {
 					path.ExitRegionSource = RegionSourceUnresolved
 					path.ExitRegionStatus = RegionStatusFailed
 					path.ExitRegionError = reason
@@ -495,6 +497,18 @@ func detectedRegionCode(code string) string {
 		return ""
 	}
 	return code
+}
+
+// externalExitUnsupportedReason explains why an imported exit can never be
+// probed because its owner server lacks a required kernel capability.
+func externalExitUnsupportedReason(external model.ExternalOutbound, owner model.Server) string {
+	if reason := httpExitUnsupportedReason(external, owner); reason != "" {
+		return reason
+	}
+	if SocksExternalRequiresDNSModeCapability(external) && strings.TrimSpace(owner.AgentID) != "" && len(owner.KernelCapabilities) > 0 && !stringSliceContains(owner.KernelCapabilities, KernelCapabilitySocks5DNSMode) {
+		return fmt.Sprintf("服务器 %s 的内核不支持 SOCKS5 本地 DNS 模式（remote_dns=false），请先更新 Agent 或改用远端 DNS（SOCKS5H）后重新部署", owner.Name)
+	}
+	return ""
 }
 
 // httpExitUnsupportedReason explains why an HTTP/HTTPS exit can never be

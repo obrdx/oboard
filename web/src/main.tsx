@@ -13812,7 +13812,25 @@ export function ImportedNodeConfigDialog({ node, data, client, load, onClose }: 
             <FormField label="目标地址" required><input aria-label="目标地址" value={draft.target_address} onChange={e => update({ target_address: e.target.value })} /></FormField>
             <FormField label="目标端口" required><input aria-label="目标端口" type="number" min={1} max={65535} value={draft.target_port} onChange={e => update({ target_port: Number(e.target.value) })} /></FormField>
           </div>
-          <FormField label="协议配置（JSON）" hint={draft.protocol === 'http' ? 'HTTP CONNECT 使用 http 协议；HTTPS 通过 tls.enabled 开启。可修改用户名、密码、TLS 等配置。' : draft.protocol === 'wireguard' ? '可修改 private_key、address、peer_public_key、pre_shared_key、reserved、mtu、persistent_keepalive_interval、allowed_ips；对端地址和端口在上方填写。' : '可修改认证信息及协议参数；保存前会校验配置。'}>
+          {draft.protocol === 'socks' && (() => {
+            let parsedSocks: Record<string, unknown> | null = null
+            try {
+              const value = JSON.parse(draft.config_json || '{}')
+              if (value && typeof value === 'object' && !Array.isArray(value)) parsedSocks = value as Record<string, unknown>
+            } catch { /* user is editing raw JSON */ }
+            const socksVersion = String(parsedSocks?.version || '5').trim()
+            const socksRemoteDNS = socksVersion !== '4' && (typeof parsedSocks?.remote_dns === 'boolean' ? parsedSocks.remote_dns : true)
+            return socksVersion !== '4' ? <FormField label="DNS 解析方式" hint="默认远端 DNS（SOCKS5H），由远端 SOCKS5 代理在出口侧解析域名；切回本地 DNS 需服务器内核支持 socks5_dns_mode_v1。">
+              <Select aria-label="DNS 解析方式" variant="segmented" value={String(socksRemoteDNS)} onChange={e => {
+                const next = { ...(parsedSocks || {}), version: socksVersion || '5', remote_dns: e.target.value === 'true' }
+                update({ config_json: JSON.stringify(next, null, 2) })
+              }}>
+                <option value="true">远端 DNS（SOCKS5H）</option>
+                <option value="false">本地 DNS（SOCKS5）</option>
+              </Select>
+            </FormField> : null
+          })()}
+          <FormField label="协议配置（JSON）" hint={draft.protocol === 'http' ? 'HTTP CONNECT 使用 http 协议；HTTPS 通过 tls.enabled 开启。可修改用户名、密码、TLS 等配置。' : draft.protocol === 'wireguard' ? '可修改 private_key、address、peer_public_key、pre_shared_key、reserved、mtu、persistent_keepalive_interval、allowed_ips；对端地址和端口在上方填写。' : draft.protocol === 'socks' ? '可修改 version（5 / 4a / 4）、remote_dns（默认 true 为 SOCKS5H 远端 DNS，false 为本地 DNS）、username、password 等参数。' : '可修改认证信息及协议参数；保存前会校验配置。'}>
             <textarea aria-label="协议配置（JSON）" className="imported-node-config-input" spellCheck={false} rows={7} value={draft.config_json} onChange={e => update({ config_json: e.target.value })} />
           </FormField>
           <FormField label="状态"><Select aria-label="状态" variant="segmented" value={String(draft.enabled)} onChange={e => update({ enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select></FormField>
@@ -14102,7 +14120,7 @@ const inboundProtocolChoices: { protocol: Protocol; label: string; summary: stri
   { protocol: 'shadowsocks', label: 'Shadowsocks', summary: 'AEAD 加密 · 免证书' },
   { protocol: 'mieru', label: 'Mieru', summary: '免证书 · 支持多端口' },
   { protocol: 'snell', label: 'Snell', summary: 'UOT · PSK' },
-  { protocol: 'socks', label: 'SOCKS5', summary: '用户名密码 · TCP/UDP' },
+  { protocol: 'socks', label: 'SOCKS5 / 5H', summary: '用户名密码 · 远端 DNS · TCP/UDP' },
   { protocol: 'ssh', label: 'SSH', summary: '密码认证 · 仅端口转发' },
 ]
 
@@ -15517,7 +15535,7 @@ function proxyPathReusableTargetOptions(data: any, serverID: number): ProxyPathR
     { kind: 'generated', protocol: 'shadowsocks', chain_method: '2022-blake3-chacha20-poly1305', label: 'SS 2022-ChaCha20', visibility: 'system_hidden', active_reuse_count: generatedCounts.get('shadowsocks:2022-blake3-chacha20-poly1305') || 0, eligible: true },
     { kind: 'generated', protocol: 'vless', label: 'VLESS Reality', visibility: 'system_hidden', active_reuse_count: generatedCounts.get('vless:cdn.icloud-content.com:443') || 0, eligible: true },
     { kind: 'generated', protocol: 'mieru', label: 'Mieru TCP', visibility: 'system_hidden', active_reuse_count: generatedCounts.get('mieru') || 0, eligible: true },
-    { kind: 'generated', protocol: 'socks', label: 'SOCKS5', visibility: 'system_hidden', active_reuse_count: generatedCounts.get('socks') || 0, eligible: true },
+    { kind: 'generated', protocol: 'socks', label: 'SOCKS5H', visibility: 'system_hidden', active_reuse_count: generatedCounts.get('socks') || 0, eligible: true },
   ]
   const existing = ((data.inbounds || []) as Inbound[]).filter(inbound => {
     if (inbound.server_id !== serverID || inbound.enabled === false || inbound.protocol === 'ssh') return false
@@ -15546,7 +15564,7 @@ function proxyPathTransportPresentation(step: Pick<ProxyPathStep, 'node_type' | 
 	const protocol = String(config.chain_protocol || 'shadowsocks')
 	if (protocol === 'vless') return { kind: 'singbox' as const, title: '共享 VLESS Reality 链式代理' }
 	if (protocol === 'mieru') return { kind: 'singbox' as const, title: '共享 Mieru TCP 链式代理' }
-	if (protocol === 'socks') return { kind: 'singbox' as const, title: '共享 SOCKS5 链式代理' }
+	if (protocol === 'socks') return { kind: 'singbox' as const, title: '共享 SOCKS5H 链式代理' }
 	const method = String(config.chain_method || '2022-blake3-aes-128-gcm')
   const methodLabel = proxyPathChainMethods.find(item => item.value === method)?.label || method
   return { kind: 'singbox' as const, title: `共享 ${methodLabel} 链式代理` }
@@ -16776,7 +16794,7 @@ function ExternalOutbounds({ data, client, load }: any) {
   const dialogs = useDialogs()
   const [editingNode, setEditingNode] = useState<ExternalOutbound | null>(null)
   const [f, setF] = useState({ server_id: 0, name: 'imported-node', protocol: 'vless' as ExternalProtocol, scope: 'global', target_address: '', target_port: 443, config_json: '{}', expose_to_users: false, enabled: true })
-  const [content, setContent] = useState('socks5://user:password@example.com:1080#SOCKS-A')
+  const [content, setContent] = useState('socks5h://user:password@example.com:1080#SOCKS5H-A')
   const payload = () => ({ ...f, server_id: f.scope === 'server' && f.server_id ? f.server_id : undefined })
   const importPayload = () => ({ scope: f.scope, server_id: f.scope === 'server' && f.server_id ? f.server_id : undefined, expose_to_users: f.expose_to_users, content })
   const mieruConfig = parseConfig(f.config_json) || {}

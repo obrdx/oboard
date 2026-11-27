@@ -1402,7 +1402,7 @@ func (s *Server) inferInboundCandidates(ctx context.Context, principal applicati
 		names[server.ID] = server.Name
 	}
 	protocol := ""
-	for _, value := range []string{"vless", "hysteria2", "hy2", "anytls", "shadowsocks", "mieru", "socks", "socks5"} {
+	for _, value := range []string{"vless", "hysteria2", "hy2", "anytls", "shadowsocks", "mieru", "socks5h", "socks5", "socks"} {
 		if containsAnyFold(goal, value) {
 			protocol = value
 			break
@@ -1425,7 +1425,7 @@ func (s *Server) inferInboundCandidates(ctx context.Context, principal applicati
 			aliases := map[string][]string{"HK": {"香港", "hong kong"}, "SG": {"新加坡", "singapore"}, "JP": {"东京", "日本", "tokyo", "japan"}, "US": {"洛杉矶", "美国", "los angeles"}}[strings.ToUpper(code)]
 			serverMentioned = containsAnyFold(goal, aliases...)
 		}
-		protocolMatch := protocol == "" || strings.EqualFold(protocol, string(inbound.Protocol)) || protocol == "hy2" && inbound.Protocol == model.ProtocolHY2
+		protocolMatch := protocol == "" || strings.EqualFold(protocol, string(inbound.Protocol)) || protocol == "hy2" && inbound.Protocol == model.ProtocolHY2 || (protocol == "socks5" || protocol == "socks5h") && inbound.Protocol == model.ProtocolSocks
 		if serverMentioned && protocolMatch {
 			matches = append(matches, inboundMCPResourceRef(inbound, names[inbound.ServerID]))
 		}

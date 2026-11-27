@@ -61,3 +61,18 @@ it('keeps invalid JSON and rejected saves open with an inline error', async () =
   expect(document.querySelector('[role="alert"]')).not.toBeNull()
   expect(onClose).not.toHaveBeenCalled()
 })
+
+it('toggles SOCKS5 remote_dns (SOCKS5H vs local DNS) directly in the config dialog', async () => {
+  const request = vi.fn().mockResolvedValue({})
+  const load = vi.fn().mockResolvedValue(undefined)
+  const onClose = vi.fn()
+  const socksNode = { id: 9, name: 'Exit-S5', protocol: 'socks', target_address: 'socks.example.com', target_port: 1080, config_json: '{"version":"5"}', enabled: true, expose_to_users: false, scope: 'global', region_mode: 'auto' } as any
+  await act(async () => root.render(<ImportedNodeConfigDialog node={socksNode} data={{ proxy_path_steps: [] }} client={{ request } as any} load={load} onClose={onClose} />))
+  const localOption = [...document.querySelectorAll<HTMLButtonElement>('button')].find(el => el.textContent === '本地 DNS（SOCKS5）')
+  expect(localOption).toBeTruthy()
+  await act(async () => localOption!.click())
+  await act(async () => button('保存并同步').click())
+  expect(request).toHaveBeenCalledTimes(1)
+  const payload = JSON.parse(request.mock.calls[0][1].body)
+  expect(JSON.parse(payload.config_json)).toEqual({ version: '5', remote_dns: false })
+})

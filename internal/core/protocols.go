@@ -976,6 +976,9 @@ func externalOutboundToSingBoxWithTag(v model.ExternalOutbound, server model.Ser
 	if v.Protocol == model.ProtocolWireGuard {
 		return wireGuardExternalToSingBox(v, server, outboundTag)
 	}
+	if v.Protocol == model.ProtocolSocks {
+		return socksExternalOutboundToSingBox(v, server, outboundTag)
+	}
 	if strings.TrimSpace(v.ConfigJSON) != "" && strings.TrimSpace(v.ConfigJSON) != "{}" {
 		var raw map[string]any
 		if err := json.Unmarshal([]byte(v.ConfigJSON), &raw); err == nil && raw["type"] != nil {
@@ -991,13 +994,6 @@ func externalOutboundToSingBoxWithTag(v model.ExternalOutbound, server model.Ser
 			omitUnsupportedDialTCPFastOpen(raw)
 			return raw, nil
 		}
-	}
-	if v.Protocol == model.ProtocolSocks {
-		item := map[string]any{"type": "socks", "tag": outboundTag, "server": v.TargetAddress, "server_port": v.TargetPort}
-		extra := parseExtra(v.ConfigJSON)
-		applyAllowed(item, extra, "version", "username", "password", "network", "udp_over_tcp", "tcp_fast_open", "domain_resolver", "network_strategy", "fallback_delay")
-		applyServerNetworkPolicy(item, server, v.Protocol, false)
-		return item, nil
 	}
 	adapter, err := AdapterFor(v.Protocol)
 	if err != nil {
@@ -1349,6 +1345,9 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 			delete(item, "detour")
 			if previousTag != "" {
 				item["detour"] = previousTag
+				if shouldDeferDetourDomainResolution(step, item, externalByID) {
+					delete(item, "domain_resolver")
+				}
 			}
 			outbounds = append(outbounds, item)
 			previousTag = stepTag
@@ -1710,6 +1709,26 @@ func proxyPathStepOutbound(path model.ProxyPath, step model.ProxyPathStep, sourc
 
 func proxyPathStepTag(pathID int64, position int) string {
 	return fmt.Sprintf("path-%d-step-%d", pathID, position)
+}
+
+// shouldDeferDetourDomainResolution reports whether a detoured hop should omit
+// its auto-injected bootstrap domain_resolver so sing-box forwards the next-hop
+// proxy hostname through the preceding detour hop for remote DNS resolution.
+func shouldDeferDetourDomainResolution(step model.ProxyPathStep, item map[string]any, externalByID map[int64]model.ExternalOutbound) bool {
+	if item == nil || stringFromAny(item["type"]) == "wireguard" {
+		return false
+	}
+	if ProxyPathStepAddressFamily(step) != ProxyPathAddressFamilyAuto {
+		return false
+	}
+	if step.NodeType == model.ProxyPathStepImported && step.ExternalOutboundID != nil {
+		if external, ok := externalByID[*step.ExternalOutboundID]; ok {
+			if _, explicit := parseExtra(external.ConfigJSON)["domain_resolver"]; explicit {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func cloneNestedMap(value map[string]any) map[string]any {

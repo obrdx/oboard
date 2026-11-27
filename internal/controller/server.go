@@ -9578,7 +9578,7 @@ func parseExternalOutboundLine(line string) ([]model.ExternalOutbound, error) {
 	case "ss":
 		item, err := parseSSImportURI(line)
 		return []model.ExternalOutbound{item}, err
-	case "socks", "socks5":
+	case "socks", "socks5", "socks5h":
 		if expanded := expandSocksShareLink(line); expanded != line {
 			if u, err = url.Parse(expanded); err != nil {
 				return nil, err
@@ -9787,10 +9787,15 @@ func parseSocksImportURI(u *url.URL) (model.ExternalOutbound, error) {
 	if err != nil {
 		return model.ExternalOutbound{}, err
 	}
-	cfg := map[string]any{"type": "socks", "tag": importNodeName(u, "SOCKS "+host), "server": host, "server_port": port, "version": "5"}
-	if strings.ToLower(u.Scheme) == "socks4" {
+	scheme := strings.ToLower(u.Scheme)
+	fallbackPrefix := "SOCKS5H "
+	cfg := map[string]any{"type": "socks", "server": host, "server_port": port, "version": "5", "remote_dns": true}
+	if scheme == "socks4" {
+		fallbackPrefix = "SOCKS4 "
 		cfg["version"] = "4"
+		cfg["remote_dns"] = false
 	}
+	cfg["tag"] = importNodeName(u, fallbackPrefix+host)
 	if username := u.User.Username(); username != "" {
 		cfg["username"] = username
 	}
@@ -10020,17 +10025,8 @@ func intFromAnyController(v any) int {
 }
 
 func validateSocksExternalConfig(raw string) error {
-	var cfg map[string]any
-	if strings.TrimSpace(raw) == "" {
-		raw = "{}"
-	}
-	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
-		return err
-	}
-	if version := strings.TrimSpace(stringFromMap(cfg, "version")); version != "" && version != "4" && version != "4a" && version != "5" {
-		return errors.New("socks version must be 4, 4a or 5")
-	}
-	return nil
+	_, err := core.ParseSocksExternalConfig(raw)
+	return err
 }
 
 func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
